@@ -620,9 +620,11 @@ sequenceDiagram
 | External deps | CWM API, hiive.cloud geo, wp-module-tasks | None |
 | Failure signal | Three disagreeing oracles | One structured `Report`, fails closed |
 
-> The database swap step (temp prefix → atomic `RENAME TABLE`) and the destination-admin
-> preservation are **under active discussion**; see `implementation-plan.md` §8. The rest of
-> this flow is settled.
+> The database swap step imports into temp-prefix tables and switches with a single atomic
+> `RENAME TABLE`, so a failed import leaves the destination untouched and rollback is a second
+> rename; the destination administrator is preserved across it. Import is a **full replace** —
+> there is no row-level merge. See `implementation-plan.md` §8 for the reasoning and the
+> fallback when `RENAME TABLE` is unavailable.
 
 v2 replaces the manual download/upload band with a direct pull from destination to source; v3
 drives the identical core from WP-CLI. Neither changes the shape above.
