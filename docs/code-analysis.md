@@ -1,6 +1,10 @@
 # Bluehost Site Migrator — Code Analysis
 
-**Analysed:** 2026-08-18 · **Commit:** `87e9a6e` (`master`) · **Repo version:** 1.0.13
+**Analysed:** 2026-08-18, updated 2026-08-21 · **Commit:** `87e9a6e` · **Repo version:** 1.0.13
+
+> Originally written against the archived `newfold-labs/bluehost-site-migrator`
+> repo. Carried into this working copy at the same commit; the 2026-08-21 update
+> adds section 2.7 after `vendor/` became available for review.
 
 A review of the plugin's viability as a migration tool, a register of defects found in
 the source, and a proposed refactor plan. Line references are against commit `87e9a6e`.
@@ -221,6 +225,78 @@ Separately, `navigate()` is called during render rather than from an effect — 
 
 ---
 
+### 2.7 The task queue cannot recover from a stuck task, and one stuck task stops everything
+
+Reviewed in `vendor/newfold-labs/wp-module-tasks` **1.0.4**. Three defects in the module
+compose into a permanent, silent stall of the whole migration.
+
+**(a) The stuck-task recovery query is malformed and can never run.**
+`Task::get_timed_out_tasks()` builds its SQL in a *double-quoted* PHP string but escapes the
+quotes as though it were single-quoted:
+
+```php
+// vendor/newfold-labs/wp-module-tasks/includes/Models/Task.php
+$stuck_tasks = $wpdb->get_results(
+    "SELECT * FROM `{$wpdb->prefix}{$table_name}` WHERE task_status = \'processing\' AND updated < DATE_SUB(NOW(), INTERVAL 10 MINUTE)"
+);
+```
+
+`\'` is not a recognised escape sequence in a double-quoted PHP string, so PHP emits the
+backslash literally (verified — see section 6). The SQL that reaches MySQL is
+`WHERE task_status = \'processing\'`, where a bare backslash is not valid at that position.
+The query errors, `get_results()` returns `null`, and `Scheduler::cleanup()` — the *only*
+mechanism that unwedges a stuck task — iterates `null` and does nothing. It has never worked.
+
+**(b) `Scheduler::run_next_task()` head-of-line blocks.** It selects the single
+highest-priority row, then:
+
+```php
+if ( 'processing' === $task_data->task_status ) {
+    return;
+}
+```
+
+It returns rather than moving to the next task. Any row stuck in `processing` halts the
+entire queue, not just its own work.
+
+**(c) There is no lock.** The check-then-set between that status read and
+`$task->update_task_status( 'processing' )` is not atomic and not transactional. Two cron
+ticks racing — which wp-cron does readily, since it fires on concurrent page loads — can both
+read `queued` and both execute the same task. For a packager that means two writers appending
+to the same archive from the same byte offsets.
+
+**How they compose.** A packager that overruns PHP's `max_execution_time` dies on a fatal
+error, not an `\Exception`. `run_next_task()`'s `catch ( \Exception )` does not fire, so its
+`finally { $task->delete(); }` never runs either, and the row is left in `processing`
+forever. (b) then makes every subsequent tick a no-op, and (a) means the 10-minute cleanup
+can never rescue it. Packaging stops permanently while the SPA keeps polling `/status` and
+reporting the last percentage it saw. This is the mechanism behind the "stuck at N%" reports.
+
+Note that the schema is *designed* for this recovery to work —
+`updated TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP` means `update_task_status()`
+refreshes the timestamp exactly as the 10-minute window expects. Only the query is broken.
+
+**Also in this module:**
+
+- **wp-cron is not a timer.** `wp_schedule_event( time(), 'twenty_seconds', ... )` only runs
+  when someone requests a page. On a low-traffic site the SPA's own `/status` polling is what
+  keeps the queue moving — so closing the browser tab stops packaging. The progress UI is
+  load-bearing infrastructure, not just a display.
+- `run_next_task()` calls `$wpdb->prepare()` on a query with no placeholders and no
+  arguments, which triggers a `_doing_it_wrong` notice on every tick (every 20s).
+- *Suspected, unverified:* the tasks table declares `updated TIMESTAMP NOT NULL` with no
+  `DEFAULT` (unlike the results table, which has one), while `queue_task()`'s `INSERT` omits
+  the column. Under MySQL 8 defaults (`explicit_defaults_for_timestamp=ON`) plus strict mode
+  that is a "field doesn't have a default value" error, which would break task queueing
+  outright. Needs a live database to confirm.
+
+**Implication for the rework.** These are upstream defects in a Newfold-hosted dependency,
+not in this plugin's own code — so they are not directly fixable here. Dropping the queue in
+favour of a WP-CLI entry point removes the dependency (and the Satis repo requirement) rather
+than working around it.
+
+---
+
 ## 3. Lower-severity findings
 
 | # | Finding | Location |
@@ -355,6 +431,19 @@ git diff --stat master 1.0.14
 # Last functional (non-CI) change to plugin code
 git log -1 --date=short --pretty='%ad' -- includes/ src/
 
+# 2.7(a) — the backslashes survive PHP into the emitted SQL.
+# (Heredoc, not `php -r`: the nested quotes are the whole point and a -r one-liner
+#  cannot express them.)
+cat > /tmp/t.php <<'PHPEOF'
+<?php
+$prefix = 'wp_'; $table_name = 'nfd_tasks';
+$q = "SELECT * FROM `{$prefix}{$table_name}` WHERE task_status = \'processing\' AND updated < DATE_SUB(NOW(), INTERVAL 10 MINUTE)";
+echo $q, "\n";
+PHPEOF
+php /tmp/t.php
+# -> SELECT * FROM `wp_nfd_tasks` WHERE task_status = \'processing\' AND updated < ...
+#    The backslashes are still there; MySQL rejects a bare backslash at that position.
+
 # Duplication between archivers: 170 differing lines out of 683
 diff <(sed 's/uploads/XX/g;s/Uploads/XX/g' includes/Packager/UploadsArchiver.php) \
      <(sed 's/themes/XX/g;s/Themes/XX/g' includes/Packager/ThemesArchiver.php) | wc -l
@@ -364,10 +453,8 @@ diff <(sed 's/uploads/XX/g;s/Uploads/XX/g' includes/Packager/UploadsArchiver.php
 
 - This review covers the plugin source in `includes/`, `src/`, `functions.php`, and
   `constants.php`.
-- **`newfold-labs/wp-module-tasks` was not reviewed.** `vendor/` is not installed in this
-  working copy, so claims about task retry, scheduling, and locking semantics are inferred
-  from the call sites rather than read from the module. Run `composer install` and re-trace
-  the queue if those semantics matter to a fix.
+- **`newfold-labs/wp-module-tasks` 1.0.4 was reviewed** as of 2026-08-21, once `vendor/`
+  was available; see 2.7. The rest of `vendor/` was not reviewed.
 - Findings were identified by reading the source, not by executing the packaging pipeline
   against a live site. The defects in section 2 are traceable in code; their runtime
   thresholds (e.g. how large a database must be to trigger 2.2) will vary with host disk speed.
