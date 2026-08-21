@@ -19,10 +19,14 @@ the source, and a proposed refactor plan. Line references are against commit `87
 4. [Refactors worth doing](#4-refactors-worth-doing)
 5. [Recommendation](#5-recommendation)
 6. [How these findings were verified](#6-how-these-findings-were-verified)
+7. [Migration flows](#7-migration-flows)
 
 ---
 
 ## 1. Verdict on usefulness
+
+> For the end-to-end journey — how the current flow works and what replaces it —
+> see [§7](#7-migration-flows).
 
 **As a general-purpose WordPress migration tool: no.** As a Bluehost customer-acquisition
 funnel it was fit for purpose in 2023, but it is not viable today.
@@ -458,3 +462,168 @@ diff <(sed 's/uploads/XX/g;s/Uploads/XX/g' includes/Packager/UploadsArchiver.php
 - Findings were identified by reading the source, not by executing the packaging pipeline
   against a live site. The defects in section 2 are traceable in code; their runtime
   thresholds (e.g. how large a database must be to trigger 2.2) will vary with host disk speed.
+
+---
+
+## 7. Migration flows
+
+### 7.1 Current flow
+
+The whole journey lives on one wp-admin page. `Migration.js` fetches
+`/migration-check/step` and picks a screen from the returned state
+(`compatible` / `checked` / `transfer_queued` / `packaged_success` / `packaged_failed`).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant SPA as React SPA
+    participant API as REST (bluehost-site-migrator/v1)
+    participant GEO as hiive.cloud worker
+    participant CRON as wp-cron + task queue
+    participant PK as Packagers
+    participant CWM as Bluehost CWM API
+
+    U->>SPA: Open Site Migrator
+    SPA->>API: GET /migration-check/step
+    API-->>SPA: step = initial
+
+    U->>SPA: Click "Check Compatibility"
+    SPA->>GEO: getGeoLocation()
+    GEO-->>SPA: country code
+    SPA->>API: POST /migration-check/ (geo)
+    API->>API: filter chain: multisite, disk, PHP version…
+    API->>CWM: POST /manifestScan (sslverify = is_ssl())
+    CWM-->>API: migrationId, x-auth-token, region URLs
+    API-->>SPA: compatible
+
+    U->>SPA: Click "Begin Transfer"
+    SPA->>API: POST /migration-tasks/
+    API->>API: rewrite wp-config.php → DISABLE_WP_CRON = false
+    API->>CRON: insert 8 Task rows (priority 20 → 6)
+
+    loop every 5s until terminal
+        SPA->>API: GET /migration-tasks/status
+        API-->>SPA: message, progress, stage
+    end
+
+    loop every 20s, only on page loads
+        CRON->>PK: run_next_task() → highest priority
+        PK->>PK: prepare() list file, execute() ~10s slice
+        PK->>PK: write custom-format archive to uploads/
+        PK->>API: persist_archive_path() → packaged_files
+    end
+
+    PK-->>SPA: packaged_success
+    SPA->>API: POST /migration-tasks/send-files
+    API->>CWM: POST /migration/{id}/files (public archive URLs)
+    CWM->>PK: pulls archives over HTTP
+    CWM->>CWM: performs the entire restore
+    API-->>SPA: success
+    SPA-->>U: Transfer key
+```
+
+**Packaging order** (descending `task_priority`):
+
+| Priority | Task | Class |
+|---|---|---|
+| 20 | `package_database` | `DatabaseDumper` |
+| 18 | `archive_database` | `DatabaseArchiver` |
+| 16 | `archive_plugins` | `PluginsArchiver` |
+| 14 | `archive_themes` | `ThemesArchiver` |
+| 12 | `archive_uploads` | `UploadsArchiver` |
+| 10 | `archive_mu_plugins` | `MuPluginsArchiver` |
+| 8 | `archive_dropins` | `DropinsArchiver` |
+| 6 | `archive_root` | `RootArchiver` |
+
+**What this flow tells you**
+
+- **There is no import half.** The plugin's job ends at "here are URLs to my archives." CWM
+  performs the entire restore. Removing CWM therefore does not mean replacing an API call — it
+  means writing an importer that has never existed (see the plan's phase 4).
+- **The destination is never contacted by the plugin.** There is no second install, no
+  handshake, no verification that the target can receive the site.
+- **Archives are pulled from public URLs.** That is why `wp-config.php` leaking into
+  `root.zip` (finding 2.4) is a disclosure and not just untidiness.
+- **The browser is already load-bearing.** wp-cron only fires on page loads, so the SPA's own
+  5-second polling is what keeps the queue advancing. Close the tab and packaging stops — the
+  UI is infrastructure, not decoration. The proposed flow makes that honest instead of
+  accidental.
+- **Three separate failure oracles** — the filter chain's boolean, `Checker::$results`, and the
+  `packaged_failed` flag — none of which agree. This is how a false "compatible" (finding 2.5)
+  reaches the packaging stage at all.
+
+### 7.2 Proposed flow — v1 (manual download / upload)
+
+The plugin is installed on **both** sites. No network link between them; the user carries the
+package. Same core drives both halves; the browser is the scheduler.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant S as Source site
+    participant D as Destination site
+
+    rect rgb(240,245,255)
+    note over U,S: Export
+    U->>S: Open Site Migrator → Export
+    S->>S: Preflight (disk, PHP/upload limits, multisite) — fails closed
+    S-->>U: Structured report
+    U->>S: Start export
+    S->>S: create package dir + checkpoint.json
+    loop POST /export/step until done (~15s budget each)
+        S->>S: manifest → db dump → zip parts → loose large files
+        S-->>U: { progress, done, warnings }
+    end
+    S->>S: checksums → finalize, delete checkpoint
+    S-->>U: part list (sizes + SHA-256)
+    U->>S: Download parts (authenticated, Range-resumable)
+    end
+
+    rect rgb(245,255,245)
+    note over U,D: Import
+    U->>D: Open Site Migrator → Import
+    D->>D: Preflight (disk, limits, PHP/MySQL vs manifest)
+    alt Browser upload
+        U->>D: Chunked upload of each part (~5MB chunks, resumable)
+    else Large-site escape hatch
+        U->>D: SFTP parts into the storage dir
+        D->>D: scan and detect
+    end
+    D->>D: verify checksums, read manifest
+    D-->>U: Preview: URL change, prefix change, warnings
+    U->>D: Confirm (explicit destructive-action consent)
+    D->>D: write temp mu-plugin, mint file-based token, stash dest admin
+    loop POST /import/step until done
+        D->>D: restore files (dest wp-config preserved)
+        D->>D: import SQL into temp-prefix tables
+        D->>D: verify, then atomic RENAME swap
+        D->>D: serialized-safe search/replace, prefix reconcile
+        D->>D: re-inject dest admin, fixups, flush permalinks
+        D-->>U: { progress, done, warnings }
+    end
+    D->>D: remove mu-plugin, delete token, keep old_ tables for rollback
+    D-->>U: Done — credentials notice
+    end
+```
+
+**Key differences from the current flow**
+
+| | Current | Proposed v1 |
+|---|---|---|
+| Scheduler | wp-cron task queue | The browser, via `POST /*/step` |
+| Resumability | Byte offsets in an autoloaded option | `checkpoint.json` on disk |
+| Archive format | Custom binary container | Standard zip + loose large files |
+| Restore | Performed by CWM | Performed by the plugin |
+| Destination | Never contacted | Runs the same plugin |
+| External deps | CWM API, hiive.cloud geo, wp-module-tasks | None |
+| Failure signal | Three disagreeing oracles | One structured `Report`, fails closed |
+
+> The database swap step (temp prefix → atomic `RENAME TABLE`) and the destination-admin
+> preservation are **under active discussion**; see `implementation-plan.md` §8. The rest of
+> this flow is settled.
+
+v2 replaces the manual download/upload band with a direct pull from destination to source; v3
+drives the identical core from WP-CLI. Neither changes the shape above.
+
