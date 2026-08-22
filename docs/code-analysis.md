@@ -183,6 +183,14 @@ who knows the second is brute-forcing roughly 2^20 microsecond values, not a rea
 The `index.php` "silence is golden" file (`functions.php:188`) prevents directory listing on
 Apache and does nothing to stop direct file access anywhere.
 
+**Scope, precisely.** `RootArchiver` returns `false` for any entry with children, so it never
+descends — it captures **top-level files in `ABSPATH` only**, and no archiver anywhere walks
+`wp-admin/` or `wp-includes/`. (Contrast `PluginsArchiver`, whose filter returns `true` for
+directories in order to recurse.) So WordPress core is *not* being shipped; the archive is a
+handful of root files. That makes the blast radius smaller than it first looks, but it does not
+soften the finding: the one file that must never leave the server is in there, and the part is
+only a few kilobytes once the filter is fixed.
+
 Also on the exposure surface: the plaintext `.sql` dump and the `.list` CSVs stay in that
 directory indefinitely — they are only removed on cancel or deactivation.
 
@@ -544,7 +552,9 @@ sequenceDiagram
 - **The destination is never contacted by the plugin.** There is no second install, no
   handshake, no verification that the target can receive the site.
 - **Archives are pulled from public URLs.** That is why `wp-config.php` leaking into
-  `root.zip` (finding 2.4) is a disclosure and not just untidiness.
+  `root.zip` (finding 2.4) is a disclosure and not just untidiness. Note the archive holds
+  only top-level root files — core is never packaged by any archiver — so the fix is a working
+  allowlist, not a new exclusion pass.
 - **The browser is already load-bearing.** wp-cron only fires on page loads, so the SPA's own
   5-second polling is what keeps the queue advancing. Close the tab and packaging stops — the
   UI is infrastructure, not decoration. The proposed flow makes that honest instead of
