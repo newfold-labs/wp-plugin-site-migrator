@@ -911,13 +911,40 @@ the swap, and the users merge against a pair of real sites with overlapping acco
 
 Sizes are relative (S/M/L/XL), not calendar estimates.
 
-### Phase 0 — Rename, de-brand, repo hygiene · **M** — *unblocked, ready to start*
+### Phase 0 — Stop the bleeding · **S** — *first, so nothing doomed gets renamed*
 
-Mechanical, but touches everything, so it goes first — doing it later means redoing every
-reference written in between.
+Pure deletion; independently valuable. After this the plugin can no longer break a site — and
+whatever is gone here never has to be renamed in Phase 1.
+
+- Delete `MigrationManager/MigrationTasks.php` including the `wp-config.php` rewrite (**2.1**).
+- Delete the CWM client, `migrationId` / auth-token / region options, `send-files`,
+  `report-errors` (**2.4, 2.5**).
+- Drop `wp-module-tasks` (**2.7**).
+- Remove the `admin_init` redirect hijack (**3.10**) and `set_time_limit()` in a getter (**3.12**).
+
+**Exit:** nothing writes to `wp-config.php`; no outbound HTTP to any host backend;
+`grep -r "eigproserve\|can-we-migrate\|manifestScan"` is empty.
+
+### Phase 1 — Rename, de-brand, repo hygiene · **M** — *unblocked*
+
+Mechanical, but touches everything, so it goes before any *new* code is written — otherwise
+Phase 2 authors fresh files under a name already known to be wrong. It goes *after* Phase 0
+because there is no point renaming code that is about to be deleted.
+
+**Kept deliberately separate from cleanup, and that separation is the point.** A rename is a
+mechanically verifiable transformation: grep the old prefix, expect zero hits, and every changed
+line should be an identifier and nothing else. A deletion is a judgement call that needs reading.
+Combine them and the diff becomes unreviewable — and when something breaks you cannot tell
+whether the rename missed a reference or the deletion removed something live. Two commits make
+that a two-second question.
 
 - Namespace, constants, function prefix, text domain, option names, main plugin file, REST
-  namespace, CSS/JS prefixes. Target names pending [D1](#14-open-decisions-for-review).
+  namespace, CSS/JS prefixes. Target names settled in [D1](#14-open-decisions-for-review).
+- **Hazard: the namespace appears inside string literals.** Task executors are strings —
+  `'BluehostSiteMigrator\Packager\DatabaseDumper::execute'` — as are hook callbacks and option
+  keys. An IDE's symbol-aware "rename namespace" silently misses every one of them, and the
+  failure is a runtime fatal, not a compile error. Drive this pass with text search, and verify
+  with a grep that covers strings, not just symbols.
 - Delete wp.org machinery: `.wporg/`, `readme.txt`, `svn-deploy-*.yml`.
 - Collapse the four-place version scheme to **one** source of truth — read the version from the
   plugin header at build time so `build/` can never diverge again.
@@ -932,19 +959,6 @@ reference written in between.
   neutral.
 
 **Exit:** activates cleanly under the new name; `composer lint` passes; no `bluehost|bh_sm|bhsm|BH_SITE_MIGRATOR` outside `docs/`; `LICENSE` present and derived files attributed.
-
-### Phase 1 — Stop the bleeding · **S**
-
-Pure deletion; independently valuable. After this the plugin can no longer break a site.
-
-- Delete `MigrationManager/MigrationTasks.php` including the `wp-config.php` rewrite (**2.1**).
-- Delete the CWM client, `migrationId` / auth-token / region options, `send-files`,
-  `report-errors` (**2.4, 2.5**).
-- Drop `wp-module-tasks` (**2.7**).
-- Remove the `admin_init` redirect hijack (**3.10**) and `set_time_limit()` in a getter (**3.12**).
-
-**Exit:** nothing writes to `wp-config.php`; no outbound HTTP to any host backend;
-`grep -r "eigproserve\|can-we-migrate\|manifestScan"` is empty.
 
 ### Phase 2 — Core, package format, stepping engine · **L**
 
@@ -1111,8 +1125,50 @@ Current PHP is ~7000 lines across `includes/` + root.
 | `wp-module-tasks` (vendor) | ~880 | nothing |
 
 Net ~2500 lines deleted before new work. The importer, package layer, chunked upload, and
-import UI add back substantially more than the CLI-first plan assumed — expect the plugin to
-end up **larger** than today, not smaller, while being far simpler per unit of function.
+import UI add back substantially more — expect the plugin to end up **larger** than today, not
+smaller, while being far simpler per unit of function.
+
+### 11.1 Dead code that must not be deleted
+
+A cleanup pass run on instinct will get this wrong, so it is worth stating plainly. There are
+**two kinds of dead code in this repository and they have opposite fates.**
+
+**Abandoned — delete it.** Code that was written, stopped being used, and was never removed:
+
+- `Compressor::add_file()`'s `$encrypt` / `$encrypt_pass` parameters, never called with a real
+  key (**3.11**).
+- `Archiver`'s protected path helpers, duplicated as globals in `functions.php`, where only the
+  globals are called (**3.11**).
+- The computed `$progress` variable, dead in all but one packager (**3.5**).
+
+**Orphaned — keep every line.** Code that is dead because a *feature* was stripped out around
+it, not because it was abandoned. All of it is import-side scaffolding left behind when
+`DatabaseBase` was forked from All-in-One WP Migration, and **Phase 4a revives all of it**:
+
+| Dead today | Call sites | Revived by |
+|---|---|---|
+| `is_drop_table_query()`, `is_create_table_query()`, `is_insert_into_query()`, `is_start_transaction_query()`, `is_commit_query()` | reachable only from `is_atomic_query()`, which nothing calls | `DatabaseImporter`'s statement classifier |
+| `replace_table_collations()` | zero | the collation plan ([§8.5](#85-collation-specifically)) |
+| `DatabaseUtility::replace_serialized_values()` | its own recursion only | `SearchReplace` |
+| `repair_table()` | via `is_atomic_query()` only | import error recovery |
+
+Deleting these would throw away the most valuable code in the repository — the half of a working
+migration engine that this project exists to rebuild. They are not clutter; they are a head
+start.
+
+### 11.2 Why static analysis will lie to you here
+
+Do not drive the cleanup from an IDE's "unused symbol" report. This codebase reaches code
+through **string literals** that no symbol graph follows:
+
+```php
+->set_task_execute( 'BluehostSiteMigrator\Packager\DatabaseDumper::execute' )
+```
+
+Task executors, WordPress hook callbacks, and option keys are all strings. A symbol-aware tool
+reports these targets as unreferenced, and removing one produces a runtime fatal rather than a
+compile error. Confirm every deletion with a text search for the *string*, not just the symbol —
+the same discipline the rename in Phase 1 needs, for the same reason.
 
 ---
 
@@ -1246,6 +1302,16 @@ confirmed one.
   always `administrator`, so nobody can demote themselves out of finishing the import.
   *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
   ordering once custom roles are involved.
+
+**D13 — Cleanup alongside the rename?** **Resolved 2026-08-23: no — adjacent, never combined.**
+Deletion is Phase 0, rename is Phase 1, and they stay separate commits because a rename is
+mechanically verifiable while a deletion is a judgement call; merged, the diff is unreviewable
+and a breakage cannot be attributed to one or the other. The order was flipped so nothing
+doomed gets renamed. Two hard rules on the cleanup itself, both in
+[§11.1](#111-dead-code-that-must-not-be-deleted) and
+[§11.2](#112-why-static-analysis-will-lie-to-you-here): the orphaned import scaffolding in
+`DatabaseBase` is **kept**, not deleted, and no deletion is driven by a symbol-graph "unused"
+report, because this codebase dispatches through string literals.
 
 **D12 — Keep the git history, or start fresh?** **Recommend keeping it**, on the `rework`
 branch as it stands. The repository is 291 commits and 3 MB across six years — no size problem.
