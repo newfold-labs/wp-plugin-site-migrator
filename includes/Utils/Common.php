@@ -2,8 +2,6 @@
 
 namespace BluehostSiteMigrator\Utils;
 
-use NewfoldLabs\WP\Module\Tasks\Models\Task;
-
 /**
  * Common utilities class
  */
@@ -22,37 +20,5 @@ class Common {
 		}
 
 		return $path;
-	}
-
-	/**
-	 * Get all the task names
-	 *
-	 * @return array
-	 */
-	public static function get_packaging_task_names() {
-		return array(
-			'package_database',
-			'archive_database',
-			'archive_plugins',
-			'archive_themes',
-			'archive_uploads',
-			'archive_mu_plugins',
-			'archive_dropins',
-			'archive_root',
-		);
-	}
-
-	/**
-	 * Delete all the queued tasks
-	 */
-	public static function purge_tasks() {
-		$task_names = self::get_packaging_task_names();
-		foreach ( $task_names as $task_name ) {
-			$tasks_to_delete = Task::get_tasks_with_name( $task_name );
-			foreach ( $tasks_to_delete as $task ) {
-				$task_obj = new Task( $task->task_id );
-				$task_obj->delete();
-			}
-		}
 	}
 }

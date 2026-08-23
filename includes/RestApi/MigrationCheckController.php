@@ -78,10 +78,6 @@ class MigrationCheckController extends \WP_REST_Controller {
 	 */
 	public function get_item( $request ) {
 
-		$geo = $request->get_json_params();
-		update_option( BH_SITE_MIGRATOR_GEO_DATA_OPTION, $geo );
-		update_option( BH_SITE_MIGRATOR_COUNTRY_CODE_OPTION, \nfd_bhsm_data_get( $geo, 'country.code', '' ) );
-
 		$can_migrate = Checker::run();
 
 		return rest_ensure_response(

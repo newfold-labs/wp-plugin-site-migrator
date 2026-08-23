@@ -1,11 +1,8 @@
 import { useEffect, useState } from '@wordpress/element';
 import { LoadingSpinner } from './common/LoadingSpinner';
-import { BeginTransfer } from './transfer/BeginTransfer';
 import { apiCall } from '../utils/apiCall';
 import { SiteMigratorAPIs } from '../utils/api';
 import { CompatibilityCheck } from './compatibility/Check';
-import { TransferStatus } from './transfer/TransferStatus';
-import { TransferSuccess } from './transfer/TransferSuccess';
 import { useNavigate } from 'react-router-dom';
 
 // The base component that loads the required step based on current migration state
@@ -16,7 +13,6 @@ export const Migration = () => {
 		checked: false,
 		failed: false,
 		error: '',
-		transferQueued: false,
 	} );
 
 	const navigate = useNavigate();
@@ -32,14 +28,12 @@ export const Migration = () => {
 					error: response.error,
 					failed: true,
 				} );
+				return;
 			}
 			setStepResult( {
 				loading: false,
 				compatible: response.compatible,
 				checked: response.checked,
-				transferQueued: response.transfer_queued,
-				packagedSuccess: response.packaged_success,
-				packagedFailed: response.packaged_failed,
 			} );
 		};
 
@@ -50,22 +44,6 @@ export const Migration = () => {
 		return <LoadingSpinner />;
 	}
 
-	if ( stepResult.packagedFailed ) {
-		navigate( '/error' );
-	}
-
-	if ( stepResult.packagedSuccess ) {
-		return <TransferSuccess />;
-	}
-
-	if ( stepResult.transferQueued ) {
-		return <TransferStatus />;
-	}
-
-	if ( stepResult.compatible ) {
-		return <BeginTransfer />;
-	}
-
 	if ( ! stepResult.checked ) {
 		return <CompatibilityCheck />;
 	}
@@ -73,4 +51,7 @@ export const Migration = () => {
 	if ( ! stepResult.compatible ) {
 		navigate( '/incompatible' );
 	}
+
+	// The export flow is rebuilt in phase 3; nothing follows the check yet.
+	return <CompatibilityCheck />;
 };

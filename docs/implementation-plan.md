@@ -911,7 +911,7 @@ the swap, and the users merge against a pair of real sites with overlapping acco
 
 Sizes are relative (S/M/L/XL), not calendar estimates.
 
-### Phase 0 — Stop the bleeding · **S** — *first, so nothing doomed gets renamed*
+### Phase 0 — Stop the bleeding · **S** — ✅ *done 2026-08-23*
 
 Pure deletion; independently valuable. After this the plugin can no longer break a site — and
 whatever is gone here never has to be renamed in Phase 1.
@@ -924,6 +924,15 @@ whatever is gone here never has to be renamed in Phase 1.
 
 **Exit:** nothing writes to `wp-config.php`; no outbound HTTP to any host backend;
 `grep -r "eigproserve\|can-we-migrate\|manifestScan"` is empty.
+
+**Done.** All four criteria verified, the last two behaviourally rather than by grep: the plugin
+was booted against a WordPress stub whose `wp_remote_post`, `wp_remote_get`, and
+`wp_safe_redirect` all throw, and a full compatibility run completed without tripping any of
+them. Result: ~1,400 lines removed, `newfold-labs/wp-module-tasks` dropped along with **five
+transitive dependencies** it pulled in, leaving `wp-forge/wp-plugin-check` as the only runtime
+dependency. Zero activation hooks, one deactivation hook, no `admin_init` hook. Four local
+compatibility checks survive and pass; three REST routes remain, all under `migration-check`.
+The export flow is intentionally gone until phase 3 rebuilds it.
 
 ### Phase 1 — Rename, de-brand, repo hygiene · **M** — *unblocked*
 

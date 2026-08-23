@@ -221,7 +221,6 @@ function nfd_bhsm_putcsv( $handle, $fields ) {
  * @return int
  */
 function nfd_bhsm_get_dir_size( $path ) {
-	set_time_limit( 90 );
 	$bytes = 0;
 	$path  = realpath( $path );
 	if ( $path && file_exists( $path ) ) {
@@ -368,22 +367,4 @@ function nfd_bhsm_purge_all() {
 
 	// Delete the transient
 	delete_transient( BH_SITE_MIGRATOR_CAN_MIGRATE_TRANSIENT );
-}
-
-/**
- * Redirect to the plugin page when it is activated
- */
-function nfd_bhsm_set_redirect() {
-	// Set an option which will be consumed during admin init
-	add_option( BH_SITE_MIGRATOR_REDIRECT_OPTION, true );
-}
-
-/**
- * Consume the activation option and redirect on admin init if needed.
- */
-function nfd_bhsm_redirect() {
-	if ( get_option( BH_SITE_MIGRATOR_REDIRECT_OPTION, false ) ) {
-		delete_option( BH_SITE_MIGRATOR_REDIRECT_OPTION );
-		wp_safe_redirect( BH_SITE_MIGRATOR_ENTRYPOINT_URL );
-	}
 }

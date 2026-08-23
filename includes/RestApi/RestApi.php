@@ -18,9 +18,7 @@ class RestApi {
 	 */
 	public function register_routes() {
 		$controllers = array(
-			'BluehostSiteMigrator\\RestApi\\MigrationTasksController',
 			'BluehostSiteMigrator\\RestApi\\MigrationCheckController',
-			'BluehostSiteMigrator\\RestApi\\MigrationDataController',
 		);
 
 		foreach ( $controllers as $controller ) {

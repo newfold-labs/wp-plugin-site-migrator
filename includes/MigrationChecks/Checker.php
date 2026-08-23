@@ -2,7 +2,6 @@
 
 namespace BluehostSiteMigrator\MigrationChecks;
 
-use BluehostSiteMigrator\Manifest\Manifest;
 use BluehostSiteMigrator\Utils\Options;
 
 /**
@@ -35,64 +34,8 @@ class Checker {
 	public static function register() {
 		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'has_disk_free_space' ), 5 );
 		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'has_disk_total_space' ), 5 );
-		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'can_we_migrate_api' ), 10 );
 		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'is_content_directory_writable' ), 5 );
 		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'is_not_multisite' ), 5 );
-	}
-
-	/**
-	 * Check if migration is still allowed and, if so, send the manifest file to the CanWeMigrate API for a more thorough validation.
-	 *
-	 * @param bool $can_migrate Whether or not we can migrate the site.
-	 *
-	 * @return bool
-	 */
-	public static function can_we_migrate_api( $can_migrate ) {
-		if ( $can_migrate ) {
-			$can_migrate = get_transient( BH_SITE_MIGRATOR_CAN_MIGRATE_TRANSIENT );
-			if ( ! $can_migrate ) {
-				$manifest = Manifest::create();
-				$payload  = wp_json_encode( $manifest, JSON_PRETTY_PRINT );
-				$response = wp_remote_post(
-					BH_SITE_MIGRATOR_API_BASEURL . '/manifestScan',
-					array(
-						'headers'   => array(
-							'Content-Type' => 'application/json',
-						),
-						'body'      => $payload,
-						'sslverify' => is_ssl(),
-					)
-				);
-				if ( is_wp_error( $response ) ) {
-					self::$results['cwm_api'] = $response->get_error_message();
-
-					return $can_migrate;
-				}
-				$status_code = (int) wp_remote_retrieve_response_code( $response );
-				$body        = wp_remote_retrieve_body( $response );
-				$data        = json_decode( $body, true );
-				if ( 200 === $status_code && isset( $data, $data['feasible'], $data['migrationId'], $data['x-auth-token'] ) ) {
-					if ( isset( $data['factors'] ) ) {
-						self::$results['cwm_api'] = $data['factors'];
-					}
-					$can_migrate = (bool) $data['feasible'];
-					update_option( BH_SITE_MIGRATOR_REGIONS_OPTION, nfd_bhsm_data_get( $data, 'regionUrls', array() ) );
-					update_option( BH_SITE_MIGRATOR_MIGRATION_ID_OPTION, $data['migrationId'] );
-					update_option( BH_SITE_MIGRATOR_TOKEN_OPTION, $data['x-auth-token'] );
-					set_transient( BH_SITE_MIGRATOR_CAN_MIGRATE_TRANSIENT, $can_migrate, HOUR_IN_SECONDS );
-				}
-			}
-			if ( ! array_key_exists( 'cwm_api', self::$results ) ) {
-				self::$results['cwm_api'] = $can_migrate;
-			}
-		}
-
-		// Always return the manifest in response for debugging purposes
-		if ( ! array_key_exists( 'manifest', self::$results ) ) {
-			self::$results['manifest'] = Manifest::fetch();
-		}
-
-		return $can_migrate;
 	}
 
 	/**

@@ -24,26 +24,6 @@ if ( ! defined( 'BH_SITE_MIGRATOR_OPTION_NAME' ) ) {
 	define( 'BH_SITE_MIGRATOR_OPTION_NAME', 'bluehost_site_migrator' );
 }
 
-if ( ! defined( 'BH_SITE_MIGRATOR_REGIONS_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_REGIONS_OPTION', 'bh_site_migration_region_urls' );
-}
-
-if ( ! defined( 'BH_SITE_MIGRATOR_MIGRATION_ID_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_MIGRATION_ID_OPTION', 'bh_site_migration_id' );
-}
-
-if ( ! defined( 'BH_SITE_MIGRATOR_TOKEN_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_TOKEN_OPTION', 'bh_site_migration_token' );
-}
-
-if ( ! defined( 'BH_SITE_MIGRATOR_GEO_DATA_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_GEO_DATA_OPTION', 'bh_site_migration_geo_data' );
-}
-
-if ( ! defined( 'BH_SITE_MIGRATOR_COUNTRY_CODE_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_COUNTRY_CODE_OPTION', 'bh_site_migration_country_code' );
-}
-
 if ( ! defined( 'BH_SITE_MIGRATOR_PACKAGING_STATUS_OPTION' ) ) {
 	define( 'BH_SITE_MIGRATOR_PACKAGING_STATUS_OPTION', 'bh_site_migrator_packaging_status' );
 }
@@ -56,28 +36,14 @@ if ( ! defined( 'BH_SITE_MIGRATOR_PACKAGING_FAILED_OPTION' ) ) {
 	define( 'BH_SITE_MIGRATOR_PACKAGING_FAILED_OPTION', 'bh_site_migrator_packaged_failed' );
 }
 
-if ( ! defined( 'BH_SITE_MIGRATOR_API_BASEURL' ) ) {
-	define( 'BH_SITE_MIGRATOR_API_BASEURL', 'https://cwm.eigproserve.com/api/v1' );
-}
-
-if ( ! defined( 'BH_SITE_MIGRATOR_REDIRECT_OPTION' ) ) {
-	define( 'BH_SITE_MIGRATOR_REDIRECT_OPTION', 'bh_site_migrator_redirect' );
-}
-
 if ( ! defined( 'BH_SITE_MIGRATOR_OPTIONS_LIST' ) ) {
 	define(
 		'BH_SITE_MIGRATOR_OPTIONS_LIST',
 		array(
 			BH_SITE_MIGRATOR_OPTION_NAME,
-			BH_SITE_MIGRATOR_REGIONS_OPTION,
-			BH_SITE_MIGRATOR_GEO_DATA_OPTION,
-			BH_SITE_MIGRATOR_TOKEN_OPTION,
-			BH_SITE_MIGRATOR_MIGRATION_ID_OPTION,
-			BH_SITE_MIGRATOR_COUNTRY_CODE_OPTION,
 			BH_SITE_MIGRATOR_PACKAGING_STATUS_OPTION,
 			BH_SITE_MIGRATOR_PACKAGING_FAILED_OPTION,
 			BH_SITE_MIGRATOR_PACKAGING_SUCCESS_OPTION,
-			BH_SITE_MIGRATOR_REDIRECT_OPTION,
 		)
 	);
 }

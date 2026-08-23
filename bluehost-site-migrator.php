@@ -41,11 +41,7 @@ if ( 'plugins.php' === $pagenow ) {
 // Include functions
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'functions.php';
 
-register_activation_hook( __FILE__, 'nfd_tasks_setup_tables' );
-register_activation_hook( __FILE__, 'nfd_bhsm_set_redirect' );
-register_deactivation_hook( __FILE__, 'nfd_tasks_purge_tables' );
 register_deactivation_hook( __FILE__, 'nfd_bhsm_purge_all' );
-add_action( 'admin_init', 'nfd_bhsm_redirect' );
 
 // Initialize the Admin page
 new BluehostSiteMigrator\WP_Admin();
