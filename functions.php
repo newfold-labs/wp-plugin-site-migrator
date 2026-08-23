@@ -89,22 +89,85 @@ function nfd_sm_storage_path() {
 }
 
 /**
- * Get a directory size.
+ * Measure a directory, with a time budget and a cache.
  *
- * @param string $path The directory path.
+ * Walking a large uploads directory is slow — several seconds for a few gigabytes, minutes for
+ * tens — and preflight runs on a page load. So the result is cached, and the walk gives up when
+ * the budget runs out and says so rather than blocking the request indefinitely.
+ *
+ * @param string $path   Absolute directory.
+ * @param float  $budget Seconds to spend, or 0 for no limit.
+ *
+ * @return array `bytes`, `files`, and `complete` — false when the budget ran out.
+ */
+function nfd_sm_measure_dir( $path, $budget = 3.0 ) {
+	$path = realpath( $path );
+
+	if ( ! $path || ! is_dir( $path ) ) {
+		return array(
+			'bytes'    => 0,
+			'files'    => 0,
+			'complete' => true,
+		);
+	}
+
+	$key    = 'nfd_sm_dirsize_' . md5( $path );
+	$cached = get_transient( $key );
+
+	if ( is_array( $cached ) ) {
+		return $cached;
+	}
+
+	$deadline = $budget > 0 ? microtime( true ) + $budget : 0;
+	$bytes    = 0;
+	$files    = 0;
+	$complete = true;
+
+	$iterator = new RecursiveIteratorIterator(
+		new RecursiveDirectoryIterator( $path, FilesystemIterator::SKIP_DOTS ),
+		RecursiveIteratorIterator::LEAVES_ONLY,
+		RecursiveIteratorIterator::CATCH_GET_CHILD
+	);
+
+	foreach ( $iterator as $item ) {
+		if ( ! $item->isFile() ) {
+			continue;
+		}
+
+		$bytes += (int) $item->getSize();
+		++$files;
+
+		// Checking the clock on every file would itself be a cost; every 512 is plenty.
+		if ( $deadline > 0 && 0 === ( $files % 512 ) && microtime( true ) >= $deadline ) {
+			$complete = false;
+			break;
+		}
+	}
+
+	$result = array(
+		'bytes'    => $bytes,
+		'files'    => $files,
+		'complete' => $complete,
+	);
+
+	// A partial measurement is worth caching too, briefly: it stops every request paying the
+	// same budget, and it is refreshed often enough to stay useful.
+	set_transient( $key, $result, $complete ? 900 : 120 );
+
+	return $result;
+}
+
+/**
+ * Size of a directory in bytes.
+ *
+ * @param string $path Absolute directory.
  *
  * @return int
  */
 function nfd_sm_get_dir_size( $path ) {
-	$bytes = 0;
-	$path  = realpath( $path );
-	if ( $path && file_exists( $path ) ) {
-		foreach ( new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $path, FilesystemIterator::SKIP_DOTS ) ) as $object ) {
-			$bytes += $object->getSize();
-		}
-	}
+	$measured = nfd_sm_measure_dir( $path, 0 );
 
-	return $bytes;
+	return $measured['bytes'];
 }
 
 /**

@@ -62,6 +62,18 @@ final class WP_Admin {
 				$asset['version']
 			);
 
+			// The download link is a plain navigation, not an apiFetch call, so it needs the
+			// REST root and a nonce of its own. wp-api-fetch installs middleware but does not
+			// expose these to page scripts.
+			\wp_localize_script(
+				self::$slug,
+				'nfdSiteMigrator',
+				array(
+					'restUrl' => \esc_url_raw( \rest_url( 'nfd-site-migrator/v1/' ) ),
+					'nonce'   => \wp_create_nonce( 'wp_rest' ),
+				)
+			);
+
 			\wp_enqueue_style( self::$slug );
 			\wp_enqueue_script( self::$slug );
 		}

@@ -7,9 +7,7 @@ import App from './app';
 const NFD_SM_PAGE_ROOT_ELEMENT = 'nfd-sm-app';
 
 const RenderSiteMigrator = () => {
-	const DOM_ELEMENT = document.getElementById(
-		NFD_SM_PAGE_ROOT_ELEMENT
-	);
+	const DOM_ELEMENT = document.getElementById( NFD_SM_PAGE_ROOT_ELEMENT );
 
 	if ( null !== DOM_ELEMENT ) {
 		if ( 'undefined' !== typeof createRoot ) {

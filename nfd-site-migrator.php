@@ -46,14 +46,11 @@ register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' );
 // Initialize the Admin page
 new NewfoldLabs\WP\SiteMigrator\WP_Admin();
 
-// Initialize the REST APIs
-new NewfoldLabs\WP\SiteMigrator\RestApi\RestApi();
+// Register the REST routes
+NewfoldLabs\WP\SiteMigrator\Rest\Routes::register();
 
 // Initialize options
 NewfoldLabs\WP\SiteMigrator\Utils\Options::fetch();
-
-// Add the migration check filters
-NewfoldLabs\WP\SiteMigrator\MigrationChecks\Checker::register();
 
 // Register the WP-CLI harness. Second consumer of Core/, so the transport boundary is
 // enforced by a real caller and not only by a lint rule.

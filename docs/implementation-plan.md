@@ -1094,7 +1094,7 @@ yet, and a command that silently does nothing is worse than one that says why. `
 added instead, because `PackageReader` needed a caller and "part 3 checksum mismatch" is a
 usable failure report.
 
-### Phase 3 — Export in the UI · **L**
+### Phase 3 — Export in the UI · **L** — ✅ *done 2026-08-23*
 
 - `POST /export/step`, `GET /export/manifest`, authenticated ranged download endpoint.
 - Harden the storage directory: deny rules, `random_bytes()` filenames.
@@ -1117,6 +1117,45 @@ usable failure report.
 
 **Exit:** a non-technical user exports a real site through wp-admin and downloads a verified
 package. Closing and reopening the tab mid-export resumes.
+
+**Done.** `Core/Preflight/` (Report, Checker, SiteProfile, Pairing, Compatibility), `Rest/`
+replacing `RestApi/` with eleven routes, and the export screens from the prototype. Verified
+against the live WordPress 7.1 site, including **in a real browser**: the plugin was temporarily
+symlinked in, the admin page rendered with live facts, a pairing code was minted, and the source
+fetched the destination's profile over HTTP and rendered the verdict — the whole handshake, end
+to end, with no console errors. The site was then deactivated, unlinked, and its options and
+transients cleaned up.
+
+Checked programmatically as well: 404-not-401 on a missing *and* a wrong pairing code, rate
+limiting holding after twelve attempts (the correct code is refused too), three path-traversal
+attempts on the download endpoint all refused, the step loop driving a real export through REST,
+`/export/state` reporting `in_progress` mid-run and `complete` after, and `/export/manifest`
+verifying.
+
+**Three defects found by testing:**
+
+1. **Preflight took 22 seconds.** `nfd_sm_get_dir_size()` walks the whole content directory, and
+   it was being called once per profile gather — four times per request on this 2.7GB site. Now
+   `nfd_sm_measure_dir()` has a time budget and a transient cache: 3.3s cold, 0.2s warm. A walk
+   that runs out of budget returns a **floor** rather than a total, and says so.
+2. **That created a second bug immediately**, caught by the same test: treating a floor as
+   grounds to warn meant a destination with 1KB free stopped blocking. Only one direction is
+   conclusive — free space *below* the floor definitely will not fit and blocks; above it proves
+   nothing and warns.
+3. **The Range header handler mishandled suffix ranges.** `bytes=-100` means *the last hundred
+   bytes*; the code read it as bytes 0–100. A resumed download would have silently received the
+   wrong bytes and produced a corrupt zip far from the cause. The arithmetic is now a pure
+   `resolve_range()` with nine cases under test.
+
+**Two repo defects fixed in passing.** `eslint-plugin-cypress` was referenced by `.eslintrc` but
+never listed in `package.json`, so `yarn lint:js` had never run at all; v7 is flat-config only,
+so it is pinned to `^2.15.1` for eslint 8. And the site profile was 6.5KB because `SHOW
+COLLATION` returns ~290 rows — filtered to the utf8/latin1/ascii/binary families it is 3.7KB,
+which matters because the fallback path asks a human to copy and paste it.
+
+**Not yet done:** a full 2.7GB export through the browser UI. The step loop, resume, manifest and
+download are verified through REST against that site; what has not been watched end to end is the
+progress screen during a multi-gigabyte run.
 
 ### Phase 4a — Import core, driven headless · **L** — *the genuinely new work*
 
