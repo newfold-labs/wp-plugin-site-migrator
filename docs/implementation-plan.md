@@ -20,7 +20,7 @@ one says what to build instead, in what order, and what "done" means for each st
    Migrate Guru-like experience.
 
 WP-CLI comes after both. If stage 1 was meant to be "install the plugin on both sites and
-transfer directly," say so — it collapses v1 and v2 and changes [§9](#9-phased-delivery)
+transfer directly," say so — it collapses v1 and v2 and changes [§10](#10-phased-delivery)
 significantly.
 
 ---
@@ -34,12 +34,13 @@ significantly.
 5. [Target architecture](#5-target-architecture)
 6. [The package format](#6-the-package-format)
 7. [Moving the package between sites](#7-moving-the-package-between-sites)
-8. [Surviving the database swap](#8-surviving-the-database-swap)
-9. [Phased delivery](#9-phased-delivery)
-10. [What gets deleted](#10-what-gets-deleted)
-11. [Testing strategy](#11-testing-strategy)
-12. [Risk register](#12-risk-register)
-13. [Open decisions](#13-open-decisions-for-review)
+8. [Compatibility: the destination handshake](#8-compatibility-the-destination-handshake)
+9. [Surviving the database swap](#9-surviving-the-database-swap)
+10. [Phased delivery](#10-phased-delivery)
+11. [What gets deleted](#11-what-gets-deleted)
+12. [Testing strategy](#12-testing-strategy)
+13. [Risk register](#13-risk-register)
+14. [Open decisions](#14-open-decisions-for-review)
 
 ---
 
@@ -103,7 +104,7 @@ Two things narrow the gap without a cloud:
 - In **v2**, the destination does the expensive half — it pulls, unpacks, and imports. The
   source only packages and serves bytes.
 - Also in v2, packaging can be skipped entirely by streaming files individually rather than
-  archiving first (see [D5](#13-open-decisions-for-review)). That removes the source's need for
+  archiving first (see [D5](#14-open-decisions-for-review)). That removes the source's need for
   ~1x extra disk space, which is one of the most common hard failures on shared hosting.
 
 We should not market a "won't touch your server resources" claim we cannot honour.
@@ -184,9 +185,12 @@ includes/
       DatabaseImporter.php  NEW. streams SQL, uses the existing dead is_*_query() predicates
       FileRestorer.php      NEW. unpack with path-traversal guards
       SearchReplace.php     NEW. wraps replace_serialized_values()
+      UserMerger.php        NEW. merges destination users into the staged users table
       Fixups.php            NEW. prefix reconciliation, siteurl/home, permalinks, dropins
     Preflight/
       Checker.php           local-only checks (was MigrationChecks/)
+      SiteProfile.php       NEW. mint + parse the destination compatibility profile
+      Compatibility.php     NEW. compare two profiles -> gates, warnings, collation plan
       Report.php            structured result; no boolean smuggled through a filter chain
     Progress/
       ProgressReporter.php  interface: start/advance/finish/warn
@@ -263,7 +267,7 @@ Two consequences:
 kilobytes. It exists because losing custom `.htaccess` rules (redirects, security, cache
 config) silently breaks sites, and those rules are not recoverable from the database.
 Environment-specific content is **captured and reported, not blindly applied** — see
-[§8.6](#86-manual-follow-ups).
+[§9.7](#97-manual-follow-ups).
 
 `content-other.zip` closes a real gap in the current code: today only `plugins`, `themes`,
 `uploads`, `mu-plugins`, and `dropins` are archived, so anything else under `wp-content` is
@@ -342,17 +346,135 @@ free space on both sides and refuse clearly rather than failing deep into a run.
 
 ---
 
-## 8. Surviving the database swap
+## 8. Compatibility: the destination handshake
+
+Nothing should be packaged before we know it can land. Because packages carry content only
+([§6](#6-the-package-format)), the destination's own core, PHP, and database must be able to
+run the source's site — and that is not a safe assumption.
+
+### 8.1 The problem with checking late
+
+In v1 there is no live link between the two sites at export time. The obvious design checks
+compatibility when the package is *opened* on the destination — which is correct, necessary,
+and far too late. By then the user has waited through a full export, downloaded a multi-gigabyte
+file, and uploaded it again, only to be told their destination runs an older WordPress.
+
+So compatibility is checked at **three points**, and the earliest one is the one that saves the
+user's afternoon.
+
+### 8.2 The destination profile
+
+The destination mints a short, pasteable **site profile** before anything else happens.
+
+1. On the destination: **Receive a site → Check compatibility**. The plugin gathers local facts
+   and renders a base64 blob (a few hundred bytes) with a copy button.
+2. The user pastes it into the source's export screen.
+3. The source decodes it, compares against its own facts, and shows a verdict **before the
+   first byte is packaged**.
+
+The profile carries:
+
+| Group | Facts |
+|---|---|
+| WordPress | `version`, `db_version`, `is_multisite`, `locale`, table `prefix`, `WP_CONTENT_DIR` |
+| PHP | `version`, loaded extensions, `memory_limit`, `max_execution_time`, `upload_max_filesize`, `post_max_size`, `disable_functions`, `open_basedir` |
+| Database | server `version`, MySQL vs MariaDB, `max_allowed_packet`, available charsets and collations, `RENAME TABLE` probe result, granted privileges as observed |
+| Host | free disk space at `WP_CONTENT_DIR`, server software, `is_ssl()` |
+| Envelope | `schema_version`, minted-at timestamp, 7-day expiry, random profile ID |
+
+It is **facts about a server, not secrets** — no credentials, no salts, no site content. It is
+signed with an HMAC over a key stored in the destination's options so the destination can later
+confirm a package was built against *its own* profile, but it is not encrypted, and the UI says
+plainly what it contains.
+
+**Pasting is optional.** Skipping it is legitimate — exporting as a backup, or to a destination
+that does not exist yet. Skip it and the export proceeds with a clear "unverified destination"
+badge on the package, and every gate below is enforced at import time instead.
+
+### 8.3 The three checkpoints
+
+| # | Where | When | Authority |
+|---|---|---|---|
+| 1 | Destination | Minting the profile | Local self-check; catches "this host cannot receive anything" early |
+| 2 | Source | Before packaging, if a profile was pasted | **Advisory** — the profile may be stale |
+| 3 | Destination | After upload, before the first write | **Authoritative** — live facts, re-read, never trusted from the manifest |
+
+Checkpoint 3 always runs, even when 2 passed. A profile can be a week old; core can have been
+updated; disk can have filled. The manifest's copy of the source facts is input to checkpoint 3,
+never a substitute for it.
+
+### 8.4 The gates
+
+**Hard block — the import cannot proceed.**
+
+| Gate | Why |
+|---|---|
+| Destination WP `version` < source | Core is not carried ([§6](#6-the-package-format)). The source's content expects the source's core. |
+| Destination `db_version` < source `db_version` | WordPress migrates the schema forward on upgrade and has **no downgrade path**. A database stamped at a newer `db_version` than the running core is not reconciled — core simply believes it is up to date. |
+| Multisite mismatch in either direction | Different schema (`wp_blogs`, `wp_site`, per-blog prefixes). Out of scope for v1 ([D6](#14-open-decisions-for-review)). |
+| Destination PHP < the highest `Requires PHP` among the source's active plugins and theme | A fatal on the first page load after the swap, with the rollback tables as the only way out. |
+| Source collation unavailable on the destination **and** not downgradable | `Unknown collation` aborts the import mid-stream. See below. |
+| Free space < package + extracted + 2× database | The atomic swap needs a second copy, and [D8](#14-open-decisions-for-review) keeps it for 30 days. |
+| No `CREATE` / `DROP` / `ALTER` on the destination database | Nothing can be staged at all. |
+
+**Warn — proceed, but say so, and record it in the completion report.**
+
+- Destination PHP **major** version ahead of the source's. Old plugin code meets removed
+  functions; this is the most common "site white-screens after migration" cause that is not our
+  bug.
+- MySQL ⇄ MariaDB crossing, or a major server-version jump.
+- PHP extensions present on the source but missing on the destination (`imagick`, `intl`,
+  `soap`, `zip`, `bcmath`, `gd`, `exif`).
+- Different server software — decides whether the `.htaccess` advice in
+  [§9.7](#97-manual-follow-ups) even applies.
+- Non-standard `WP_CONTENT_DIR` on either side.
+- Destination is not empty — show post, page, and user counts, and state plainly that this
+  content will be replaced.
+- Destination `max_allowed_packet` smaller than the source's largest single row.
+- `upload_max_filesize` / `post_max_size` below the chosen upload chunk size.
+- Table prefixes differ. Handled ([§9.6](#96-the-rest-of-the-survival-kit)), but reported.
+
+### 8.5 Collation, specifically
+
+This deserves its own note because it is the single most common hard failure when moving
+between hosts of different vintage, and because **the fix is already written and dead in this
+repo.**
+
+`DatabaseBase::replace_table_collations()` (`includes/Database/DatabaseBase.php:1160`) maps
+`utf8mb4_0900_ai_ci` → `utf8mb4_unicode_520_ci` → `utf8mb4_unicode_ci` → `utf8_unicode_ci`
+according to `$wpdb->has_cap()` on the machine it runs on. It is import-side code — it
+downgrades incoming SQL to what *this* server supports — and it has **zero call sites**. Like
+the `is_*_query()` predicates, it is scaffolding left behind when the import half was stripped
+from the All-in-One WP Migration fork.
+
+Wiring it up is most of the work. Two gaps to close while doing so:
+
+- **MariaDB's `uca1400` collations.** MariaDB 10.10+ emits `utf8mb4_uca1400_ai_ci`, which no
+  MySQL server recognises. The existing map does not cover it.
+- **`utf8mb4` → `utf8` is lossy.** It silently truncates at 4-byte characters — emoji, and a
+  great deal of CJK. The current code performs this downgrade with no signal. It must become an
+  explicit, warned-about choice, not a silent one, and preflight should surface it as a gate
+  rather than discovering it mid-import.
+
+Preflight compares the source's actual per-table collations (already available from the export)
+against `SHOW COLLATION` on the destination, and reports one of: *exact match*, *safe
+downgrade available*, *lossy downgrade only* (warn hard), or *no path* (block).
+
+---
+
+## 9. Surviving the database swap
 
 The hardest problem in the import half, and the one most likely to sink v1 if it is not
 designed in from the start.
 
-### 8.1 The problem
+### 9.1 The problem
 
 **The importer runs inside WordPress, on the database it is replacing.** The moment the source
 database lands, three things change underneath the running process:
 
-1. **The user table is replaced.** The current session's cookie no longer authenticates —
+1. **The users table is rewritten.** Even with the merge in
+   [§9.4](#94-users-merge-not-replace) preserving the acting account, the table is swapped
+   wholesale in one instant. The current session's cookie may stop authenticating —
    `manage_options` checks on subsequent step requests fail, and the import stalls half-done.
 2. **`active_plugins` is replaced** with the source's list, which does not include this plugin
    (it correctly excludes itself from its own archive). On the next request the importer is not
@@ -363,10 +485,10 @@ Duplicator avoids this entirely by running its installer as a standalone PHP scr
 WordPress. That is not available to us — "plugin installed on both sites" is a fixed constraint
 — so the mitigations below are the price of the chosen model.
 
-### 8.2 Replace, not merge
+### 9.2 Replace, not merge
 
-**Decision: import is a full replace. There is no row-level merge, for the users table or any
-other.**
+**Decision: import is a full replace, with exactly one deliberate exception — the users table
+([§9.4](#94-users-merge-not-replace)). No other table is merged row-by-row.**
 
 The instinct to merge rather than overwrite is understandable, but it is unsound for
 WordPress. Tables are joined by **integer primary keys that are not globally unique**. Source
@@ -393,11 +515,15 @@ but only because staging is a clone of live and the IDs are therefore already al
 **Merge is sound only when both databases share a common ancestor.** A general migration has
 none.
 
-A partial "skip the users table" option is *not* a safer middle ground — it produces posts
-whose `post_author` points at users that no longer exist. WordPress degrades quietly (blank
-author names) rather than erroring, which makes it worse, not better. Skipping users is only
-coherent alongside an authorship remap; see the content-only mode in
-[D7](#13-open-decisions-for-review).
+**The users exception does not weaken this argument** — it depends on it. What makes the users
+merge tractable is precisely that the destination's *content* is being replaced, so destination
+user IDs have almost nothing left pointing at them, while source user IDs never move.
+[§9.4](#94-users-merge-not-replace) sets that out in full. Extend merge to any table whose
+referents survive on both sides and the argument above applies again immediately.
+
+A related non-option: *skipping* the users table rather than merging it produces posts whose
+`post_author` points at users that no longer exist. WordPress degrades quietly (blank author
+names) rather than erroring, which makes it worse, not better.
 
 **If a genuine content merge is ever needed**, the sound mechanism is WXR export/import through
 WordPress's own importer, which re-creates content via WP APIs so WordPress assigns new IDs and
@@ -406,7 +532,7 @@ configuration, some meta dropped, media re-downloaded — and it is a *content* 
 migration tool. The dividing line: **SQL-level means replace; API-level means merge is possible
 but lossy.** Whoever assigns the IDs decides which you get.
 
-### 8.3 Atomic swap
+### 9.3 Atomic swap
 
 Rather than importing over the live tables, import beside them and switch in one step.
 
@@ -447,31 +573,189 @@ the package directory, so rollback is a restore rather than a rename. Slower, wi
 inconsistent window — but it works, and preflight tells the user which mode they are getting
 *before* they commit.
 
-### 8.4 Preserving destination access
+### 9.4 Users: merge, not replace
 
-Full replace means the destination's user accounts are gone, which is normally correct — but it
-should not mean the person running the migration is locked out of their own site.
+**Decision: the users table is the one deliberate exception to [§9.2](#92-replace-not-merge).
+The destination's accounts are kept, and the source's accounts are merged into them.** On by
+default.
 
-**Preserve the destination administrator, on by default.**
+The reason is the one that motivates it: the content arriving from the source was written by the
+source's users, so their accounts must come across or authorship breaks. And the people who
+already work on the destination should not lose their logins because a site landed on top of
+them.
 
-1. Before the swap, capture the acting user's `wp_users` row and all their `wp_usermeta` rows.
-2. After the swap, re-insert them with a **fresh auto-increment ID**.
-3. Grant `administrator` via the capabilities meta key, which is **prefix-dependent**
-   (`{prefix}capabilities`) — it must be written using the destination's *final* prefix, not the
-   source's.
+#### Why this is sound where general merge is not
 
-Nothing is renumbered and no foreign key is rewritten, because this **adds** a row rather than
-remapping one. That is precisely what makes it safe where merge is not.
+[§9.2](#92-replace-not-merge) rejects merge because renumbering a primary key requires rewriting
+every reference to it, including references buried inside serialized and JSON blobs that no
+schema declares. That argument still holds. It does not apply here, for a specific structural
+reason:
 
-Collision handling: if the preserved username or email already exists among the source's users,
-suffix the username and warn clearly. Do not silently overwrite the source account.
+> **We are merging into a table whose referencing side is being discarded.**
+> The destination's posts, comments, and meta do not survive the swap. So destination user IDs
+> have almost no referents left to rewrite — while source user IDs, which have referents
+> everywhere, never move at all.
 
-One useful side effect: because the destination's `wp-config.php` is preserved (so its salts
-are unchanged), and we re-insert the same username, the same password hash, and the
-`session_tokens` meta, the existing login cookie may well remain valid. **Do not rely on it** —
-the UI should assume re-login is required and say so.
+That inverts the usual cost. The rule that makes it work:
 
-### 8.5 The rest of the survival kit
+**Source user IDs are preserved verbatim. Only destination-origin users are renumbered.**
+
+Under that rule the complete set of columns needing a rewrite is:
+
+| Column | Rows affected |
+|---|---|
+| `usermeta.user_id` | Destination-origin users only |
+
+That is the whole list. `posts.post_author`, `comments.user_id`, and `links.link_owner` — the
+only other user-ID columns in the core schema — are untouched, because every row in them came
+from the source and every source ID is unchanged. Nothing inside a serialized blob needs
+inspecting, because no ID a blob might reference has moved.
+
+This is not "users are a special table." It is that this particular merge is one-directional
+into an ID space nobody else references.
+
+#### Matching identities
+
+For each destination user, find a source counterpart by `user_email` (case-insensitive) first,
+then `user_login`. Three outcomes:
+
+**(a) Match — same person on both sites.** Keep the **source row's ID**, so the source's content
+stays attributed. Reconcile the columns:
+
+| Field | Winner | Why |
+|---|---|---|
+| `ID` | Source | Everything already points at it |
+| `user_login`, `user_nicename` | Source | `/author/{nicename}` permalinks are linked from the migrated content and indexed |
+| `user_pass`, `user_activation_key` | **Destination** | These are the credentials the person used ten minutes ago to start the migration |
+| `session_tokens` meta | Destination | Best chance the current login survives the swap |
+| `display_name`, `user_url`, `description`, profile meta | Source | Matches the content |
+| Role and capabilities | Source — **except** the acting user is always guaranteed `administrator` | A source-side Editor must not be able to lock themselves out mid-import |
+
+When `user_login` changes as a result, say so on the completion screen in plain words: *you now
+sign in as `alice`, with the same password.* WordPress accepts the email address at the login
+form either way, so nobody is stranded.
+
+**(b) No match — destination-only account.** Insert with a **fresh ID** above the highest source
+ID, carry its `usermeta` with `user_id` remapped, and rewrite the prefix-dependent meta keys
+(below). The account has no content on the new site, which is expected.
+
+**(c) Login collision between different people.** `admin` on both sides with different emails is
+common. Suffix the destination one (`admin-2`), keep both, and report it prominently.
+
+#### The database will not catch our mistakes here
+
+`wp_users` declares `KEY user_login_key (user_login)` and `KEY user_email (user_email)` —
+**both non-unique** (`wp-admin/includes/schema.php`). WordPress enforces login and email
+uniqueness in `wp_insert_user()`, at the API layer, not in the schema. Since the merge writes
+rows with direct SQL, a duplicate does not error: it inserts cleanly, and afterwards
+`get_user_by()` returns whichever row the index happens to yield.
+
+So uniqueness is **our** invariant to enforce, before the swap, with an explicit verification
+pass over the staged table. Treat a duplicate as a failed import, not a warning.
+
+#### Prefix-dependent meta keys
+
+Several `usermeta` keys embed the **table prefix**, not a user ID:
+
+```
+{prefix}capabilities        {prefix}user_level        {prefix}user-settings
+{prefix}user-settings-time  {prefix}dashboard_quick_press_last_post_id
+```
+
+Source-origin rows carry the *source's* prefix and destination-origin rows carry the
+*destination's*. Every one of them must be rewritten to the destination's **final** prefix. The
+companion option `{prefix}user_roles` in `wp_options` needs the same treatment. Get this wrong
+and every user on the site is silently a subscriber — the classic symptom of a hand-rolled
+migration.
+
+#### Roles that no longer exist
+
+`{prefix}user_roles` comes from the source. A destination user whose role was
+`shop_manager` on a WooCommerce site landing on a source that has no WooCommerce ends up
+holding a capability key for a role that is not defined — which yields no capabilities at all,
+silently.
+
+After the swap, validate every preserved destination user's role against the source's role list.
+Anything unmatched is demoted to a configurable fallback (default `subscriber`), and named
+explicitly in the completion report.
+
+#### What this costs
+
+Honest residual risks, none of them silent-and-delayed in the way [§9.2](#92-replace-not-merge)
+describes:
+
+- A destination user ID appearing inside a plugin's serialized options (`wpseo`'s excluded
+  authors, a membership plugin's grants) will not be rewritten — but those options come from the
+  **source** and never referenced destination users to begin with, so the exposure is limited to
+  destination-side plugin state that is being discarded anyway.
+- Two accounts genuinely belonging to one person, with different emails and different logins on
+  each site, merge as two users. Detectable only by a human; offer a post-migration review list
+  rather than guessing.
+- The staged users table is larger than either input, so the row-count verification in
+  [§9.3](#93-atomic-swap) must expect that rather than flagging it.
+
+#### The alternative remains available
+
+**Replace mode** — source users only, plus re-inserting the acting administrator with a fresh ID
+— stays as an option for the common case of a brand-new destination whose only account is a
+throwaway admin. It is no longer the default.
+
+### 9.5 `wp-config.php`: never written, always reported
+
+**Decision: `wp-config.php` is never packaged, never overwritten, and never merged. The
+destination's own file is left byte-for-byte untouched.**
+
+Neither of the two obvious options is acceptable:
+
+- **Overwrite** hands the destination the source's database credentials, and the site cannot
+  connect to its own database. This is not a subtle failure; it is an immediate, total outage
+  with no UI left to fix it from.
+- **Merge** means parsing PHP and splicing statements into it. `wp-config.php` is executable
+  code, not configuration: hosts inject their own blocks, caching plugins insert `WP_CACHE`,
+  security plugins add `DISALLOW_FILE_EDIT`, some files `include` a second file, and a good
+  number carry conditional logic keyed on `$_SERVER`. A parser that is right 95% of the time
+  breaks one site in twenty in a way that leaves no working admin screen. There is no rollback
+  from a syntax error in `wp-config.php`.
+
+There is a third reason, which is the decisive one. **Almost nothing in that file should
+travel.** Grouping its usual contents:
+
+| Group | Examples | Should it move? |
+|---|---|---|
+| Database credentials | `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` | **Never.** Destination-specific by definition |
+| Security salts | `AUTH_KEY` … `NONCE_SALT` | **Never.** Copying them invalidates every destination session and gains nothing; keeping the destination's is what lets a login survive the swap ([§9.4](#94-users-merge-not-replace)) |
+| Table prefix | `$table_prefix` | **Never.** The destination's prefix is authoritative; the *staged tables* are renamed to match it instead ([§9.6](#96-the-rest-of-the-survival-kit)) |
+| Paths | `WP_CONTENT_DIR`, `WP_HOME`, `WP_SITEURL` | **Never.** Host-specific. `WP_HOME`/`WP_SITEURL` if present would override the URL rewrite and pin the site to the source domain |
+| Host and platform blocks | Anything the host injected | **Never.** Belongs to the machine, not the site |
+| Resource tuning | `WP_MEMORY_LIMIT`, `WP_MAX_MEMORY_LIMIT` | **Report.** May be needed, may be capped by the host |
+| Behaviour flags | `WP_DEBUG`, `WP_CACHE`, `DISALLOW_FILE_EDIT`, `AUTOSAVE_INTERVAL`, `WP_POST_REVISIONS` | **Report.** These genuinely belong to the site, not the server |
+| Plugin defines | License keys, API endpoints, feature flags | **Report, redacted.** Named, never printed |
+
+So the answer to "is there a better way" is: **stop treating it as a file to migrate, and treat
+it as a small set of facts to carry.**
+
+**How it works.** Export parses the source's `wp-config.php` **read-only**, extracting only
+`define()` calls and `$table_prefix` via `token_get_all()` — a tokeniser, never `include`, never
+a regex, and never the file itself. Only names on a **known-safe allowlist** have their values
+recorded; everything else is recorded as a name with its value replaced by `«redacted»`, and
+anything matching a secret-shaped pattern (`KEY`, `SALT`, `SECRET`, `TOKEN`, `PASS`) is redacted
+regardless of allowlist status. The result is a small array in `manifest.json`.
+
+On the destination, the completion screen shows a **copy-pasteable block** of just the lines
+worth adding, above the `/* That's all, stop editing! */` marker, with one line of explanation
+each. The user applies them, or does not.
+
+We do not write it for them, and this is deliberate. An automated edit to `wp-config.php` is the
+one action in this entire pipeline with no rollback path — the atomic swap cannot help, because
+a fatal parse error means WordPress never boots to run our rollback. A block of text the user
+pastes is slower and strictly safer.
+
+**Why not an mu-plugin instead?** Tempting, and wrong for most of these. `WP_MEMORY_LIMIT`,
+`WP_CACHE`, and `WP_CONTENT_DIR` are read during WordPress's own bootstrap, before mu-plugins
+load. Defining them later is silently ineffective — which is worse than not defining them,
+because the setting appears to have been applied.
+
+### 9.6 The rest of the survival kit
 
 All of these must be in place before the first line of `DatabaseImporter`:
 
@@ -481,20 +765,23 @@ All of these must be in place before the first line of `DatabaseImporter`:
   the protected storage directory, and hand it to the client. Step endpoints accept that token
   *instead of* relying solely on the cookie session, so authority survives the users table
   changing. Single-purpose, time-limited, deleted on completion. This is still needed even with
-  8.4, because there is a window between the swap and the admin re-injection in which no valid
-  session exists.
+  the users merge ([§9.4](#94-users-merge-not-replace)), because the swap replaces the session
+  store in one instant and the cookie's survival cannot be assumed.
 - **A temporary mu-plugin keeps the importer loaded**, written at import start and removed at
-  the end. This is the answer to problem 2 in 8.1.
+  the end. This is the answer to problem 2 in [§9.1](#91-the-problem).
 - **Ordering: files first, database last**, so the destructive step is also the last step.
-- **The destination's `wp-config.php` is never overwritten.** Its DB credentials must survive;
-  we import content, not configuration.
-- **Table prefix reconciliation.** Source and destination prefixes routinely differ.
-  `DatabaseBase` handles prefixes on export; import needs the mirror.
-- **Post-import messaging.** The user logs in with the *source* site's credentials, or with the
-  preserved destination admin from 8.4. State this before the import starts and again on the
-  completion screen — it is a classic support burden.
+- **The destination's `wp-config.php` is never touched** ([§9.5](#95-wp-configphp-never-written-always-reported)).
+- **Table prefix reconciliation.** Source and destination prefixes routinely differ. The
+  destination's prefix always wins: the staged tables are renamed to it during the swap, and the
+  prefix-bearing `usermeta` keys and the `{prefix}user_roles` option are rewritten to match
+  ([§9.4](#94-users-merge-not-replace)). `DatabaseBase` handles prefixes on export; import needs
+  the mirror.
+- **Post-import messaging.** With the users merge, most people keep the credentials they already
+  had — but logins reconciled to a source username change, and the acting session may need
+  re-establishing. State all of it before the import starts and again on the completion screen;
+  it is a classic support burden.
 
-### 8.6 Manual follow-ups
+### 9.7 Manual follow-ups
 
 Some things cannot be migrated safely because they describe the *environment*, not the site.
 Copying them can actively break the destination — a source `.htaccess` applied to an nginx host
@@ -505,9 +792,8 @@ completion screen presents a short "manual steps" list:
 
 - **Custom `.htaccess` rules** beyond WordPress's own permalink block. The block itself is
   regenerated by the permalink flush in `Fixups`; anything else is shown for review.
-- **Custom `wp-config.php` constants** — `WP_MEMORY_LIMIT`, `WP_CACHE`, `WP_DEBUG`, custom
-  paths, and plugin defines such as license keys. Never copied, always listed. Values that
-  look like secrets are named but not printed.
+- **Custom `wp-config.php` constants**, as a copy-pasteable block. Covered in full in
+  [§9.5](#95-wp-configphp-never-written-always-reported).
 - **PHP version and extension deltas** between source and destination, since a source plugin
   may depend on an extension the destination lacks.
 - **Server software difference** (Apache vs nginx vs LiteSpeed), which decides whether the
@@ -516,26 +802,28 @@ completion screen presents a short "manual steps" list:
 This list is cheap to produce, and it converts the most common category of post-migration
 support ticket into something the user can see and act on immediately.
 
-### 8.7 Summary of the decision
+### 9.8 Summary of the decision
 
 | | |
 |---|---|
-| **Default** | Full replace — the only sound SQL-level operation |
-| **Plus** | Preserve the destination admin account (default on) |
+| **Default** | Full replace of every table — the only sound SQL-level operation |
+| **Except** | **Users are merged**, destination accounts kept, source IDs preserved ([§9.4](#94-users-merge-not-replace)) |
 | **Plus** | Atomic swap, with `wpold_` tables retained for rollback |
-| **Not** | Row-level merge, for users or anything else |
+| **Plus** | Compatibility gated before packaging and again before the first write ([§8](#8-compatibility-the-destination-handshake)) |
+| **Not** | Row-level merge for any table other than users |
+| **Not** | Any write to `wp-config.php`, ever ([§9.5](#95-wp-configphp-never-written-always-reported)) |
 | **Fallback** | In-place import with a pre-import SQL backup, when `RENAME TABLE` is unavailable |
 | **File scope** | Content only — WordPress core is never packaged ([§6](#6-the-package-format)) |
 | **Rollback window** | `wpold_` retained until the user confirms success, hard cap **30 days** |
 | **Out of scope** | True content merge — that is a WXR-based feature, not this pipeline |
 
 **This area still needs a spike before phase 4 is estimated with confidence** — specifically
-the `RENAME TABLE` probe across real shared hosts, and the behaviour of the preserved session
-cookie across the swap.
+the `RENAME TABLE` probe across real shared hosts, the behaviour of the session cookie across
+the swap, and the users merge against a pair of real sites with overlapping accounts.
 
 ---
 
-## 9. Phased delivery
+## 10. Phased delivery
 
 Sizes are relative (S/M/L/XL), not calendar estimates.
 
@@ -545,7 +833,7 @@ Mechanical, but touches everything, so it goes first — doing it later means re
 reference written in between.
 
 - Namespace, constants, function prefix, text domain, option names, main plugin file, REST
-  namespace, CSS/JS prefixes. Target names pending [D1](#13-open-decisions-for-review).
+  namespace, CSS/JS prefixes. Target names pending [D1](#14-open-decisions-for-review).
 - Delete wp.org machinery: `.wporg/`, `readme.txt`, `svn-deploy-*.yml`.
 - Collapse the four-place version scheme to **one** source of truth — read the version from the
   plugin header at build time so `build/` can never diverge again.
@@ -594,17 +882,22 @@ mid-run and re-driving resumes correctly.
 - Rework `Preflight/Checker` to return a structured `Report` and **fail closed** when a check
   cannot complete (**2.6, 4.6**). Include disk-space and upload/execution limit detection, and
   the `CREATE`/`RENAME`/`DROP` scratch-table probe that decides which import mode
-  [§8.3](#83-atomic-swap) can use.
-- **Destination WordPress version >= source** is a hard gate, since core is not carried
-  ([§6](#6-the-package-format)). Also record `WP_CONTENT_DIR`, PHP version and extensions, and
-  server software for the manual-follow-ups report ([§8.6](#86-manual-follow-ups)).
+  [§9.3](#93-atomic-swap) can use.
+- **The compatibility handshake** ([§8](#8-compatibility-the-destination-handshake)):
+  `SiteProfile` mints and parses the pasteable destination profile, `Compatibility` compares two
+  profiles and returns gates plus warnings, and the export screen renders the verdict *before*
+  packaging begins. Skipping the paste is allowed and marks the package "unverified
+  destination".
+- Record `WP_CONTENT_DIR`, PHP version and extensions, `.htaccess` extras, and the
+  `wp-config.php` constant summary ([§9.5](#95-wp-configphp-never-written-always-reported)) into
+  the manifest for the destination's follow-up report.
 
 **Exit:** a non-technical user exports a real site through wp-admin and downloads a verified
 package. Closing and reopening the tab mid-export resumes.
 
 ### Phase 4 — Import in the UI · **XL** — *the genuinely new work*
 
-None of this exists today. Largest and riskiest phase; **spike [§8](#8-surviving-the-database-swap) first.**
+None of this exists today. Largest and riskiest phase; **spike [§9](#9-surviving-the-database-swap) first.**
 
 - Chunked upload endpoint + client, with resume and assembly verification.
 - Drop-in-folder detection as the large-site escape hatch.
@@ -612,22 +905,33 @@ None of this exists today. Largest and riskiest phase; **spike [§8](#8-survivin
   escaping the root. This is untrusted archive input and the primary security surface.
 - `DatabaseImporter`: stream SQL into **temp-prefix tables**, chunk on statement boundaries
   respecting `max_allowed_packet`, wire up the dead `is_*_query()` predicates.
-- **Atomic swap** ([§8.3](#83-atomic-swap)): verify, multi-table `RENAME`, retain `wpold_` for
+- **Atomic swap** ([§9.3](#93-atomic-swap)): verify, multi-table `RENAME`, retain `wpold_` for
   rollback. Plus the in-place-with-backup fallback when the preflight probe says `RENAME` is
   unavailable, and view recreation after the swap.
-- **Destination admin preservation** ([§8.4](#84-preserving-destination-access)): capture row +
-  usermeta before, re-insert with a fresh ID after, prefix-correct capabilities key, collision
-  suffixing.
+- **`UserMerger`** ([§9.4](#94-users-merge-not-replace)) — the largest single piece of new
+  logic in this phase. Match destination users to source users by email then login; keep source
+  IDs; renumber only destination-origin `usermeta.user_id`; rewrite prefix-bearing meta keys and
+  `{prefix}user_roles`; enforce login and email uniqueness ourselves, since the schema does not;
+  suffix genuine collisions; guarantee the acting user `administrator`; demote roles the source
+  does not define. Replace mode stays available as a non-default option.
+- **Authoritative pre-write compatibility check** (checkpoint 3 in
+  [§8.3](#83-the-three-checkpoints)) against live destination facts, plus the collation plan —
+  which means finally wiring up the dead `replace_table_collations()`
+  ([§8.5](#85-collation-specifically)) and extending it to MariaDB's `uca1400` collations.
+- **`wp-config.php` constant report** ([§9.5](#95-wp-configphp-never-written-always-reported)):
+  `token_get_all()` extraction on the source, allowlist plus secret redaction, copy-pasteable
+  block on the completion screen. Nothing is written to the file.
 - `SearchReplace` + prefix reconciliation via `replace_serialized_values()`.
 - `Fixups`: `siteurl`/`home`, permalinks, dropins, `autoload` hygiene.
-- The rest of the survival kit ([§8.5](#85-the-rest-of-the-survival-kit)): file-based
+- The rest of the survival kit ([§9.6](#96-the-rest-of-the-survival-kit)): file-based
   checkpoint, import-window token auth, temporary mu-plugin, post-import credential messaging.
 - Rollback: a "revert this migration" action while `wpold_` tables survive.
 - Import UI: entirely new — upload, verify, preview manifest, confirm, progress, completion.
 
-**Exit:** round-trip green (see [§11](#11-testing-strategy)) — export site A, import into clean
-site B at a different URL *and* table prefix, B functionally equivalent to A; the preserved
-destination admin can still log in; and a deliberately failed import leaves site B untouched.
+**Exit:** round-trip green (see [§12](#12-testing-strategy)) — export site A, import into site B
+at a different URL *and* table prefix, B functionally equivalent to A; B's pre-existing users can
+still log in and A's authorship is intact; and a deliberately failed import leaves site B
+untouched.
 
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
@@ -670,7 +974,7 @@ infrastructure.
 
 ---
 
-## 10. What gets deleted
+## 11. What gets deleted
 
 Current PHP is ~7000 lines across `includes/` + root.
 
@@ -690,7 +994,7 @@ end up **larger** than today, not smaller, while being far simpler per unit of f
 
 ---
 
-## 11. Testing strategy
+## 12. Testing strategy
 
 Today there are **zero PHP tests**, and Cypress stubs the entire REST layer with
 `cy.intercept` — it verifies React renders against fixtures and cannot catch a single defect in
@@ -710,29 +1014,42 @@ the analysis. This must change before the importer is written, not after.
 4. **Fault injection.** Kill mid-export, resume, assert validity. Corrupt a part, assert
    `verify` catches it and import refuses. **Kill mid-database-import and assert the live site
    is completely untouched** — this is the property the atomic swap exists to provide, so it is
-   the test that proves [§8.3](#83-atomic-swap) works.
+   the test that proves [§9.3](#93-atomic-swap) works.
 5. **Swap and rollback.** Assert the `wpold_` tables are complete and that a rollback restores
    the destination exactly. Run the round trip a second time with `RENAME TABLE` privileges
    revoked, to exercise the in-place fallback path.
-6. **Destination admin preservation.** Assert the preserved admin can log in after import, that
-   their capabilities key uses the destination's final prefix, and that a username collision
-   with a source user is suffixed rather than silently overwriting either account.
-7. **Contract tests.** Snapshot the manifest schema and (from v3) `--format=json`; a change
-   must fail CI loudly.
-8. **Cypress** should drive at least one **unstubbed** path end to end.
+6. **Users merge** ([§9.4](#94-users-merge-not-replace)). Provision A and B with a deliberately
+   nasty account overlap: one shared email with different logins, one shared login with
+   different emails, one account unique to each side, and a destination user holding a role the
+   source does not define. Then assert — every source post's `post_author` still resolves to the
+   right person; every pre-existing destination user can log in; logins and emails are unique in
+   the final table; capability keys use the destination's final prefix; the undefined role is
+   demoted and reported; and the collision is suffixed rather than silently overwriting either
+   account. Run it again with a different table prefix on each side.
+7. **Compatibility gates** ([§8](#8-compatibility-the-destination-handshake)). Assert each hard
+   gate blocks: destination on older WP, older `db_version`, multisite mismatch, PHP below a
+   plugin's `Requires PHP`, and a source collation with no path on the destination. Assert the
+   lossy `utf8mb4` → `utf8` downgrade warns loudly rather than proceeding quietly. Assert a
+   stale profile is rejected and that checkpoint 3 still runs when checkpoint 2 passed.
+8. **Contract tests.** Snapshot the manifest schema, the site-profile schema, and (from v3)
+   `--format=json`; a change must fail CI loudly.
+9. **Cypress** should drive at least one **unstubbed** path end to end.
 
 CI: replace the wp.org/SVN workflows with lint + PHPUnit + round-trip. The round-trip job is
 slow — run it on PRs to `main` rather than every push.
 
 ---
 
-## 12. Risk register
+## 13. Risk register
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **Database-swap survival** ([§8](#8-surviving-the-database-swap)) | Import stalls half-done, site left broken | Atomic swap collapses the inconsistent window to an instant; file-based checkpoint + token auth + mu-plugin cover the rest. Spike before phase 4 is estimated |
+| **Database-swap survival** ([§9](#9-surviving-the-database-swap)) | Import stalls half-done, site left broken | Atomic swap collapses the inconsistent window to an instant; file-based checkpoint + token auth + mu-plugin cover the rest. Spike before phase 4 is estimated |
 | **`RENAME TABLE` unavailable or restricted** | Falls back to in-place import, reopening a real inconsistent window | Preflight probes with a scratch table rather than inferring from grants; pre-import SQL backup in the fallback path; UI states which mode is in effect before the user commits |
 | **2x database size needed for the swap** | Import refused on tight-quota hosts | Counted in the preflight free-space check alongside the file-side estimate |
+| **Users merge writes rows the schema will not police** ([§9.4](#94-users-merge-not-replace)) | Duplicate logins insert silently; `get_user_by()` then returns an arbitrary row | `user_login`/`user_email` uniqueness verified explicitly on the staged table before the swap; a duplicate fails the import rather than warning |
+| **Destination arrives incompatible after the package is built** | Wasted export, upload, and the user's afternoon | Pasteable destination profile checked before packaging ([§8.2](#82-the-destination-profile)), and re-checked authoritatively before the first write |
+| **Collation with no path on the destination** | `Unknown collation` aborts the import mid-stream | Gated in preflight; the already-written `replace_table_collations()` wired up and extended to MariaDB `uca1400` ([§8.5](#85-collation-specifically)) |
 | **Import is entirely new and large** | Phase 4 slips | Round-trip test is the definition of done, not a formality |
 | **Chunked upload on hostile hosts** | v1 unusable for its target user | Drop-in-folder escape hatch ships in v1; constraint simulation in CI |
 | **Path traversal on import** | Arbitrary file write from a malicious package | Untrusted input from day one; dedicated tests; never `extractTo()` blindly |
@@ -744,7 +1061,7 @@ slow — run it on PRs to `main` rather than every push.
 
 ---
 
-## 13. Open decisions for review
+## 14. Open decisions for review
 
 **D1 — Naming.** Recommend `NewfoldLabs\WP\SiteMigrator\`, prefix `nfd_sm_`, constants
 `NFD_SM_*`, slug and text domain `nfd-site-migrator`, option key `nfd_site_migrator`. Matches
@@ -780,16 +1097,38 @@ The root part survives as `root-extras.zip`, a strict allowlist of non-core top-
 because losing custom `.htaccess` rules and domain-verification files breaks sites in ways the
 database cannot repair.
 
-> **Still open — the database side.** The original D7 asked a different question: should a mode
-> exist that *keeps the destination's user accounts* and remaps imported authorship to one
-> chosen user? That is independent of file scope. Default remains full replace
-> ([§8.2](#82-replace-not-merge)) plus destination-admin preservation
-> ([§8.4](#84-preserving-destination-access)). Needs an explicit answer.
+**Resolved 2026-08-23, database side:** the destination's user accounts are **kept**, and the
+source's accounts are **merged into them** — not remapped to a single chosen user, and not
+replaced. Source user IDs are preserved so migrated authorship stays intact; only
+destination-origin users are renumbered. Full design in
+[§9.4](#94-users-merge-not-replace). Replace mode survives as a non-default option. Every other
+table remains full-replace ([§9.2](#92-replace-not-merge)).
 
 **D8 — Rollback retention.** **Resolved 2026-08-22:** `wpold_` tables are retained until the
 user confirms the migration succeeded, with a dashboard notice, and a **hard cap of 30 days**
 after which they are dropped automatically. Preflight's free-space check must account for the
 second copy persisting for that window.
+
+**D9 — Users merge: conflict rules.** The merge itself is settled
+([D7](#14-open-decisions-for-review), [§9.4](#94-users-merge-not-replace)); two sub-choices
+inside it are judgement calls, and both are currently set to a recommended default rather than a
+confirmed one.
+
+- **Whose password wins on a matched account?** Recommend the **destination's** — it is the
+  credential the person used minutes earlier to start the migration, and a source password set
+  up years ago by an agency may be unknown to them. *Alternative:* source, for a cleaner "the
+  site moved wholesale" story, at the cost of a likely password-reset round trip.
+- **Whose role wins on a matched account?** Recommend the **source's**, since the content and
+  the role definitions both come from there — with a hard override that the acting user is
+  always `administrator`, so nobody can demote themselves out of finishing the import.
+  *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
+  ordering once custom roles are involved.
+
+**D10 — Is the destination profile paste mandatory?** Recommend **no** — the export must still
+work with no destination in hand (backups, or a destination not yet provisioned), with the
+package marked "unverified destination" and every gate enforced at import time instead
+([§8.2](#82-the-destination-profile)). *Alternative:* mandatory, which guarantees no wasted
+export but blocks a legitimate use.
 
 ---
 
@@ -808,7 +1147,7 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 2.7 task queue cannot recover | 1 | Dependency removed; browser is the scheduler |
 | 3.1 `append_eof()` inverted | 2 | `Archiver/` deleted |
 | 3.2 handle leaks | 2 | `PackageWriter` owns handle lifecycle |
-| 3.3 autoloaded state blob | 2 | On-disk checkpoint (also required by §8) |
+| 3.3 autoloaded state blob | 2 | On-disk checkpoint (also required by §9) |
 | 3.4 `set_status()` per file | 2 | `ProgressReporter` |
 | 3.5 progress is theatre | 2, 3 | Real byte-based progress |
 | 3.6 `vsprintf` placeholder mismatch | 2 | Option exclusion list rebuilt |
@@ -818,4 +1157,5 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 3.10 redirect without `exit` | 1 | Deleted |
 | 3.11 dead encryption params | 2 | `Archiver/` deleted |
 | 3.12 `set_time_limit()` in a getter | 1 | Deleted |
+| 3.13 dead import scaffolding | 4 | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
 | 4.1–4.8 refactors | 2, 3, 8 | As described above |

@@ -325,6 +325,7 @@ than working around it.
 | 3.10 | **`wp_safe_redirect()` without `exit`**, firing on every `admin_init` including AJAX — and it hijacks bulk plugin activation. | `functions.php` (redirect handler) |
 | 3.11 | **Dead/unsafe code** — `add_file()`'s `$encrypt` / `$encrypt_pass = 'pass'` parameters are never used with a real key; `nfd_bhsm_encrypt_string()` would encrypt each 512KB chunk under an independent IV, which no extractor could reverse. `Archiver` defines `replace_forward_slash_with_directory_separator()` etc. as protected methods *and* `functions.php` defines them again as globals — `Compressor` calls the globals. | `Archiver/Compressor.php:35`, `functions.php` |
 | 3.12 | **`set_time_limit( 90 )` buried in a getter** (`nfd_bhsm_get_dir_size`). | `functions.php:224` |
+| 3.13 | **The import half's scaffolding is present and dead.** `DatabaseBase::replace_table_collations()` downgrades incoming collations to what the *local* server supports (`utf8mb4_0900_ai_ci` → `utf8mb4_unicode_520_ci` → `utf8mb4_unicode_ci` → `utf8_unicode_ci` via `$wpdb->has_cap()`) and has **zero call sites**, as do the `is_*_query()` predicates reachable only from the uncalled `is_atomic_query()`. This is leftover import code from the All-in-One WP Migration fork. Two latent problems if it is revived as-is: it does not know MariaDB's `utf8mb4_uca1400_*` collations, and its `utf8mb4` → `utf8` step silently truncates 4-byte characters (emoji, much CJK) with no warning. | `Database/DatabaseBase.php:1160`, `:1291` |
 
 ---
 
@@ -630,11 +631,18 @@ sequenceDiagram
 | External deps | CWM API, hiive.cloud geo, wp-module-tasks | None |
 | Failure signal | Three disagreeing oracles | One structured `Report`, fails closed |
 
+> Before any of this runs, the destination mints a small pasteable **compatibility profile**
+> that the source checks *before packaging* — WordPress and `db_version` floors, PHP, collation
+> availability, disk space — and the destination re-checks authoritatively before its first
+> write. See `implementation-plan.md` §8.
+>
 > The database swap step imports into temp-prefix tables and switches with a single atomic
 > `RENAME TABLE`, so a failed import leaves the destination untouched and rollback is a second
-> rename; the destination administrator is preserved across it. Import is a **full replace** —
-> there is no row-level merge. See `implementation-plan.md` §8 for the reasoning and the
-> fallback when `RENAME TABLE` is unavailable.
+> rename. Import is a **full replace** for every table except **users**, which are *merged*:
+> destination accounts are kept, source accounts are merged in with their IDs preserved so
+> migrated authorship stays intact. `wp-config.php` is never written on either side. See
+> `implementation-plan.md` §9 for the reasoning and the fallback when `RENAME TABLE` is
+> unavailable.
 
 v2 replaces the manual download/upload band with a direct pull from destination to source; v3
 drives the identical core from WP-CLI. Neither changes the shape above.
