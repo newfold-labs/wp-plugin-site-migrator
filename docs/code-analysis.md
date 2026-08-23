@@ -566,10 +566,11 @@ sequenceDiagram
 
 ### 7.2 Proposed flow — v1 (manual download / upload)
 
-The plugin is installed on **both** sites. **No network link between them** — the user carries
-both the compatibility profile and the package by hand. Same core drives both halves; the
-browser is the scheduler. See `implementation-plan.md` §1.1 for the same sequence in plain
-language.
+The plugin is installed on **both** sites. The **package** is carried by hand — streaming it
+between servers is what v2 adds. The **compatibility profile** is a few hundred bytes and is
+fetched live over a paired connection, with a manual paste as the fallback when the destination
+cannot be reached. Same core drives both halves; the browser is the scheduler. See
+`implementation-plan.md` §1.1 for the same sequence in plain language.
 
 ```mermaid
 sequenceDiagram
@@ -579,14 +580,24 @@ sequenceDiagram
     participant D as Destination site
 
     rect rgb(255,250,235)
-    note over U,D: Handshake — no network link; the user carries a code
-    U->>D: Open Site Migrator → Receive a site
-    D->>D: Gather local facts (WP, db_version, PHP, DB, collations, disk)
+    note over U,D: Pairing — the small check goes over the wire; the package does not
+    U->>D: Open Site Migrator → Receive a site → Pair
+    D-->>U: Site URL + single-use pairing code
+    U->>S: Paste URL + code into Export
+    S->>D: GET /profile (code-authenticated, sslverify on, 404 if unauth)
+    D->>D: Gather live facts (WP, db_version, PHP, DB, collations, disk)
     D->>D: RENAME TABLE scratch probe → import mode
-    D-->>U: Pasteable site profile (7-day expiry)
-    U->>S: Paste profile into Export
-    S->>S: Compare offline → gates + warnings + collation plan
+    D-->>S: Site profile
+    S->>S: Compare → gates + warnings + collation plan
     S-->>U: Verdict (green / warn / blocked, with reason)
+    opt Gate blocked and fixable
+        U->>D: Update core / free disk / raise a limit
+        U->>S: Re-check (re-fetches live; no round trip)
+    end
+    alt Destination unreachable (outbound HTTP blocked, auth wall, no DNS)
+        U->>D: Copy profile blob manually
+        U->>S: Paste blob → same gates, snapshot instead of live
+    end
     end
 
     rect rgb(240,245,255)
@@ -641,13 +652,14 @@ sequenceDiagram
 | Archive format | Custom binary container | Standard zip + loose large files |
 | Restore | Performed by CWM | Performed by the plugin |
 | Destination | Never contacted | Runs the same plugin |
-| External deps | CWM API, hiive.cloud geo, wp-module-tasks | None |
+| External deps | CWM API, hiive.cloud geo, wp-module-tasks | None — the only outbound call is source → destination, and it degrades to a paste |
 | Failure signal | Three disagreeing oracles | One structured `Report`, fails closed |
 
-> Before any of this runs, the destination mints a small pasteable **compatibility profile**
-> that the source checks *before packaging* — WordPress and `db_version` floors, PHP, collation
-> availability, disk space — and the destination re-checks authoritatively before its first
-> write. See `implementation-plan.md` §8.
+> Before any of this runs, the source **pairs** with the destination and reads its
+> **compatibility profile** live — WordPress and `db_version` floors, PHP, collation
+> availability, disk space — so a blocked gate surfaces *before packaging* and can be fixed and
+> re-checked in place. The destination re-checks authoritatively before its first write. See
+> `implementation-plan.md` §8.
 >
 > The database swap step imports into temp-prefix tables and switches with a single atomic
 > `RENAME TABLE`, so a failed import leaves the destination untouched and rollback is a second

@@ -48,7 +48,7 @@ significantly.
 
 | Release | Interface | Transfer | Consumer |
 |---|---|---|---|
-| **v1** | wp-admin UI on both sites | Manual download → upload | Any WordPress user |
+| **v1** | wp-admin UI on both sites | Package: manual download → upload. Compatibility check: live paired fetch | Any WordPress user |
 | **v2** | wp-admin UI on both sites | Direct pull, source → destination | Any WordPress user |
 | **v3** | WP-CLI | Local package or direct pull | Hosting migration tooling |
 
@@ -64,8 +64,8 @@ plugin's job, not theirs.
 | # | Where | Step |
 |---|---|---|
 | 1 | Both | Install and activate the plugin on the **source** and the **destination**. |
-| 2 | Destination | **Receive a site → Check compatibility.** The plugin gathers local facts and renders a short code. Copy it. |
-| 3 | Source | Paste that code into the export screen. The source compares it against its own facts **offline** and shows a verdict: green, warnings, or blocked with a reason. Pasting is optional ([D10](#14-open-decisions-for-review)); skip it and the package is marked *unverified destination*. |
+| 2 | Destination | **Receive a site → Pair.** The plugin shows the site URL and a short single-use pairing code. Copy both. |
+| 3 | Source | Paste them into the export screen. The source calls the destination directly, pulls its **live** facts, and shows a verdict: green, warnings, or blocked with a reason. Fix a blocked gate and click **Re-check** — no round trip. If the destination is unreachable, fall back to pasting a profile blob; if there is no destination yet, skip the check and the package is marked *unverified destination* ([§8.2](#82-pairing-the-source-asks-the-destination-directly)). |
 | 4 | Source | **Start export.** The browser drives `POST /export/step` in a loop until done. Output is a package directory: manifest, database dump, zipped content parts, and any oversized files stored loose. Closing the tab is safe — reopening resumes. |
 | 5 | Source → Destination | **Download the parts, then upload them.** Download is authenticated and `Range`-resumable; upload is chunked so it does not meet `upload_max_filesize`. For very large sites, the escape hatch is to place the parts into the destination's storage directory by SFTP and let it detect them. |
 | 6 | Destination | **Verify and preview.** Checksums per part, manifest read, and the *authoritative* compatibility re-check against live facts. The destination then shows exactly what will happen: URL change, prefix change, which accounts merge, what will be replaced. Nothing has been written yet. |
@@ -76,9 +76,11 @@ plugin's job, not theirs.
 
 Three properties of this sequence are load-bearing and easy to lose:
 
-- **Nothing connects.** In v1 the source never talks to the destination. The code in step 2 is
-  a description of a server, not a credential — it grants no access and opens no port. That is
-  what lets v1 work on hosts that block outbound HTTP, and it is exactly what v2 changes.
+- **The 400-byte check and the 20GB transfer are separate problems.** The source pairs with the
+  destination to read its profile, because that is small, live, and re-runnable. The *package*
+  is still hand-carried in v1 — streaming that between two servers is what v2 is for. Every
+  step from 3 onward degrades gracefully to a manual path when the destination cannot be
+  reached at all.
 - **Verification happens before the commit, not after.** Step 8 verifies the staged tables while
   the live site is still intact, because after the swap "verify" has nothing useful to offer —
   the change is already made. The atomic swap exists precisely so that all checking can happen
@@ -219,7 +221,8 @@ includes/
       Fixups.php            NEW. prefix reconciliation, siteurl/home, permalinks, dropins
     Preflight/
       Checker.php           local-only checks (was MigrationChecks/)
-      SiteProfile.php       NEW. mint + parse the destination compatibility profile
+      SiteProfile.php       NEW. gather local facts; serve + parse the profile
+      Pairing.php           NEW. issue/redeem single-use codes; authenticated profile fetch
       Compatibility.php     NEW. compare two profiles -> gates, warnings, collation plan
       Report.php            structured result; no boolean smuggled through a filter chain
     Progress/
@@ -390,19 +393,76 @@ and far too late. By then the user has waited through a full export, downloaded 
 file, and uploaded it again, only to be told their destination runs an older WordPress.
 
 So compatibility is checked at **three points**, and the earliest one is the one that saves the
-user's afternoon.
+user's afternoon. It does not require the package transfer to be solved first — see
+[§8.2](#82-pairing-the-source-asks-the-destination-directly).
 
-### 8.2 The destination profile
+### 8.2 Pairing: the source asks the destination directly
 
-The destination mints a short, pasteable **site profile** before anything else happens.
+The package must be hand-carried in v1 — it is gigabytes, and the transfer machinery to stream
+it is what v2 is *for*. The compatibility profile is roughly 400 bytes. Those are different
+problems, and forcing the small one through the large one's constraint buys nothing.
 
-1. On the destination: **Receive a site → Check compatibility**. The plugin gathers local facts
-   and renders a base64 blob (a few hundred bytes) with a copy button.
-2. The user pastes it into the source's export screen.
-3. The source decodes it, compares against its own facts, and shows a verdict **before the
-   first byte is packaged**.
+**So the source fetches the profile from the destination over HTTP, and the user pastes a
+pairing code once.**
 
-The profile carries:
+1. On the destination: **Receive a site → Pair.** It generates a short, single-use code and
+   shows it with the site URL:
+
+   ```
+   https://destination.example.com   A7K2-9F3P-XQ41
+   ```
+
+2. The user pastes both into the source's export screen.
+3. The source calls the destination's profile endpoint, authenticated with that code, and gets
+   **live** facts back. The verdict appears in seconds.
+
+What this buys over a pasted snapshot:
+
+- **The facts are current**, not a snapshot from whenever the blob was minted. No staleness, no
+  expiry window to reason about.
+- **The check is re-runnable.** A blocked gate is usually fixable — update core, free some disk,
+  raise a limit. With a live pairing that is *fix it, click Re-check, green*. With a pasted blob
+  it is a round trip back to the other site to re-mint and re-copy, every time.
+- **It de-risks v2.** v2 needs an authenticated channel from source to destination. Building the
+  pairing handshake now means v2 is "stream the package over the channel that already exists"
+  rather than a new subsystem invented late.
+
+This does not collapse v1 into v2. What v2 adds is sustained, resumable, multi-gigabyte transfer
+between two servers — timeouts, bandwidth, ranged reads served to a machine instead of a
+browser. Fetching a few hundred bytes once is not a down payment on that; it is a different
+thing that happens to use the same protocol.
+
+#### The endpoint must not become a version oracle
+
+The profile discloses exact WordPress, PHP, and database versions, loaded extensions, and free
+disk space. That is reconnaissance data. An unauthenticated endpoint present on every install of
+this plugin would let anyone scan for it and harvest a list of sites running software with known
+CVEs. So:
+
+- **Unauthenticated requests get `404`, not `401`.** The endpoint must not be discoverable, and
+  must not confirm the plugin is even installed.
+- The pairing code is **single-use, short-lived, and rate-limited** on the destination.
+- Its scope is **read the profile, nothing else**. It is not a general API key. v2's broader
+  access is a separate, explicit authorization step.
+- The destination records the pairing and shows it in its own UI, so an unexpected one is
+  visible.
+- **TLS verification is unconditionally on** — `'sslverify' => true`, never `is_ssl()`
+  (finding 2.5). If the destination is plain HTTP, say so plainly: the profile crosses the wire
+  in the clear.
+
+#### Fallback: paste the profile
+
+Outbound HTTP from PHP is blocked or firewalled on a meaningful share of hosts, and plenty of
+destinations are not publicly reachable at all — behind HTTP basic auth, a staging password, an
+IP allowlist, a VPN, or simply not yet DNS-pointed. When the fetch fails the source says so and
+offers the manual path: go back to the destination, copy the profile blob, paste it here.
+
+Same comparison, same gates, same verdict. What it loses is liveness and one-click re-checking,
+so it is the fallback rather than the default. Skipping the check entirely stays allowed too —
+exporting as a backup, or to a destination that does not exist yet — and marks the package
+*unverified destination*.
+
+The profile carries, by either route:
 
 | Group | Facts |
 |---|---|
@@ -410,28 +470,22 @@ The profile carries:
 | PHP | `version`, loaded extensions, `memory_limit`, `max_execution_time`, `upload_max_filesize`, `post_max_size`, `disable_functions`, `open_basedir` |
 | Database | server `version`, MySQL vs MariaDB, `max_allowed_packet`, available charsets and collations, `RENAME TABLE` probe result, granted privileges as observed |
 | Host | free disk space at `WP_CONTENT_DIR`, server software, `is_ssl()` |
-| Envelope | `schema_version`, minted-at timestamp, 7-day expiry, random profile ID |
+| Envelope | `schema_version`, minted-at timestamp, 7-day expiry *(pasted route only)*, random profile ID |
 
-It is **facts about a server, not secrets** — no credentials, no salts, no site content. It is
-signed with an HMAC over a key stored in the destination's options so the destination can later
-confirm a package was built against *its own* profile, but it is not encrypted, and the UI says
-plainly what it contains.
-
-**Pasting is optional.** Skipping it is legitimate — exporting as a backup, or to a destination
-that does not exist yet. Skip it and the export proceeds with a clear "unverified destination"
-badge on the package, and every gate below is enforced at import time instead.
+It is **facts about a server, not secrets** — no credentials, no salts, no site content.
 
 ### 8.3 The three checkpoints
 
 | # | Where | When | Authority |
 |---|---|---|---|
-| 1 | Destination | Minting the profile | Local self-check; catches "this host cannot receive anything" early |
-| 2 | Source | Before packaging, if a profile was pasted | **Advisory** — the profile may be stale |
-| 3 | Destination | After upload, before the first write | **Authoritative** — live facts, re-read, never trusted from the manifest |
+| 1 | Destination | Generating the profile | Local self-check; catches "this host cannot receive anything" before the user leaves the page |
+| 2 | Source | Before packaging | **Advisory.** Live when paired, a snapshot when pasted, absent when skipped |
+| 3 | Destination | After upload, before the first write | **Authoritative** — live facts, re-read on the machine being changed |
 
-Checkpoint 3 always runs, even when 2 passed. A profile can be a week old; core can have been
-updated; disk can have filled. The manifest's copy of the source facts is input to checkpoint 3,
-never a substitute for it.
+Checkpoint 3 always runs, even when 2 passed, and even when 2 was live. Between them the user
+has exported, downloaded, and uploaded a package — hours, sometimes days. Core can have been
+updated and disk can have filled in that window. The manifest's copy of the source facts is
+input to checkpoint 3, never a substitute for it.
 
 ### 8.4 The gates
 
@@ -914,10 +968,12 @@ mid-run and re-driving resumes correctly.
   the `CREATE`/`RENAME`/`DROP` scratch-table probe that decides which import mode
   [§9.3](#93-atomic-swap) can use.
 - **The compatibility handshake** ([§8](#8-compatibility-the-destination-handshake)):
-  `SiteProfile` mints and parses the pasteable destination profile, `Compatibility` compares two
-  profiles and returns gates plus warnings, and the export screen renders the verdict *before*
-  packaging begins. Skipping the paste is allowed and marks the package "unverified
-  destination".
+  `SiteProfile` gathers local facts and serves them; `Pairing` issues single-use codes and
+  performs the authenticated fetch; `Compatibility` compares two profiles into gates plus
+  warnings. The export screen renders the verdict *before* packaging begins, with a **Re-check**
+  action. The profile endpoint returns `404` when unauthenticated, is rate-limited, and uses
+  `'sslverify' => true` unconditionally (**2.5**). Both fallbacks ship with it: pasted profile
+  blob, and skip-with-"unverified destination".
 - Record `WP_CONTENT_DIR`, PHP version and extensions, `.htaccess` extras, and the
   `wp-config.php` constant summary ([§9.5](#95-wp-configphp-never-written-always-reported)) into
   the manifest for the destination's follow-up report.
@@ -1078,7 +1134,9 @@ slow — run it on PRs to `main` rather than every push.
 | **`RENAME TABLE` unavailable or restricted** | Falls back to in-place import, reopening a real inconsistent window | Preflight probes with a scratch table rather than inferring from grants; pre-import SQL backup in the fallback path; UI states which mode is in effect before the user commits |
 | **2x database size needed for the swap** | Import refused on tight-quota hosts | Counted in the preflight free-space check alongside the file-side estimate |
 | **Users merge writes rows the schema will not police** ([§9.4](#94-users-merge-not-replace)) | Duplicate logins insert silently; `get_user_by()` then returns an arbitrary row | `user_login`/`user_email` uniqueness verified explicitly on the staged table before the swap; a duplicate fails the import rather than warning |
-| **Destination arrives incompatible after the package is built** | Wasted export, upload, and the user's afternoon | Pasteable destination profile checked before packaging ([§8.2](#82-the-destination-profile)), and re-checked authoritatively before the first write |
+| **Destination arrives incompatible after the package is built** | Wasted export, upload, and the user's afternoon | Live paired profile checked before packaging ([§8.2](#82-pairing-the-source-asks-the-destination-directly)), re-runnable after a fix, and re-checked authoritatively before the first write |
+| **Outbound HTTP blocked, or destination not publicly reachable** | Pairing fetch fails | Documented fallbacks ship in v1: paste the profile blob, or skip the check and mark the package unverified. Never a dead end |
+| **Profile endpoint becomes a version-disclosure oracle** | Every install of this plugin advertises its WP/PHP/DB versions to scanners | `404` (not `401`) when unauthenticated, single-use rate-limited codes, scope limited to reading the profile, `sslverify` always on |
 | **Collation with no path on the destination** | `Unknown collation` aborts the import mid-stream | Gated in preflight; the already-written `replace_table_collations()` wired up and extended to MariaDB `uca1400` ([§8.5](#85-collation-specifically)) |
 | **Import is entirely new and large** | Phase 4 slips | Round-trip test is the definition of done, not a formality |
 | **Chunked upload on hostile hosts** | v1 unusable for its target user | Drop-in-folder escape hatch ships in v1; constraint simulation in CI |
@@ -1153,11 +1211,14 @@ confirmed one.
   *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
   ordering once custom roles are involved.
 
-**D10 — Is the destination profile paste mandatory?** Recommend **no** — the export must still
-work with no destination in hand (backups, or a destination not yet provisioned), with the
-package marked "unverified destination" and every gate enforced at import time instead
-([§8.2](#82-the-destination-profile)). *Alternative:* mandatory, which guarantees no wasted
-export but blocks a legitimate use.
+**D10 — How the source obtains the destination profile.** **Resolved 2026-08-23:** the source
+**pairs with the destination and fetches it live** over HTTP, authenticated by a single-use code
+the user pastes once. The compatibility check is a few hundred bytes and does not need to
+inherit the package transfer's manual constraint; making it live also makes it re-runnable,
+which matters because most blocked gates are fixable in a minute. Two documented fallbacks:
+paste a profile blob when the destination is unreachable, and skip the check entirely when there
+is no destination yet. Full rationale and the endpoint's security requirements in
+[§8.2](#82-pairing-the-source-asks-the-destination-directly).
 
 ---
 
