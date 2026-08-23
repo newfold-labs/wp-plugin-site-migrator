@@ -229,7 +229,7 @@ includes/
       ProgressReporter.php  interface: start/advance/finish/warn
   Rest/                     v1 primary adapter — thin
   Admin/                    wp-admin page + SPA mount
-  Cli/                      v3 adapter — thin
+  Cli/                      harness from phase 2; supported surface in v3 — thin either way
   Database/                 KEPT largely as-is
   Manifest/                 KEPT, folded under Core/Preflight as the site-facts source
 ```
@@ -901,7 +901,7 @@ support ticket into something the user can see and act on immediately.
 | **Rollback window** | `wpold_` retained until the user confirms success, hard cap **30 days** |
 | **Out of scope** | True content merge — that is a WXR-based feature, not this pipeline |
 
-**This area still needs a spike before phase 4 is estimated with confidence** — specifically
+**This area still needs a spike before phase 4a is estimated with confidence** — specifically
 the `RENAME TABLE` probe across real shared hosts, the behaviour of the session cookie across
 the swap, and the users merge against a pair of real sites with overlapping accounts.
 
@@ -952,10 +952,15 @@ Pure deletion; independently valuable. After this the plugin can no longer break
   `wp-content/languages/` is lost.
 - Introduce `ProgressReporter`, delete `Utils\Status` (**3.4, 3.5**).
 - Establish `step( $state, $budget )` as the core execution contract.
+- **Ship a minimal CLI harness** — `wp <ns> export --to=<dir>` and `wp <ns> import --from=<dir>`,
+  nothing else. No flags, no JSON contract, no progress bars; those are Phase 6. Its purpose is
+  to be the **second consumer of `Core/` from the day `Core/` exists**. A lint rule catches
+  `$_POST` in the core; it cannot catch an API quietly shaped around one caller's assumptions.
+  Only a real second caller does that, and this one costs a day or two.
 
-**Exit:** `Core/Export` produces a valid package when driven from a plain PHP script with no
-REST and no WP-CLI; parts open in `unzip`; `wp-config.php` provably absent; killing the driver
-mid-run and re-driving resumes correctly.
+**Exit:** `Core/Export` produces a valid package driven from the CLI harness, with no REST
+involved; parts open in `unzip`; `wp-config.php` provably absent; killing the driver mid-run and
+re-driving resumes correctly.
 
 ### Phase 3 — Export in the UI · **L**
 
@@ -981,12 +986,17 @@ mid-run and re-driving resumes correctly.
 **Exit:** a non-technical user exports a real site through wp-admin and downloads a verified
 package. Closing and reopening the tab mid-export resumes.
 
-### Phase 4 — Import in the UI · **XL** — *the genuinely new work*
+### Phase 4a — Import core, driven headless · **L** — *the genuinely new work*
 
-None of this exists today. Largest and riskiest phase; **spike [§9](#9-surviving-the-database-swap) first.**
+None of this exists today, and it carries nearly all the project's risk. **Spike
+[§9](#9-surviving-the-database-swap) first.**
 
-- Chunked upload endpoint + client, with resume and assembly verification.
-- Drop-in-folder detection as the large-site escape hatch.
+Split from the import UI deliberately. The dangerous half — replacing a live site's database —
+is proven through the Phase 2 CLI harness, with **no browser in the picture**, before a single
+import screen is written. That means the round-trip test becomes this phase's exit criterion
+rather than a Phase 7 validation, which is the largest single de-risking move available in this
+plan.
+
 - `FileRestorer` with **path-traversal guards** — reject `..`, absolute paths, and symlinks
   escaping the root. This is untrusted archive input and the primary security surface.
 - `DatabaseImporter`: stream SQL into **temp-prefix tables**, chunk on statement boundaries
@@ -1011,13 +1021,30 @@ None of this exists today. Largest and riskiest phase; **spike [§9](#9-survivin
 - `Fixups`: `siteurl`/`home`, permalinks, dropins, `autoload` hygiene.
 - The rest of the survival kit ([§9.6](#96-the-rest-of-the-survival-kit)): file-based
   checkpoint, import-window token auth, temporary mu-plugin, post-import credential messaging.
-- Rollback: a "revert this migration" action while `wpold_` tables survive.
-- Import UI: entirely new — upload, verify, preview manifest, confirm, progress, completion.
+- Rollback as a core operation while `wpold_` tables survive.
 
-**Exit:** round-trip green (see [§12](#12-testing-strategy)) — export site A, import into site B
-at a different URL *and* table prefix, B functionally equivalent to A; B's pre-existing users can
-still log in and A's authorship is intact; and a deliberately failed import leaves site B
-untouched.
+**Exit: round-trip green** (see [§12](#12-testing-strategy)), run entirely from the CLI harness —
+export site A, import into site B at a different URL *and* table prefix, B functionally
+equivalent to A; B's pre-existing users can still log in and A's authorship is intact; and a
+deliberately failed import leaves site B untouched. Nothing in Phase 4b starts until this is
+green.
+
+### Phase 4b — Import in the UI · **L**
+
+Wrapping a proven core. Every failure discovered here is a browser or transport failure, not a
+migration-correctness failure — which is exactly why the split is worth it.
+
+- Chunked upload endpoint + client, with resume and assembly verification.
+- Drop-in-folder detection as the large-site escape hatch.
+- The browser-specific half of the survival kit
+  ([§9.6](#96-the-rest-of-the-survival-kit)): import-window token auth and the temporary
+  mu-plugin. Neither exists under CLI — there is no cookie session to lose and no plugin loader
+  to survive — so this is the first time they are exercised.
+- Import UI: upload, verify, preview the manifest and the user-merge plan, explicit confirm,
+  progress with the swap called out, completion report, and the rollback action.
+
+**Exit:** a non-technical user completes the full import through wp-admin, including the
+uploads, on a host with an 8MB `upload_max_filesize`.
 
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
@@ -1030,10 +1057,11 @@ The Migrate Guru-like experience. Removes manual file handling entirely.
 - Security review is mandatory here: this is the first time the plugin exposes site content to
   a network caller.
 
-### Phase 6 — WP-CLI adapter · **M** *(v3)*
+### Phase 6 — WP-CLI as a supported surface · **S/M** *(v3)*
 
-Cheap **if** `Core/` stayed clean. `Cli/Commands.php` marshals arguments and loops
-`step( $state, 0 )`.
+Not "write the CLI" — that happened in Phase 2 and has been driving the test suite ever since.
+This phase promotes the harness into a product: the full command set, the machine contract, and
+the documentation. Cheap **because** `Core/` had a second consumer the whole way.
 
 ```
 wp <ns> preflight  [--format=json]
@@ -1050,7 +1078,8 @@ package); never prompt.
 ### Phase 7 — Tests and CI · **M**
 
 Runs *alongside* phases 2–4, not after. Listed separately because it needs its own
-infrastructure.
+infrastructure. Note that the round-trip test itself is **not** deferred to here — it is
+Phase 4a's exit criterion, made possible by the Phase 2 harness.
 
 ### Phase 8 — Hardening and distribution · **S/M**
 
@@ -1130,7 +1159,7 @@ slow — run it on PRs to `main` rather than every push.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **Database-swap survival** ([§9](#9-surviving-the-database-swap)) | Import stalls half-done, site left broken | Atomic swap collapses the inconsistent window to an instant; file-based checkpoint + token auth + mu-plugin cover the rest. Spike before phase 4 is estimated |
+| **Database-swap survival** ([§9](#9-surviving-the-database-swap)) | Import stalls half-done, site left broken | Atomic swap collapses the inconsistent window to an instant; file-based checkpoint + token auth + mu-plugin cover the rest. Spike before phase 4a is estimated |
 | **`RENAME TABLE` unavailable or restricted** | Falls back to in-place import, reopening a real inconsistent window | Preflight probes with a scratch table rather than inferring from grants; pre-import SQL backup in the fallback path; UI states which mode is in effect before the user commits |
 | **2x database size needed for the swap** | Import refused on tight-quota hosts | Counted in the preflight free-space check alongside the file-side estimate |
 | **Users merge writes rows the schema will not police** ([§9.4](#94-users-merge-not-replace)) | Duplicate logins insert silently; `get_user_by()` then returns an arbitrary row | `user_login`/`user_email` uniqueness verified explicitly on the staged table before the swap; a duplicate fails the import rather than warning |
@@ -1138,14 +1167,14 @@ slow — run it on PRs to `main` rather than every push.
 | **Outbound HTTP blocked, or destination not publicly reachable** | Pairing fetch fails | Documented fallbacks ship in v1: paste the profile blob, or skip the check and mark the package unverified. Never a dead end |
 | **Profile endpoint becomes a version-disclosure oracle** | Every install of this plugin advertises its WP/PHP/DB versions to scanners | `404` (not `401`) when unauthenticated, single-use rate-limited codes, scope limited to reading the profile, `sslverify` always on |
 | **Collation with no path on the destination** | `Unknown collation` aborts the import mid-stream | Gated in preflight; the already-written `replace_table_collations()` wired up and extended to MariaDB `uca1400` ([§8.5](#85-collation-specifically)) |
-| **Import is entirely new and large** | Phase 4 slips | Round-trip test is the definition of done, not a formality |
+| **Import is entirely new and large** | Phase 4 slips | Split into 4a (core, headless) and 4b (UI). Round-trip green is 4a's exit criterion, so correctness is proven before any import screen is built |
+| **`Core/` quietly grows transport assumptions** | v3 stops being cheap; the CLI turns into a rewrite | A lint rule blocks `WP_CLI`/`WP_REST`/superglobals under `Core/`, *and* the phase 2 CLI harness gives the core a real second consumer from day one — the part a lint rule cannot enforce |
 | **Chunked upload on hostile hosts** | v1 unusable for its target user | Drop-in-folder escape hatch ships in v1; constraint simulation in CI |
 | **Path traversal on import** | Arbitrary file write from a malicious package | Untrusted input from day one; dedicated tests; never `extractTo()` blindly |
 | **Disk exhaustion mid-run** | Corrupt package or half-restored site | Preflight free-space check on both sides; refuse early |
 | **`DatabaseBase` is a stale AIO fork** | Inherited unknown bugs; upstream fixes never arrive | Diff against current upstream once; record the fork point in `docs/` |
 | **Transfer key exposure (v2)** | Whole-site disclosure | Scoped, expiring, single-use, rate-limited, `random_bytes()`; dedicated security review in phase 5 |
 | **No upgrade path from 1.0.x** | Existing installs orphaned | Accepted — renamed and unpublished. State it rather than half-supporting it |
-| **Core leaks transport concerns** | v3 stops being cheap | Enforce by lint: no `WP_CLI`/`WP_REST`/superglobals under `Core/` |
 
 ---
 
@@ -1211,6 +1240,17 @@ confirmed one.
   *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
   ordering once custom roles are involved.
 
+**D11 — Build order: is the CLI first, or the UI?** **Resolved 2026-08-23:** neither, exactly.
+A **minimal CLI harness ships in phase 2** and a **supported CLI surface ships in v3**, while the
+UI remains the v1 product. Rejected outright: having the UI shell out to `wp` commands — that
+needs `exec()`/`proc_open()` and the `wp` binary on `PATH`, both commonly absent on exactly the
+shared hosting v1 targets, and it turns user input into shell construction. Rejected as an
+ordering: full CLI-first, because the CLI does not exercise the risky work at all — under
+`WP_CLI` there is no execution-time budget and no cookie session, so chunked upload,
+browser-driven stepping, and session survival across the swap would all stay unproven. The
+harness captures the benefits — a real second consumer of `Core/`, and a shell-scriptable
+round-trip test — without deferring browser risk. Phase 4 is split accordingly.
+
 **D10 — How the source obtains the destination profile.** **Resolved 2026-08-23:** the source
 **pairs with the destination and fetches it live** over HTTP, authenticated by a single-use code
 the user pastes once. The compatibility check is a few hundred bytes and does not need to
@@ -1247,5 +1287,5 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 3.10 redirect without `exit` | 1 | Deleted |
 | 3.11 dead encryption params | 2 | `Archiver/` deleted |
 | 3.12 `set_time_limit()` in a getter | 1 | Deleted |
-| 3.13 dead import scaffolding | 4 | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
+| 3.13 dead import scaffolding | 4a | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
 | 4.1–4.8 refactors | 2, 3, 8 | As described above |
