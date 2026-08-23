@@ -1,7 +1,6 @@
 <?php
 
 define( 'NFD_SM_VERSION', '0.1.0' );
-define( 'NFD_SM_CIPHER_NAME', 'AES-256-CBC' );
 define( 'NFD_SM_PLUGIN_NAME', 'nfd-site-migrator' );
 define( 'NFD_SM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'NFD_SM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -27,26 +26,11 @@ if ( ! defined( 'NFD_SM_OPTION_NAME' ) ) {
 	define( 'NFD_SM_OPTION_NAME', 'nfd_site_migrator' );
 }
 
-if ( ! defined( 'NFD_SM_PACKAGING_STATUS_OPTION' ) ) {
-	define( 'NFD_SM_PACKAGING_STATUS_OPTION', 'nfd_site_migrator_packaging_status' );
-}
-
-if ( ! defined( 'NFD_SM_PACKAGING_SUCCESS_OPTION' ) ) {
-	define( 'NFD_SM_PACKAGING_SUCCESS_OPTION', 'nfd_site_migrator_packaged_success' );
-}
-
-if ( ! defined( 'NFD_SM_PACKAGING_FAILED_OPTION' ) ) {
-	define( 'NFD_SM_PACKAGING_FAILED_OPTION', 'nfd_site_migrator_packaged_failed' );
-}
-
 if ( ! defined( 'NFD_SM_OPTIONS_LIST' ) ) {
 	define(
 		'NFD_SM_OPTIONS_LIST',
 		array(
 			NFD_SM_OPTION_NAME,
-			NFD_SM_PACKAGING_STATUS_OPTION,
-			NFD_SM_PACKAGING_FAILED_OPTION,
-			NFD_SM_PACKAGING_SUCCESS_OPTION,
 		)
 	);
 }

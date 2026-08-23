@@ -1010,7 +1010,7 @@ enqueueing at all; cache busting already came from the content hash in the gener
 `.asset.php`. `build/` and `src/styles/nfd-site-migrator.css` are generated, so both are now
 untracked; committing generated output is what let the versions diverge in the first place.
 
-### Phase 2 — Core, package format, stepping engine · **L**
+### Phase 2 — Core, package format, stepping engine · **L** — ✅ *done 2026-08-23*
 
 - Write `docs/package-format.md` — schema v1. A deliverable, not a side effect.
 - Build `Package/` (writer, reader, manifest, checksum, checkpoint) on `ZipArchive`, including
@@ -1032,6 +1032,35 @@ untracked; committing generated output is what let the versions diverge in the f
 **Exit:** `Core/Export` produces a valid package driven from the CLI harness, with no REST
 involved; parts open in `unzip`; `wp-config.php` provably absent; killing the driver mid-run and
 re-driving resumes correctly.
+
+**Done.** ~3,150 lines of packaging code replaced by ~1,500. All criteria verified against a
+fixture WordPress tree, driven headless with no WordPress bootstrap and no REST: every part
+opens under both `unzip -t` and Python's `zipfile`; `wp-config.php` is absent from every part
+and its secret appears nowhere in the package bytes; no `wp-admin/`, `wp-includes/` or core root
+file is collected; `wp-content/languages/` and unrecognised `wp-content` directories are carried
+(the old silent-loss gap); the migrator excludes itself; oversized files land loose in `large/`.
+Killing the driver after 3 of 7 steps left a checkpoint and no manifest, and re-driving in a
+fresh process produced a file set **identical to the uninterrupted run** — 511 entries, no gaps,
+no duplicates.
+
+**Three bugs the tests caught, none of which review would have:**
+
+1. `FileCollector::step()` broke out of its loop on end-of-list *before* flushing the batch it
+   had just read. Any part with fewer than one batch of files silently produced an empty
+   archive. The first run collected 1 file out of 15 and still reported success.
+2. `nfd_sm_themes_dir()` returns an **array** — WordPress supports multiple theme roots via
+   `register_theme_directory()` — and was being passed where a string was expected. `PartSpecs`
+   now emits one part per theme root, and derives every prefix from where a directory actually
+   is relative to `ABSPATH` rather than assuming `wp-content/<name>`, so relocated plugin, theme
+   and upload directories are recorded at the right path.
+3. Drop-ins were collected twice, by `dropins` and again by `content-other`, and stored twice.
+   `PartSpec` gained file-level exclusion.
+
+**Deviation worth noting:** the plan called for the harness to ship `export` and `import`.
+`import` is registered but errors clearly, pointing at phase 4a — there is no importer to drive
+yet, and a command that silently does nothing is worse than one that says why. `verify` was
+added instead, because `PackageReader` needed a caller and "part 3 checksum mismatch" is a
+usable failure report.
 
 ### Phase 3 — Export in the UI · **L**
 

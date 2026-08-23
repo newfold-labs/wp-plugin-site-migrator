@@ -4,7 +4,6 @@ namespace NewfoldLabs\WP\SiteMigrator\RestApi;
 
 use NewfoldLabs\WP\SiteMigrator\MigrationChecks\Checker;
 use NewfoldLabs\WP\SiteMigrator\Utils\Options;
-use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Try the migration check
@@ -114,18 +113,12 @@ class MigrationCheckController extends \WP_REST_Controller {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function get_current_step( $request ) {
-		$compatible       = Options::get( 'isCompatible', null );
-		$transfer_queued  = Options::get( 'queued_packaging_tasks', false );
-		$packaging_status = Status::get_packaging_status();
-		$packaged_success = $packaging_status['success'];
-		$packaged_failed  = $packaging_status['failed'];
+		$compatible = Options::get( 'isCompatible', null );
+
 		return rest_ensure_response(
 			array(
-				'compatible'       => $compatible,
-				'transfer_queued'  => $transfer_queued,
-				'checked'          => null !== $compatible ? true : false,
-				'packaged_success' => $packaged_success,
-				'packaged_failed'  => $packaged_failed,
+				'compatible' => $compatible,
+				'checked'    => null !== $compatible,
 			)
 		);
 	}

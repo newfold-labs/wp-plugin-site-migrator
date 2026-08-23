@@ -55,5 +55,9 @@ NewfoldLabs\WP\SiteMigrator\Utils\Options::fetch();
 // Add the migration check filters
 NewfoldLabs\WP\SiteMigrator\MigrationChecks\Checker::register();
 
+// Register the WP-CLI harness. Second consumer of Core/, so the transport boundary is
+// enforced by a real caller and not only by a lint rule.
+NewfoldLabs\WP\SiteMigrator\Cli\Commands::register();
+
 // persist options on shutdown
 add_action( 'shutdown', array( 'NewfoldLabs\WP\SiteMigrator\Utils\Options', 'maybe_persist' ) );
