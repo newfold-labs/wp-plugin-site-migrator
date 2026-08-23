@@ -1056,6 +1056,38 @@ no duplicates.
 3. Drop-ins were collected twice, by `dropins` and again by `content-other`, and stored twice.
    `PartSpec` gained file-level exclusion.
 
+**Validated against a real site.** The fixture harness stubs the database stage, so the export
+was afterwards run against a live WordPress 7.1 install — 77 tables, 2.7GB of content, MySQL
+8.0.35 — read-only, with the package written outside it. Two real defects surfaced that the
+fixture could not have found:
+
+1. **The dump was not loadable.** `mysql < database.sql` failed at line 9 with
+   `Invalid default value for 'scheduled_date_gmt'`. WordPress schemas are full of
+   `DEFAULT '0000-00-00 00:00:00'`, which strict mode rejects — and strict mode has been the
+   default since MySQL 5.7. The dump also writes tables alphabetically rather than in dependency
+   order, so a plugin's foreign key can reference a table that does not exist yet. `get_header()`
+   now emits a session preamble (`SQL_MODE='NO_AUTO_VALUE_ON_ZERO,ALLOW_INVALID_DATES'`,
+   `FOREIGN_KEY_CHECKS=0`, `UNIQUE_CHECKS=0`) saved into user variables, and a matching footer
+   restores them — written only on completion, so a resumed dump does not get a footer in the
+   middle. **This would have surfaced in phase 4a as "import fails on some sites and not
+   others."**
+2. **`DatabaseMysqli` emitted two PHP 8.4 deprecations per query** for
+   `MYSQLI_STORE_RESULT_COPY_DATA`, which has been ignored since 8.1. Across ~7,000 queries that
+   is 14,000 notices per export; on a site with debug logging on it fills a disk. Now guarded by
+   `PHP_VERSION_ID`. Fixing it also made the dump three times faster.
+
+**Round-trip proof.** The corrected dump was loaded into a scratch database on the same server
+and compared with the source: **77 tables → 77 tables**, none missing or extra; **7,015 rows →
+7,015 rows**, no per-table mismatches; the first five published posts byte-identical; and
+`active_plugins` and `wp_user_roles` identical and still unserializing. The scratch database was
+then dropped. This is stronger evidence than the exit criterion asked for, and it de-risks phase
+4a considerably.
+
+One incidental finding worth recording: **two exports of the same site are never byte-identical.**
+Consecutive dumps differed in exactly two places — the options table's `AUTO_INCREMENT` and the
+`cron` option's next-run timestamp — because WordPress writes to itself continuously. Checksums
+therefore verify that a package is intact, never that two packages match.
+
 **Deviation worth noting:** the plan called for the harness to ship `export` and `import`.
 `import` is registered but errors clearly, pointing at phase 4a — there is no importer to drive
 yet, and a command that silently does nothing is worse than one that says why. `verify` was

@@ -44,9 +44,11 @@ class DatabaseMysqli extends DatabaseBase {
 			}
 		}
 
-		// Copy results from the internal mysqlnd buffer into the PHP variables fetched
-		if ( defined( 'MYSQLI_STORE_RESULT_COPY_DATA' ) ) {
-			return mysqli_store_result( $this->wpdb->dbh, MYSQLI_STORE_RESULT_COPY_DATA );
+		// MYSQLI_STORE_RESULT_COPY_DATA has been ignored since PHP 8.1 and is deprecated from
+		// 8.4, where passing it emits two notices per query. An export runs thousands of
+		// queries, so on a debug-logging site that alone can fill a disk.
+		if ( \PHP_VERSION_ID < 80100 && \defined( 'MYSQLI_STORE_RESULT_COPY_DATA' ) ) {
+			return \mysqli_store_result( $this->wpdb->dbh, MYSQLI_STORE_RESULT_COPY_DATA );
 		}
 
 		return \mysqli_store_result( $this->wpdb->dbh );

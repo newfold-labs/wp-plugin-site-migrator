@@ -798,6 +798,11 @@ abstract class DatabaseBase {
 			}
 		}
 
+		// Restore the session settings the header changed, once there is nothing left to write.
+		if ( $completed ) {
+			nfd_sm_write( $file_handler, $this->get_footer() );
+		}
+
 		// Set query offset
 		$query_offset = ftell( $file_handler );
 
@@ -1423,13 +1428,42 @@ abstract class DatabaseBase {
 			"-- Host: %s\n" .
 			"-- Database: %s\n" .
 			"-- Class: %s\n" .
-			"--\n",
+			"--\n\n",
 			$this->wpdb->dbhost,
 			$this->wpdb->dbname,
 			get_class( $this )
 		);
 
+		// The importing server's session has to be prepared before any DDL runs, or the dump
+		// is not loadable on a default-configured MySQL.
+		//
+		// WordPress schemas are full of `DEFAULT '0000-00-00 00:00:00'`, which strict mode
+		// (NO_ZERO_DATE, on by default since MySQL 5.7) rejects outright with "Invalid default
+		// value". Tables are also written in alphabetical order, not dependency order, so a
+		// plugin's foreign key can reference a table that does not exist yet.
+		$header .= "SET @NFD_SM_SQL_MODE=@@SQL_MODE;\n";
+		$header .= "SET @NFD_SM_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS;\n";
+		$header .= "SET @NFD_SM_UNIQUE_CHECKS=@@UNIQUE_CHECKS;\n";
+		$header .= "SET SQL_MODE='NO_AUTO_VALUE_ON_ZERO,ALLOW_INVALID_DATES';\n";
+		$header .= "SET FOREIGN_KEY_CHECKS=0;\n";
+		$header .= "SET UNIQUE_CHECKS=0;\n\n";
+
 		return $header;
+	}
+
+	/**
+	 * Returns footer for dump file
+	 *
+	 * Restores everything the header changed. Written only when the export completes, so a
+	 * resumed dump does not get a footer in the middle of it.
+	 *
+	 * @return string
+	 */
+	protected function get_footer() {
+		return "\nSET FOREIGN_KEY_CHECKS=@NFD_SM_FOREIGN_KEY_CHECKS;\n"
+			. "SET UNIQUE_CHECKS=@NFD_SM_UNIQUE_CHECKS;\n"
+			. "SET SQL_MODE=@NFD_SM_SQL_MODE;\n"
+			. "-- Dump complete.\n";
 	}
 
 	/**
