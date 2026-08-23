@@ -923,8 +923,15 @@ reference written in between.
   plugin header at build time so `build/` can never diverge again.
 - `composer.json`: name, description, autoload prefix; drop `newfold-labs/wp-module-tasks` and
   the Satis `repositories` block.
+- **Add the missing `LICENSE` file** and **restore upstream attribution** (**3.14**). The plugin
+  header has declared `GPL-2.0-or-later` since 2020 with no licence text in the repository, and
+  `Database/DatabaseBase.php` — 1533 lines the plan explicitly keeps — is a fork of All-in-One WP
+  Migration carrying no notice of its origin. Add the GPL text, a `CREDITS` or `NOTICE` entry
+  naming ServMask and the fork point, and a header comment in each derived file. Cheap now,
+  awkward later, and re-releasing under a new name without it makes it worse rather than
+  neutral.
 
-**Exit:** activates cleanly under the new name; `composer lint` passes; no `bluehost|bh_sm|bhsm|BH_SITE_MIGRATOR` outside `docs/`.
+**Exit:** activates cleanly under the new name; `composer lint` passes; no `bluehost|bh_sm|bhsm|BH_SITE_MIGRATOR` outside `docs/`; `LICENSE` present and derived files attributed.
 
 ### Phase 1 — Stop the bleeding · **S**
 
@@ -1240,6 +1247,19 @@ confirmed one.
   *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
   ordering once custom roles are involved.
 
+**D12 — Keep the git history, or start fresh?** **Recommend keeping it**, on the `rework`
+branch as it stands. The repository is 291 commits and 3 MB across six years — no size problem.
+Nothing that would force a rewrite is present: no committed credentials, key material, `.env`,
+or `.pem` files (scanned). Against that, three reasons to keep it. It is the **provenance record
+for vendored GPL code** — `DatabaseBase.php` entered in `41f4196` with attribution already
+stripped (**3.14**), and squashing removes the evidence of when and how without curing the
+obligation. It keeps **`git blame` useful on the 1533 lines the plan retains**, which is how the
+dead import scaffolding was identified in the first place. And the commit record **is** the
+contributor attribution that GPL asks be preserved — 14 people over six years. A rename is
+documented more honestly by the Phase 0 commit than by a manufactured genesis. *If a clean
+break must be visible*, tag the last pre-rework commit (`v1.0.13-archive`) and let Phase 0 be
+the visible boundary.
+
 **D11 — Build order: is the CLI first, or the UI?** **Resolved 2026-08-23:** neither, exactly.
 A **minimal CLI harness ships in phase 2** and a **supported CLI surface ships in v3**, while the
 UI remains the v1 product. Rejected outright: having the UI shell out to `wp` commands — that
@@ -1288,4 +1308,5 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 3.11 dead encryption params | 2 | `Archiver/` deleted |
 | 3.12 `set_time_limit()` in a getter | 1 | Deleted |
 | 3.13 dead import scaffolding | 4a | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
+| 3.14 no LICENSE; stripped GPL attribution | 0 | `LICENSE` added, ServMask attribution and fork point recorded in `CREDITS` and in each derived file's header |
 | 4.1–4.8 refactors | 2, 3, 8 | As described above |
