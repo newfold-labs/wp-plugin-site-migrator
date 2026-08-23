@@ -566,8 +566,10 @@ sequenceDiagram
 
 ### 7.2 Proposed flow — v1 (manual download / upload)
 
-The plugin is installed on **both** sites. No network link between them; the user carries the
-package. Same core drives both halves; the browser is the scheduler.
+The plugin is installed on **both** sites. **No network link between them** — the user carries
+both the compatibility profile and the package by hand. Same core drives both halves; the
+browser is the scheduler. See `implementation-plan.md` §1.1 for the same sequence in plain
+language.
 
 ```mermaid
 sequenceDiagram
@@ -576,11 +578,19 @@ sequenceDiagram
     participant S as Source site
     participant D as Destination site
 
+    rect rgb(255,250,235)
+    note over U,D: Handshake — no network link; the user carries a code
+    U->>D: Open Site Migrator → Receive a site
+    D->>D: Gather local facts (WP, db_version, PHP, DB, collations, disk)
+    D->>D: RENAME TABLE scratch probe → import mode
+    D-->>U: Pasteable site profile (7-day expiry)
+    U->>S: Paste profile into Export
+    S->>S: Compare offline → gates + warnings + collation plan
+    S-->>U: Verdict (green / warn / blocked, with reason)
+    end
+
     rect rgb(240,245,255)
     note over U,S: Export
-    U->>S: Open Site Migrator → Export
-    S->>S: Preflight (disk, PHP/upload limits, multisite) — fails closed
-    S-->>U: Structured report
     U->>S: Start export
     S->>S: create package dir + checkpoint.json
     loop POST /export/step until done (~15s budget each)
@@ -593,9 +603,8 @@ sequenceDiagram
     end
 
     rect rgb(245,255,245)
-    note over U,D: Import
+    note over U,D: Import — nothing is written until step "Confirm"
     U->>D: Open Site Migrator → Import
-    D->>D: Preflight (disk, limits, PHP/MySQL vs manifest)
     alt Browser upload
         U->>D: Chunked upload of each part (~5MB chunks, resumable)
     else Large-site escape hatch
@@ -603,19 +612,23 @@ sequenceDiagram
         D->>D: scan and detect
     end
     D->>D: verify checksums, read manifest
-    D-->>U: Preview: URL change, prefix change, warnings
+    D->>D: AUTHORITATIVE compatibility re-check vs live facts
+    D-->>U: Preview: URL change, prefix change, user merge plan, warnings
     U->>D: Confirm (explicit destructive-action consent)
-    D->>D: write temp mu-plugin, mint file-based token, stash dest admin
+    D->>D: write temp mu-plugin, mint file-based token
     loop POST /import/step until done
-        D->>D: restore files (dest wp-config preserved)
-        D->>D: import SQL into temp-prefix tables
-        D->>D: verify, then atomic RENAME swap
-        D->>D: serialized-safe search/replace, prefix reconcile
-        D->>D: re-inject dest admin, fixups, flush permalinks
+        D->>D: restore files (dest wp-config never touched)
+        D->>D: import SQL into wpimp_ tables (collation downgrade applied)
+        D->>D: merge dest users into staged users, remap usermeta, fix prefix keys
+        D->>D: serialized-safe search/replace + prefix reconcile ON STAGED TABLES
+        D->>D: verify staged: row counts, tables present, login/email uniqueness
+        D->>D: atomic RENAME swap — the only destructive instant
+        D->>D: post-swap only: recreate views, flush permalinks, validate roles
         D-->>U: { progress, done, warnings }
     end
-    D->>D: remove mu-plugin, delete token, keep old_ tables for rollback
-    D-->>U: Done — credentials notice
+    D->>D: remove mu-plugin, delete token, keep wpold_ tables for rollback
+    D-->>U: Done — logins renamed, manual follow-ups, wp-config block
+    U->>D: Confirm success → drop wpold_ (else auto-drop at 30 days)
     end
 ```
 

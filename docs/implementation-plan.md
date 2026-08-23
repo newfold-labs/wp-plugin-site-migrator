@@ -27,7 +27,7 @@ significantly.
 
 ## Contents
 
-1. [Release shape](#1-release-shape)
+1. [Release shape](#1-release-shape) · [what the user does](#11-what-the-user-actually-does-end-to-end)
 2. [Goal and constraints](#2-goal-and-constraints)
 3. [Migrate Guru parity](#3-migrate-guru-parity)
 4. [The execution model](#4-the-execution-model)
@@ -55,6 +55,36 @@ significantly.
 Each is independently shippable. v3 is cheap **only if** the core stays transport-agnostic
 from day one — that constraint is the whole reason for [§5](#5-target-architecture), and it
 must not be traded away under v1 delivery pressure.
+
+### 1.1 What the user actually does, end to end
+
+The whole product, in the order a person experiences it. Everything after step 4 is the
+plugin's job, not theirs.
+
+| # | Where | Step |
+|---|---|---|
+| 1 | Both | Install and activate the plugin on the **source** and the **destination**. |
+| 2 | Destination | **Receive a site → Check compatibility.** The plugin gathers local facts and renders a short code. Copy it. |
+| 3 | Source | Paste that code into the export screen. The source compares it against its own facts **offline** and shows a verdict: green, warnings, or blocked with a reason. Pasting is optional ([D10](#14-open-decisions-for-review)); skip it and the package is marked *unverified destination*. |
+| 4 | Source | **Start export.** The browser drives `POST /export/step` in a loop until done. Output is a package directory: manifest, database dump, zipped content parts, and any oversized files stored loose. Closing the tab is safe — reopening resumes. |
+| 5 | Source → Destination | **Download the parts, then upload them.** Download is authenticated and `Range`-resumable; upload is chunked so it does not meet `upload_max_filesize`. For very large sites, the escape hatch is to place the parts into the destination's storage directory by SFTP and let it detect them. |
+| 6 | Destination | **Verify and preview.** Checksums per part, manifest read, and the *authoritative* compatibility re-check against live facts. The destination then shows exactly what will happen: URL change, prefix change, which accounts merge, what will be replaced. Nothing has been written yet. |
+| 7 | Destination | **Confirm.** This is the one explicit destructive-action consent in the flow. |
+| 8 | Destination | **Import.** Files first. Then the database into temp-prefix tables, users merged, URLs rewritten, and everything verified — all while the live site is still untouched. Only then the atomic `RENAME` swap. Post-swap work is limited to what genuinely cannot happen earlier: recreating views and flushing permalinks. |
+| 9 | Destination | **Review.** Completion screen: what changed, any login that was renamed, the manual follow-ups ([§9.7](#97-manual-follow-ups)), and the `wp-config.php` block to paste if wanted ([§9.5](#95-wp-configphp-never-written-always-reported)). |
+| 10 | Destination | **Confirm success.** This drops the `wpold_` rollback tables. Until it happens, "revert this migration" is one click — for at most 30 days ([D8](#14-open-decisions-for-review)), after which they are dropped automatically. |
+
+Three properties of this sequence are load-bearing and easy to lose:
+
+- **Nothing connects.** In v1 the source never talks to the destination. The code in step 2 is
+  a description of a server, not a credential — it grants no access and opens no port. That is
+  what lets v1 work on hosts that block outbound HTTP, and it is exactly what v2 changes.
+- **Verification happens before the commit, not after.** Step 8 verifies the staged tables while
+  the live site is still intact, because after the swap "verify" has nothing useful to offer —
+  the change is already made. The atomic swap exists precisely so that all checking can happen
+  while backing out is free.
+- **Step 10 is part of the migration.** The job is not done when the site loads; it is done when
+  the user says it is and the rollback copy is released.
 
 ---
 
@@ -827,7 +857,7 @@ the swap, and the users merge against a pair of real sites with overlapping acco
 
 Sizes are relative (S/M/L/XL), not calendar estimates.
 
-### Phase 0 — Rename, de-brand, repo hygiene · **M**
+### Phase 0 — Rename, de-brand, repo hygiene · **M** — *unblocked, ready to start*
 
 Mechanical, but touches everything, so it goes first — doing it later means redoing every
 reference written in between.
@@ -1063,11 +1093,10 @@ slow — run it on PRs to `main` rather than every push.
 
 ## 14. Open decisions for review
 
-**D1 — Naming.** Recommend `NewfoldLabs\WP\SiteMigrator\`, prefix `nfd_sm_`, constants
-`NFD_SM_*`, slug and text domain `nfd-site-migrator`, option key `nfd_site_migrator`. Matches
-the convention in `vendor/newfold-labs/`. *Alternative:* vendor-neutral (`SiteMigrator\`,
-`sm_`, `site-migrator`) if this should not read as a Newfold product. **Phase 0 is blocked on
-this.**
+**D1 — Naming.** **Resolved 2026-08-23:** namespace `NewfoldLabs\WP\SiteMigrator\`, function
+prefix `nfd_sm_`, constants `NFD_SM_*`, plugin slug and text domain `nfd-site-migrator`, single
+option key `nfd_site_migrator`, storage directory `wp-content/uploads/nfd-site-migrator/`.
+Matches the convention in `vendor/newfold-labs/`. **Phase 0 is unblocked.**
 
 **D2 — Release shape.** ~~Is v1 manual or direct?~~ **Resolved 2026-08-22:** v1 manual
 download/upload → v2 direct site-to-site → v3 WP-CLI, as in [§1](#1-release-shape).
