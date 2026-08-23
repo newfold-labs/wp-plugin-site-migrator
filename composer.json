@@ -1,15 +1,12 @@
 {
-    "name": "bluehost/bluehost-site-migrator",
-    "description": "A WordPress plugin to help you quickly and easily migrate your website to Bluehost.",
+    "name": "newfold-labs/wp-plugin-site-migrator",
+    "description": "Move a WordPress site between hosts. Export this site to a package, or import one exported from elsewhere.",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
     "authors": [
         {
-            "name": "Micah Wood",
-            "homepage": "https://wpscholar.com"
-        },
-        {
-            "name": "Amartya Gaur"
+            "name": "Newfold Labs",
+            "homepage": "https://newfold.com"
         }
     ],
     "repositories": [
@@ -29,7 +26,7 @@
     },
     "autoload": {
         "psr-4": {
-            "BluehostSiteMigrator\\": "includes/"
+            "NewfoldLabs\\WP\\SiteMigrator\\": "includes/"
         }
     },
     "config": {
@@ -41,10 +38,10 @@
     },
     "scripts": {
         "fix": [
-            "vendor/bin/phpcbf . --ignore=*/bh-site-migrator.asset.php"
+            "vendor/bin/phpcbf . --ignore=*/nfd-site-migrator.asset.php"
         ],
         "lint": [
-            "vendor/bin/phpcs . --ignore=*/bh-site-migrator.asset.php"
+            "vendor/bin/phpcs . --ignore=*/nfd-site-migrator.asset.php"
         ]
     },
     "scripts-descriptions": {

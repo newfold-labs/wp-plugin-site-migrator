@@ -1,6 +1,6 @@
 import stepResult from '../fixtures/stepResult.json';
 
-const API_BASE = '/bluehost-site-migrator/v1/';
+const API_BASE = '/nfd-site-migrator/v1/';
 const MIGRATION_CHECK_BASE = API_BASE.concat( 'migration-check' );
 
 describe( 'migration compatibility check tests', () => {
@@ -19,7 +19,7 @@ describe( 'migration compatibility check tests', () => {
 				fixture: 'stepResult',
 			}
 		).as( 'stubStepResult' );
-		cy.visit( '/wp-admin/admin.php?page=bluehost-site-migrator' );
+		cy.visit( '/wp-admin/admin.php?page=nfd-site-migrator' );
 		cy.wait( '@stubStepResult' );
 	} );
 

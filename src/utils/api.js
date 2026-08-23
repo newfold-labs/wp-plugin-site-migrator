@@ -1,6 +1,6 @@
 import apiFetch from '@wordpress/api-fetch';
 
-const API_BASE = '/bluehost-site-migrator/v1/';
+const API_BASE = '/nfd-site-migrator/v1/';
 const MIGRATION_CHECK_BASE = API_BASE.concat( 'migration-check' );
 
 export const SiteMigratorAPIs = () => {

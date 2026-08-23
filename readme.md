@@ -1,19 +1,51 @@
-<a href="https://bluehost.com/" target="_blank">
-    <img src="https://bluehost.com/resources/logos/bluehost.svg" alt="Bluehost Logo" title="Bluehost" align="right" height="32" />
-</a>
+# Site Migrator
 
-# Bluehost Site Migrator
-![Deploy to WordPress.org](https://github.com/bluehost/bluehost-site-migrator/workflows/Deploy%20to%20WordPress.org/badge.svg)
-![Release Version](https://img.shields.io/github/v/release/bluehost/bluehost-site-migrator?labelColor=CF8070&color=FFBFAB)
-![Required PHP Version](https://img.shields.io/wordpress/plugin/required-php/bluehost-site-migrator?labelColor=AF92DF&color=B8B0E5)
-![Required WordPress Version](https://img.shields.io/wordpress/plugin/wp-version/bluehost-site-migrator?labelColor=21A0ED&color=7DC2FF)
-![Tested WordPress Version](https://img.shields.io/wordpress/plugin/tested/bluehost-site-migrator?labelColor=00C2BA&color=ABF2E3)
+Move a WordPress site between hosts. Install the plugin on both sites: export the source
+into a package, then import that package on the destination.
 
-Quickly and easily migrate your website to Bluehost.
+> **Pre-release.** This plugin is being reworked and is not currently distributed. The
+> export and import flows are under construction — see
+> [`docs/implementation-plan.md`](docs/implementation-plan.md) for the phased plan and
+> [`docs/code-analysis.md`](docs/code-analysis.md) for the analysis it came from.
 
-## Download on WordPress.org
+## What it does
 
-WordPress.org is the preferred distribution channel for this plugin.
+- **Content only.** WordPress core is never packaged — the destination already has it.
+- **Resumable.** Work is driven in short steps, so it survives execution-time limits on
+  shared hosting. Closing the tab and reopening it continues where it stopped.
+- **Reversible.** The database is imported alongside the live one and switched over in a
+  single atomic rename, so a failed import leaves the destination untouched and a completed
+  one can be rolled back.
+- **Users are merged, not replaced.** The destination's accounts are kept, and the source's
+  accounts are merged in with their IDs preserved, so migrated content stays attributed.
 
-* [Download on WordPress.org](https://wordpress.org/plugins/bluehost-site-migrator)
-* `wp plugin install bluehost-site-migrator --activate`
+## Requirements
+
+WordPress 4.7+, PHP 5.6+ (the floor rises to 7.4 before release).
+
+## Development
+
+```bash
+composer install
+yarn install
+
+yarn build          # generate:css + webpack -> build/
+yarn start          # same, watching
+
+composer lint       # phpcs, Newfold standard
+composer fix        # phpcbf
+yarn lint:js
+
+npx wp-env start    # local WordPress at http://localhost:10004 (admin/password)
+yarn test           # cypress
+```
+
+`build/` and `src/styles/nfd-site-migrator.css` are generated and not tracked; run
+`yarn build` after cloning.
+
+## Licence
+
+GPL-2.0-or-later. See [`LICENSE`](LICENSE).
+
+Parts of this plugin derive from All-in-One WP Migration by ServMask, Inc. — see
+[`CREDITS.md`](CREDITS.md).

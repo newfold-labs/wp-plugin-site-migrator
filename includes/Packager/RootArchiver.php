@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Archiver\Compressor;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Compressor;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Archive the root directory
@@ -49,7 +49,7 @@ class RootArchiver extends PackagerBase {
 		if ( isset( $root_task_params['root_list_path'] ) ) {
 			$root_list_file_path = $root_task_params['root_list_path'];
 		} else {
-			$root_list_file_path                = nfd_bhsm_get_hashed_file_path( 'root', 'config', 'list' );
+			$root_list_file_path                = nfd_sm_get_hashed_file_path( 'root', 'config', 'list' );
 			$root_task_params['root_list_path'] = $root_list_file_path;
 		}
 
@@ -76,15 +76,15 @@ class RootArchiver extends PackagerBase {
 
 		// Set the progress
 		Status::set_status(
-			__( 'Retrieving a list of WordPress root files ...', 'bluehost-site-migrator' ),
+			__( 'Retrieving a list of WordPress root files ...', 'nfd-site-migrator' ),
 			90,
 			'root'
 		);
 
 		// Create the root details file
-		$root_list = nfd_bhsm_open( $root_list_file_path, 'w' );
+		$root_list = nfd_sm_open( $root_list_file_path, 'w' );
 
-		$root_dir = nfd_bhsm_root_dir();
+		$root_dir = nfd_sm_root_dir();
 
 		if ( is_dir( $root_dir ) ) {
 			// Enumerate over root directory
@@ -108,7 +108,7 @@ class RootArchiver extends PackagerBase {
 			// Write path line
 			foreach ( $iterator as $item ) {
 				if ( $item->isFile() ) {
-					$written = nfd_bhsm_putcsv(
+					$written = nfd_sm_putcsv(
 						$root_list,
 						array(
 							$iterator->getPathname(),
@@ -203,7 +203,7 @@ class RootArchiver extends PackagerBase {
 		if ( isset( $params['root_archive_path'] ) ) {
 			$root_archive_path = $params['root_archive_path'];
 		} else {
-			$root_archive_path = nfd_bhsm_get_hashed_file_path( 'root', 'backup', 'zip' );
+			$root_archive_path = nfd_sm_get_hashed_file_path( 'root', 'backup', 'zip' );
 			// Set the archiver path in params
 			$params['root_archive_path'] = $root_archive_path;
 		}
@@ -215,7 +215,7 @@ class RootArchiver extends PackagerBase {
 		Status::set_status(
 			sprintf(
 				// translators: %d: total mu plugins file count
-				esc_html__( 'Archiving %d root files ... ', 'bluehost-site-migrator' ),
+				esc_html__( 'Archiving %d root files ... ', 'nfd-site-migrator' ),
 				esc_xml( $total_root_files_count )
 			),
 			95,
@@ -229,7 +229,7 @@ class RootArchiver extends PackagerBase {
 		$start = microtime( true );
 
 		// Get root list file
-		$root_list = nfd_bhsm_open( $root_list_path, 'r' );
+		$root_list = nfd_sm_open( $root_list_path, 'r' );
 
 		// Set the file pointer at the current
 		if ( fseek( $root_list, $root_bytes_offset ) !== -1 ) {
@@ -264,7 +264,7 @@ class RootArchiver extends PackagerBase {
 				Status::set_status(
 					sprintf(
 					// translators: %d: total mu plugins file count
-						esc_html__( 'Archiving %d root files ... ', 'bluehost-site-migrator' ),
+						esc_html__( 'Archiving %d root files ... ', 'nfd-site-migrator' ),
 						esc_xml( $total_root_files_count )
 					),
 					95,
@@ -272,7 +272,7 @@ class RootArchiver extends PackagerBase {
 				);
 
 				// More than 10 seconds have passed, break and do another request
-				$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 				if ( $timeout ) {
 					if ( ( microtime( true ) - $start ) > $timeout ) {
 						$completed = false;
@@ -315,7 +315,7 @@ class RootArchiver extends PackagerBase {
 			// Unset completed flag
 			unset( $params['completed'] );
 
-			Status::set_status( __( 'Done archiving root ', 'bluehost-site-migrator' ), 99, 'root' );
+			Status::set_status( __( 'Done archiving root ', 'nfd-site-migrator' ), 99, 'root' );
 
 			// Set the next stage of things
 			Status::set_packaging_success( true );
@@ -354,7 +354,7 @@ class RootArchiver extends PackagerBase {
 			Status::set_status(
 				sprintf(
 				// translators: %d: total mu plugins file count
-					esc_html__( 'Archiving %d root files ... ', 'bluehost-site-migrator' ),
+					esc_html__( 'Archiving %d root files ... ', 'nfd-site-migrator' ),
 					esc_xml( $total_root_files_count )
 				),
 				95,

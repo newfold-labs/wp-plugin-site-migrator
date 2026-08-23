@@ -8,7 +8,7 @@ export const Incompatible = () => {
 					<h1 className="text-5xl font-bold">
 						{ __(
 							"That didn't work: Let's bring in the pros.",
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						) }
 					</h1>
 					<p className="text-lg mt-6 w-2/5">
@@ -18,13 +18,13 @@ export const Incompatible = () => {
 								'transfer might require some extra steps, or we might ',
 								'need to look at other options.'
 							),
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						) }
 						<br />
 						<br />
 						{ __(
 							'Give us a call at 888-401-4678.',
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						) }
 					</p>
 				</div>

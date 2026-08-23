@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Archiver\Compressor;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Compressor;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Archive the themes directory
@@ -49,21 +49,21 @@ class ThemesArchiver extends PackagerBase {
 		if ( isset( $theme_task_params['themes_list_path'] ) ) {
 			$themes_list_file_path = $theme_task_params['themes_list_path'];
 		} else {
-			$themes_list_file_path                 = nfd_bhsm_get_hashed_file_path( 'themes', 'config', 'list' );
+			$themes_list_file_path                 = nfd_sm_get_hashed_file_path( 'themes', 'config', 'list' );
 			$theme_task_params['themes_list_path'] = $themes_list_file_path;
 		}
 
 		// Set the progress
 		Status::set_status(
-			__( 'Retrieving a list of WordPress theme files ...', 'bluehost-site-migrator' ),
+			__( 'Retrieving a list of WordPress theme files ...', 'nfd-site-migrator' ),
 			40,
 			'themes'
 		);
 
 		// Create the theme details file
-		$themes_list = nfd_bhsm_open( $themes_list_file_path, 'w' );
+		$themes_list = nfd_sm_open( $themes_list_file_path, 'w' );
 
-		$themes_dirs = nfd_bhsm_themes_dir();
+		$themes_dirs = nfd_sm_themes_dir();
 
 		foreach ( $themes_dirs as $theme_dir ) {
 			if ( is_dir( $theme_dir ) ) {
@@ -75,7 +75,7 @@ class ThemesArchiver extends PackagerBase {
 				// Write path line
 				foreach ( $iterator as $item ) {
 					if ( $item->isFile() ) {
-						$written = nfd_bhsm_putcsv(
+						$written = nfd_sm_putcsv(
 							$themes_list,
 							array(
 								$iterator->getPathname(),
@@ -94,7 +94,7 @@ class ThemesArchiver extends PackagerBase {
 		}
 
 		Status::set_status(
-			__( 'Done retrieving a list of WordPress theme files.', 'bluehost-site-migrator' ),
+			__( 'Done retrieving a list of WordPress theme files.', 'nfd-site-migrator' ),
 			42,
 			'themes'
 		);
@@ -175,7 +175,7 @@ class ThemesArchiver extends PackagerBase {
 		if ( isset( $params['themes_archive_path'] ) ) {
 			$themes_archive_path = $params['themes_archive_path'];
 		} else {
-			$themes_archive_path = nfd_bhsm_get_hashed_file_path( 'themes', 'backup', 'zip' );
+			$themes_archive_path = nfd_sm_get_hashed_file_path( 'themes', 'backup', 'zip' );
 			// Set the archiver path in params
 			$params['themes_archive_path'] = $themes_archive_path;
 		}
@@ -186,7 +186,7 @@ class ThemesArchiver extends PackagerBase {
 		Status::set_status(
 			sprintf(
 				// translators: %d: total mu plugins file count
-				esc_html__( 'Archiving %d theme files ...', 'bluehost-site-migrator' ),
+				esc_html__( 'Archiving %d theme files ...', 'nfd-site-migrator' ),
 				esc_xml( $total_themes_files_count )
 			),
 			45,
@@ -200,7 +200,7 @@ class ThemesArchiver extends PackagerBase {
 		$start = microtime( true );
 
 		// Get themes list file
-		$themes_list = nfd_bhsm_open( $themes_list_path, 'r' );
+		$themes_list = nfd_sm_open( $themes_list_path, 'r' );
 
 		// Set the file pointer at the current
 		if ( fseek( $themes_list, $themes_bytes_offset ) !== -1 ) {
@@ -235,7 +235,7 @@ class ThemesArchiver extends PackagerBase {
 				Status::set_status(
 					sprintf(
 					// translators: %d: total mu plugins file count
-						esc_html__( 'Archiving %d theme files ...', 'bluehost-site-migrator' ),
+						esc_html__( 'Archiving %d theme files ...', 'nfd-site-migrator' ),
 						esc_xml( $total_themes_files_count )
 					),
 					45,
@@ -243,7 +243,7 @@ class ThemesArchiver extends PackagerBase {
 				);
 
 				// More than 10 seconds have passed, break and do another request
-				$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 				if ( $timeout ) {
 					if ( ( microtime( true ) - $start ) > $timeout ) {
 						$completed = false;
@@ -286,7 +286,7 @@ class ThemesArchiver extends PackagerBase {
 			// Unset completed flag
 			unset( $params['completed'] );
 
-			Status::set_status( __( 'Done archiving themes ', 'bluehost-site-migrator' ), 50, 'themes' );
+			Status::set_status( __( 'Done archiving themes ', 'nfd-site-migrator' ), 50, 'themes' );
 
 			self::set_themes_params( $params );
 
@@ -322,7 +322,7 @@ class ThemesArchiver extends PackagerBase {
 			Status::set_status(
 				sprintf(
 				// translators: %d: total mu plugins file count
-					esc_html__( 'Archiving %d theme files ...', 'bluehost-site-migrator' ),
+					esc_html__( 'Archiving %d theme files ...', 'nfd-site-migrator' ),
 					esc_xml( $total_themes_files_count )
 				),
 				45,

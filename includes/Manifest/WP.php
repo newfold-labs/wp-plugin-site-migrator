@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\Manifest;
+namespace NewfoldLabs\WP\SiteMigrator\Manifest;
 
-use BluehostSiteMigrator\Utils\Common;
+use NewfoldLabs\WP\SiteMigrator\Utils\Common;
 
 /**
  * WordPress Manifest

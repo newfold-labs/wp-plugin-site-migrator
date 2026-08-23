@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\Manifest;
+namespace NewfoldLabs\WP\SiteMigrator\Manifest;
 
 /**
  * Holds on to the manifest data

@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
 
 /**
  * The Packager base class providing some common functions to be used by other packages

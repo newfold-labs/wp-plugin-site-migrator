@@ -6,7 +6,7 @@
  * @param  string $path Path
  * @return string
  */
-function nfd_bhsm_replace_forward_slash_with_directory_separator( $path ) {
+function nfd_sm_replace_forward_slash_with_directory_separator( $path ) {
 	return str_replace( '/', DIRECTORY_SEPARATOR, $path );
 }
 
@@ -16,7 +16,7 @@ function nfd_bhsm_replace_forward_slash_with_directory_separator( $path ) {
  * @param  string $path Path
  * @return string
  */
-function nfd_bhsm_escape_windows_directory_separator( $path ) {
+function nfd_sm_escape_windows_directory_separator( $path ) {
 	return preg_replace( '/[\\\\]+/', '\\\\\\\\', $path );
 }
 
@@ -26,8 +26,8 @@ function nfd_bhsm_escape_windows_directory_separator( $path ) {
  * @return int
  * @throws \Exception When we are not able to obtain the cipher length.
  */
-function nfd_bhsm_crypt_iv_length() {
-	$iv_length = openssl_cipher_iv_length( BH_SITE_MIGRATOR_CIPHER_NAME );
+function nfd_sm_crypt_iv_length() {
+	$iv_length = openssl_cipher_iv_length( NFD_SM_CIPHER_NAME );
 	if ( false === $iv_length ) {
 		throw new \Exception( 'Unable to obtain cipher length.' );
 	}
@@ -43,8 +43,8 @@ function nfd_bhsm_crypt_iv_length() {
  * @return string
  * @throws \Exception When we are unable to encrypt the data.
  */
-function nfd_bhsm_encrypt_string( $str, $key ) {
-	$iv_length = nfd_bhsm_crypt_iv_length();
+function nfd_sm_encrypt_string( $str, $key ) {
+	$iv_length = nfd_sm_crypt_iv_length();
 	$key       = substr( sha1( $key, true ), 0, $iv_length );
 
 	$iv = openssl_random_pseudo_bytes( $iv_length );
@@ -52,7 +52,7 @@ function nfd_bhsm_encrypt_string( $str, $key ) {
 		throw new \Exception( 'Unable to generate random bytes.' );
 	}
 
-	$encrypted_string = openssl_encrypt( $str, BH_SITE_MIGRATOR_CIPHER_NAME, $key, OPENSSL_RAW_DATA, $iv );
+	$encrypted_string = openssl_encrypt( $str, NFD_SM_CIPHER_NAME, $key, OPENSSL_RAW_DATA, $iv );
 	if ( false === $encrypted_string ) {
 		throw new \Exception( 'Unable to encrypt data.' );
 	}
@@ -66,7 +66,7 @@ function nfd_bhsm_encrypt_string( $str, $key ) {
  * @param  string $path Path
  * @return string
  */
-function nfd_bhsm_replace_directory_separator_with_forward_slash( $path ) {
+function nfd_sm_replace_directory_separator_with_forward_slash( $path ) {
 	return str_replace( DIRECTORY_SEPARATOR, '/', $path );
 }
 
@@ -81,7 +81,7 @@ function nfd_bhsm_replace_directory_separator_with_forward_slash( $path ) {
  *
  * @throws \Exception When we are unable to open the file.
  */
-function nfd_bhsm_open( $file, $mode ) {
+function nfd_sm_open( $file, $mode ) {
 	$file_handle = fopen( $file, $mode );
 	if ( false === $file_handle ) {
 		throw new \Exception(
@@ -103,7 +103,7 @@ function nfd_bhsm_open( $file, $mode ) {
  *
  * @throws \Exception If unable to write.
  */
-function nfd_bhsm_write( $handle, $content ) {
+function nfd_sm_write( $handle, $content ) {
 	$write_result = fwrite( $handle, $content );
 	if ( false === $write_result ) {
 		$meta = stream_get_meta_data( $handle );
@@ -128,7 +128,7 @@ function nfd_bhsm_write( $handle, $content ) {
  * @param  integer $blog_id Blog ID
  * @return boolean
  */
-function nfd_bhsm_is_mainsite( $blog_id = null ) {
+function nfd_sm_is_mainsite( $blog_id = null ) {
 	return null === $blog_id || 0 === $blog_id || 1 === $blog_id;
 }
 
@@ -138,11 +138,11 @@ function nfd_bhsm_is_mainsite( $blog_id = null ) {
  * @param  integer $blog_id Blog ID
  * @return string
  */
-function nfd_bhsm_table_prefix( $blog_id = null ) {
+function nfd_sm_table_prefix( $blog_id = null ) {
 	global $wpdb;
 
 	// Set base table prefix
-	if ( nfd_bhsm_is_mainsite( $blog_id ) ) {
+	if ( nfd_sm_is_mainsite( $blog_id ) ) {
 		return $wpdb->base_prefix;
 	}
 
@@ -152,9 +152,9 @@ function nfd_bhsm_table_prefix( $blog_id = null ) {
 /**
  * Get the base storage directory
  */
-function nfd_bhsm_storage_path() {
+function nfd_sm_storage_path() {
 	$uploads   = wp_get_upload_dir();
-	$directory = $uploads['basedir'] . DIRECTORY_SEPARATOR . 'bluehost-site-migrator' . DIRECTORY_SEPARATOR;
+	$directory = $uploads['basedir'] . DIRECTORY_SEPARATOR . 'nfd-site-migrator' . DIRECTORY_SEPARATOR;
 	wp_mkdir_p( $directory );
 
 	return $directory;
@@ -167,7 +167,7 @@ function nfd_bhsm_storage_path() {
  * @param string $type The file type.
  * @param string $ext  The file extensions.
  */
-function nfd_bhsm_get_hashed_file_name( $name, $type, $ext ) {
+function nfd_sm_get_hashed_file_name( $name, $type, $ext ) {
 	$date      = gmdate( 'Y-m-d-His' );
 	$site_name = strtolower( preg_replace( '#[^a-zA-Z0-9]#', '-', get_bloginfo( 'name' ) ) );
 	$unique_id = uniqid();
@@ -182,9 +182,9 @@ function nfd_bhsm_get_hashed_file_name( $name, $type, $ext ) {
  * @param string $type The file type.
  * @param string $ext  The file extensions.
  */
-function nfd_bhsm_get_hashed_file_path( $name, $type, $ext ) {
-	$filename  = nfd_bhsm_get_hashed_file_name( $name, $type, $ext );
-	$directory = nfd_bhsm_storage_path();
+function nfd_sm_get_hashed_file_path( $name, $type, $ext ) {
+	$filename  = nfd_sm_get_hashed_file_name( $name, $type, $ext );
+	$directory = nfd_sm_storage_path();
 	if ( ! file_exists( $directory . '/index.php' ) ) {
 		file_put_contents( $directory . '/index.php', '<?php // Silence is golden.' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
 	}
@@ -200,7 +200,7 @@ function nfd_bhsm_get_hashed_file_path( $name, $type, $ext ) {
  * @return integer
  * @throws \Exception When we are unable to write.
  */
-function nfd_bhsm_putcsv( $handle, $fields ) {
+function nfd_sm_putcsv( $handle, $fields ) {
 	$write_result = fputcsv( $handle, $fields );
 	if ( false === $write_result ) {
 		$meta = stream_get_meta_data( $handle );
@@ -220,7 +220,7 @@ function nfd_bhsm_putcsv( $handle, $fields ) {
  *
  * @return int
  */
-function nfd_bhsm_get_dir_size( $path ) {
+function nfd_sm_get_dir_size( $path ) {
 	$bytes = 0;
 	$path  = realpath( $path );
 	if ( $path && file_exists( $path ) ) {
@@ -242,7 +242,7 @@ function nfd_bhsm_get_dir_size( $path ) {
  *
  * @return mixed
  */
-function nfd_bhsm_data_get( $data, $key, $default_val = null ) {
+function nfd_sm_data_get( $data, $key, $default_val = null ) {
 	$value = $default_val;
 	if ( is_array( $data ) && array_key_exists( $key, $data ) ) {
 		$value = $data[ $key ];
@@ -271,7 +271,7 @@ function nfd_bhsm_data_get( $data, $key, $default_val = null ) {
  *
  * @return string
  */
-function nfd_bhsm_plugins_dir() {
+function nfd_sm_plugins_dir() {
 	return untrailingslashit( WP_PLUGIN_DIR );
 }
 
@@ -280,7 +280,7 @@ function nfd_bhsm_plugins_dir() {
  *
  * @return array
  */
-function nfd_bhsm_themes_dir() {
+function nfd_sm_themes_dir() {
 	$theme_dirs = array();
 	foreach ( search_theme_directories() as $theme_name => $theme_info ) {
 		if ( isset( $theme_info['theme_root'] ) ) {
@@ -298,7 +298,7 @@ function nfd_bhsm_themes_dir() {
  *
  * @return string
  */
-function nfd_bhsm_uploads_dir() {
+function nfd_sm_uploads_dir() {
 	$upload_dir = wp_upload_dir();
 	if ( $upload_dir ) {
 		if ( isset( $upload_dir['basedir'] ) ) {
@@ -312,7 +312,7 @@ function nfd_bhsm_uploads_dir() {
  *
  * @return string
  */
-function nfd_bhsm_mu_plugins_dir() {
+function nfd_sm_mu_plugins_dir() {
 	$mu_plugins_dir = WPMU_PLUGIN_DIR;
 	if ( is_dir( $mu_plugins_dir ) ) {
 		return untrailingslashit( $mu_plugins_dir );
@@ -324,7 +324,7 @@ function nfd_bhsm_mu_plugins_dir() {
  *
  * @return string
  */
-function nfd_bhsm_root_dir() {
+function nfd_sm_root_dir() {
 	return untrailingslashit( ABSPATH );
 }
 
@@ -333,7 +333,7 @@ function nfd_bhsm_root_dir() {
  *
  * @param string $dir The directory path.
  */
-function nfd_bhsm_delete_directory( $dir ) {
+function nfd_sm_delete_directory( $dir ) {
 	if ( ! is_dir( $dir ) ) {
 		return false;
 	}
@@ -343,7 +343,7 @@ function nfd_bhsm_delete_directory( $dir ) {
 		if ( '.' !== $file && '..' !== $file ) {
 			$path = $dir . '/' . $file;
 			if ( is_dir( $path ) ) {
-				nfd_bhsm_delete_directory( $path ); // Recursively delete subdirectories
+				nfd_sm_delete_directory( $path ); // Recursively delete subdirectories
 			} else {
 				unlink( $path ); // Delete individual files
 			}
@@ -356,15 +356,15 @@ function nfd_bhsm_delete_directory( $dir ) {
 /**
  * Purge Migration related things
  */
-function nfd_bhsm_purge_all() {
+function nfd_sm_purge_all() {
 	// Delete the options
-	foreach ( BH_SITE_MIGRATOR_OPTIONS_LIST as $option ) {
+	foreach ( NFD_SM_OPTIONS_LIST as $option ) {
 		delete_option( $option );
 	}
 
 	// Delete the migration data
-	nfd_bhsm_delete_directory( nfd_bhsm_storage_path() );
+	nfd_sm_delete_directory( nfd_sm_storage_path() );
 
 	// Delete the transient
-	delete_transient( BH_SITE_MIGRATOR_CAN_MIGRATE_TRANSIENT );
+	delete_transient( NFD_SM_CAN_MIGRATE_TRANSIENT );
 }

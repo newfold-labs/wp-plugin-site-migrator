@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Archiver\Compressor;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Compressor;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Archive the dropins directory
@@ -49,19 +49,19 @@ class DropinsArchiver extends PackagerBase {
 		if ( isset( $dropin_task_params['dropins_list_path'] ) ) {
 			$dropins_list_file_path = $dropin_task_params['dropins_list_path'];
 		} else {
-			$dropins_list_file_path                  = nfd_bhsm_get_hashed_file_path( 'dropins', 'config', 'list' );
+			$dropins_list_file_path                  = nfd_sm_get_hashed_file_path( 'dropins', 'config', 'list' );
 			$dropin_task_params['dropins_list_path'] = $dropins_list_file_path;
 		}
 
 		// Set the progress
 		Status::set_status(
-			__( 'Retrieving a list of WordPress dropin files ...', 'bluehost-site-migrator' ),
+			__( 'Retrieving a list of WordPress dropin files ...', 'nfd-site-migrator' ),
 			80,
 			'dropins'
 		);
 
 		// Create the dropin details file
-		$dropins_list = nfd_bhsm_open( $dropins_list_file_path, 'w' );
+		$dropins_list = nfd_sm_open( $dropins_list_file_path, 'w' );
 
 		if ( ! function_exists( 'get_dropins' ) ) {
 			require ABSPATH . 'wp-admin/includes/plugin.php';
@@ -71,8 +71,8 @@ class DropinsArchiver extends PackagerBase {
 
 		if ( $dropins ) {
 			foreach ( $dropins as $dropin ) {
-				$file_path = nfd_bhsm_replace_forward_slash_with_directory_separator( WP_CONTENT_DIR . DIRECTORY_SEPARATOR . $dropin );
-				$written   = nfd_bhsm_putcsv(
+				$file_path = nfd_sm_replace_forward_slash_with_directory_separator( WP_CONTENT_DIR . DIRECTORY_SEPARATOR . $dropin );
+				$written   = nfd_sm_putcsv(
 					$dropins_list,
 					array(
 						$file_path,
@@ -87,7 +87,7 @@ class DropinsArchiver extends PackagerBase {
 			}
 		}
 
-		Status::set_status( __( 'Done retrieving a list of WordPress dropin files.', 'bluehost-site-migrator' ), 83, 'dropins' );
+		Status::set_status( __( 'Done retrieving a list of WordPress dropin files.', 'nfd-site-migrator' ), 83, 'dropins' );
 
 		$dropin_task_params['total_dropins_files_count'] = $total_dropins_files_count;
 
@@ -165,7 +165,7 @@ class DropinsArchiver extends PackagerBase {
 		if ( isset( $params['dropins_archive_path'] ) ) {
 			$dropins_archive_path = $params['dropins_archive_path'];
 		} else {
-			$dropins_archive_path = nfd_bhsm_get_hashed_file_path( 'dropins', 'backup', 'zip' );
+			$dropins_archive_path = nfd_sm_get_hashed_file_path( 'dropins', 'backup', 'zip' );
 			// Set the archiver path in params
 			$params['dropins_archive_path'] = $dropins_archive_path;
 		}
@@ -178,7 +178,7 @@ class DropinsArchiver extends PackagerBase {
 				// translators: %d: file count
 				esc_html__(
 					'Archiving %d dropin files ...',
-					'bluehost-site-migrator'
+					'nfd-site-migrator'
 				),
 				esc_xml( $total_dropins_files_count )
 			),
@@ -193,7 +193,7 @@ class DropinsArchiver extends PackagerBase {
 		$start = microtime( true );
 
 		// Get dropins list file
-		$dropins_list = nfd_bhsm_open( $dropins_list_path, 'r' );
+		$dropins_list = nfd_sm_open( $dropins_list_path, 'r' );
 
 		// Set the file pointer at the current
 		if ( fseek( $dropins_list, $dropins_bytes_offset ) !== -1 ) {
@@ -230,7 +230,7 @@ class DropinsArchiver extends PackagerBase {
 					// translators: %d: file count
 						esc_html__(
 							'Archiving %d dropin files ...',
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						),
 						esc_xml( $total_dropins_files_count )
 					),
@@ -239,7 +239,7 @@ class DropinsArchiver extends PackagerBase {
 				);
 
 				// More than 10 seconds have passed, break and do another request
-				$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 				if ( ( $timeout ) ) {
 					if ( ( microtime( true ) - $start ) > $timeout ) {
 						$completed = false;
@@ -282,7 +282,7 @@ class DropinsArchiver extends PackagerBase {
 			// Unset completed flag
 			unset( $params['completed'] );
 
-			Status::set_status( __( 'Done archiving dropins ', 'bluehost-site-migrator' ), 87, 'dropins' );
+			Status::set_status( __( 'Done archiving dropins ', 'nfd-site-migrator' ), 87, 'dropins' );
 
 			self::set_dropins_params( $params );
 
@@ -320,7 +320,7 @@ class DropinsArchiver extends PackagerBase {
 				// translators: %d: file count
 					esc_html__(
 						'Archiving %d dropin files ...',
-						'bluehost-site-migrator'
+						'nfd-site-migrator'
 					),
 					esc_xml( $total_dropins_files_count )
 				),

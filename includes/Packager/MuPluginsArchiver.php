@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Archiver\Compressor;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Compressor;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Archive the mu_plugins directory
@@ -49,17 +49,17 @@ class MuPluginsArchiver extends PackagerBase {
 		if ( isset( $mu_plugin_task_params['mu_plugins_list_path'] ) ) {
 			$mu_plugins_list_file_path = $mu_plugin_task_params['mu_plugins_list_path'];
 		} else {
-			$mu_plugins_list_file_path                     = nfd_bhsm_get_hashed_file_path( 'mu_plugins', 'config', 'list' );
+			$mu_plugins_list_file_path                     = nfd_sm_get_hashed_file_path( 'mu_plugins', 'config', 'list' );
 			$mu_plugin_task_params['mu_plugins_list_path'] = $mu_plugins_list_file_path;
 		}
 
 		// Set the progress
-		Status::set_status( __( 'Retrieving a list of WordPress mu_plugin files ...', 'bluehost-site-migrator' ), 66, 'mu_plugins' );
+		Status::set_status( __( 'Retrieving a list of WordPress mu_plugin files ...', 'nfd-site-migrator' ), 66, 'mu_plugins' );
 
 		// Create the mu_plugin details file
-		$mu_plugins_list = nfd_bhsm_open( $mu_plugins_list_file_path, 'w' );
+		$mu_plugins_list = nfd_sm_open( $mu_plugins_list_file_path, 'w' );
 
-		$mu_plugins_dir = nfd_bhsm_mu_plugins_dir();
+		$mu_plugins_dir = nfd_sm_mu_plugins_dir();
 
 		if ( is_dir( $mu_plugins_dir ) ) {
 			// Enumerate over mu_plugins directory
@@ -70,7 +70,7 @@ class MuPluginsArchiver extends PackagerBase {
 			// Write path line
 			foreach ( $iterator as $item ) {
 				if ( $item->isFile() ) {
-					$written = nfd_bhsm_putcsv(
+					$written = nfd_sm_putcsv(
 						$mu_plugins_list,
 						array(
 							$iterator->getPathname(),
@@ -88,7 +88,7 @@ class MuPluginsArchiver extends PackagerBase {
 		}
 
 		Status::set_status(
-			__( 'Done retrieving a list of WordPress mu_plugin files.', 'bluehost-site-migrator' ),
+			__( 'Done retrieving a list of WordPress mu_plugin files.', 'nfd-site-migrator' ),
 			69,
 			'mu_plugins'
 		);
@@ -169,7 +169,7 @@ class MuPluginsArchiver extends PackagerBase {
 		if ( isset( $params['mu_plugins_archive_path'] ) ) {
 			$mu_plugins_archive_path = $params['mu_plugins_archive_path'];
 		} else {
-			$mu_plugins_archive_path = nfd_bhsm_get_hashed_file_path( 'mu_plugins', 'backup', 'zip' );
+			$mu_plugins_archive_path = nfd_sm_get_hashed_file_path( 'mu_plugins', 'backup', 'zip' );
 			// Set the archiver path in params
 			$params['mu_plugins_archive_path'] = $mu_plugins_archive_path;
 		}
@@ -180,7 +180,7 @@ class MuPluginsArchiver extends PackagerBase {
 		Status::set_status(
 			sprintf(
 				// translators: %d: total mu plugins file count
-				esc_html__( 'Archiving %d mu_plugin files ...', 'bluehost-site-migrator' ),
+				esc_html__( 'Archiving %d mu_plugin files ...', 'nfd-site-migrator' ),
 				esc_xml( $total_mu_plugins_files_count )
 			),
 			72,
@@ -194,7 +194,7 @@ class MuPluginsArchiver extends PackagerBase {
 		$start = microtime( true );
 
 		// Get mu_plugins list file
-		$mu_plugins_list = nfd_bhsm_open( $mu_plugins_list_path, 'r' );
+		$mu_plugins_list = nfd_sm_open( $mu_plugins_list_path, 'r' );
 
 		// Set the file pointer at the current
 		if ( fseek( $mu_plugins_list, $mu_plugins_bytes_offset ) !== -1 ) {
@@ -229,7 +229,7 @@ class MuPluginsArchiver extends PackagerBase {
 				Status::set_status(
 					sprintf(
 					// translators: %d: total mu plugins file count
-						esc_html__( 'Archiving %d mu_plugin files ...', 'bluehost-site-migrator' ),
+						esc_html__( 'Archiving %d mu_plugin files ...', 'nfd-site-migrator' ),
 						esc_xml( $total_mu_plugins_files_count )
 					),
 					72,
@@ -237,7 +237,7 @@ class MuPluginsArchiver extends PackagerBase {
 				);
 
 				// More than 10 seconds have passed, break and do another request
-				$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 				if ( $timeout ) {
 					if ( ( microtime( true ) - $start ) > $timeout ) {
 						$completed = false;
@@ -280,7 +280,7 @@ class MuPluginsArchiver extends PackagerBase {
 			// Unset completed flag
 			unset( $params['completed'] );
 
-			Status::set_status( __( 'Done archiving mu_plugins ', 'bluehost-site-migrator' ), 75, 'mu_plugins' );
+			Status::set_status( __( 'Done archiving mu_plugins ', 'nfd-site-migrator' ), 75, 'mu_plugins' );
 
 			self::set_mu_plugins_params( $params );
 
@@ -316,7 +316,7 @@ class MuPluginsArchiver extends PackagerBase {
 			Status::set_status(
 				sprintf(
 				// translators: %d: total mu plugins file count
-					esc_html__( 'Archiving %d mu_plugin files ...', 'bluehost-site-migrator' ),
+					esc_html__( 'Archiving %d mu_plugin files ...', 'nfd-site-migrator' ),
 					esc_xml( $total_mu_plugins_files_count )
 				),
 				72,

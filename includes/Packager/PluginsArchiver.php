@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Archiver\Compressor;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Compressor;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Archive the plugins directory
@@ -49,22 +49,22 @@ class PluginsArchiver extends PackagerBase {
 		if ( isset( $plugin_task_params['plugins_list_path'] ) ) {
 			$plugins_list_file_path = $plugin_task_params['plugins_list_path'];
 		} else {
-			$plugins_list_file_path                  = nfd_bhsm_get_hashed_file_path( 'plugins', 'config', 'list' );
+			$plugins_list_file_path                  = nfd_sm_get_hashed_file_path( 'plugins', 'config', 'list' );
 			$plugin_task_params['plugins_list_path'] = $plugins_list_file_path;
 		}
 
 		// Set the progress
-		Status::set_status( __( 'Retrieving a list of WordPress plugin files ...', 'bluehost-site-migrator' ), 30, 'plugins' );
+		Status::set_status( __( 'Retrieving a list of WordPress plugin files ...', 'nfd-site-migrator' ), 30, 'plugins' );
 
 		// Add the current plugin to the excluded list
-		$exclude_filters = array( BH_SITE_MIGRATOR_PLUGIN_NAME );
+		$exclude_filters = array( NFD_SM_PLUGIN_NAME );
 
 		// Create the plugin details file
 
-		$plugins_list = nfd_bhsm_open( $plugins_list_file_path, 'w' );
+		$plugins_list = nfd_sm_open( $plugins_list_file_path, 'w' );
 
 		// Enumerate over plugins directory
-		$iterator = new \RecursiveDirectoryIterator( nfd_bhsm_plugins_dir(), \FilesystemIterator::SKIP_DOTS );
+		$iterator = new \RecursiveDirectoryIterator( nfd_sm_plugins_dir(), \FilesystemIterator::SKIP_DOTS );
 
 		// Define the directory filter
 		$filter = function ( $file, $key, $iterator ) use ( $exclude_filters ) {
@@ -87,7 +87,7 @@ class PluginsArchiver extends PackagerBase {
 		// Write path line
 		foreach ( $iterator as $item ) {
 			if ( $item->isFile() ) {
-				$written = nfd_bhsm_putcsv(
+				$written = nfd_sm_putcsv(
 					$plugins_list,
 					array(
 						$iterator->getPathname(),
@@ -104,7 +104,7 @@ class PluginsArchiver extends PackagerBase {
 		}
 
 		Status::set_status(
-			__( 'Done retrieving a list of WordPress plugin files.', 'bluehost-site-migrator' ),
+			__( 'Done retrieving a list of WordPress plugin files.', 'nfd-site-migrator' ),
 			32,
 			'plugins'
 		);
@@ -187,7 +187,7 @@ class PluginsArchiver extends PackagerBase {
 		Status::set_status(
 			sprintf(
 				// translators: %d: total plugin files count
-				esc_html__( 'Archiving %d plugin files ... ', 'bluehost-site-migrator' ),
+				esc_html__( 'Archiving %d plugin files ... ', 'nfd-site-migrator' ),
 				esc_xml( $total_plugins_files_count )
 			),
 			35,
@@ -201,13 +201,13 @@ class PluginsArchiver extends PackagerBase {
 		$start = microtime( true );
 
 		// Get plugins list file
-		$plugins_list = nfd_bhsm_open( $plugins_list_path, 'r' );
+		$plugins_list = nfd_sm_open( $plugins_list_path, 'r' );
 
 		// Get the database archive path
 		if ( isset( $params['plugins_archive_path'] ) ) {
 			$plugins_archive_path = $params['plugins_archive_path'];
 		} else {
-			$plugins_archive_path = nfd_bhsm_get_hashed_file_path( 'plugins', 'backup', 'zip' );
+			$plugins_archive_path = nfd_sm_get_hashed_file_path( 'plugins', 'backup', 'zip' );
 			// Set the archiver path in params
 			$params['plugins_archive_path'] = $plugins_archive_path;
 		}
@@ -245,7 +245,7 @@ class PluginsArchiver extends PackagerBase {
 				Status::set_status(
 					sprintf(
 					// translators: %d: total plugin files count
-						esc_html__( 'Archiving %d plugin files ... ', 'bluehost-site-migrator' ),
+						esc_html__( 'Archiving %d plugin files ... ', 'nfd-site-migrator' ),
 						esc_xml( $total_plugins_files_count )
 					),
 					35,
@@ -253,7 +253,7 @@ class PluginsArchiver extends PackagerBase {
 				);
 
 				// More than 10 seconds have passed, break and do another request
-				$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 				if ( $timeout ) {
 					if ( ( microtime( true ) - $start ) > $timeout ) {
 						$completed = false;
@@ -296,7 +296,7 @@ class PluginsArchiver extends PackagerBase {
 			// Unset completed flag
 			unset( $params['completed'] );
 
-			Status::set_status( __( 'Done archiving plugins ', 'bluehost-site-migrator' ), 37, 'plugins' );
+			Status::set_status( __( 'Done archiving plugins ', 'nfd-site-migrator' ), 37, 'plugins' );
 
 			self::set_plugins_params( $params );
 

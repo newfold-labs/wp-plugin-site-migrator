@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\Utils;
+namespace NewfoldLabs\WP\SiteMigrator\Utils;
 
 /**
  * Common utilities class

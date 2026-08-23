@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\Data;
+namespace NewfoldLabs\WP\SiteMigrator\Data;
 
 /**
  * Data class to get the required data for a plugin

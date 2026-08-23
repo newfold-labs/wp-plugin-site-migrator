@@ -1,6 +1,12 @@
 <?php
+/**
+ * Derived from All-in-One WP Migration by ServMask, Inc. (https://servmask.com/),
+ * licensed GPL-2.0-or-later. Modified for this plugin. See CREDITS.md.
+ *
+ * @package NewfoldLabs\WP\SiteMigrator
+ */
 
-namespace BluehostSiteMigrator\Archiver;
+namespace NewfoldLabs\WP\SiteMigrator\Archiver;
 
 /**
  * Contains the utilities for creating, managing and truncating an archive
@@ -70,7 +76,7 @@ abstract class Archiver {
 				throw new \Exception(
 					sprintf(
 						// translators: %s: file name
-						esc_html__( 'Unable to open file for writing. File: %s', 'bluehost-site-migrator' ),
+						esc_html__( 'Unable to open file for writing. File: %s', 'nfd-site-migrator' ),
 						esc_xml( $this->file_name )
 					)
 				);
@@ -81,7 +87,7 @@ abstract class Archiver {
 				throw new \Exception(
 					sprintf(
 						// translators: %s: file name
-						esc_html__( 'Unable to seek to end of file. File: %s', 'bluehost-site-migrator' ),
+						esc_html__( 'Unable to seek to end of file. File: %s', 'nfd-site-migrator' ),
 						esc_xml( $this->file_name )
 					)
 				);
@@ -93,7 +99,7 @@ abstract class Archiver {
 				throw new \Exception(
 					sprintf(
 						// translators: %s: file name
-						esc_html__( 'Unable to open file for reading. File: %s', 'bluehost-site-migrator' ),
+						esc_html__( 'Unable to open file for reading. File: %s', 'nfd-site-migrator' ),
 						esc_xml( $this->file_name )
 					)
 				);
@@ -115,7 +121,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name %d: offset
-					esc_html__( 'Unable to seek to offset of file. File: %1$s Offset: %2$d', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to seek to offset of file. File: %1$s Offset: %2$d', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name ),
 					esc_xml( $offset )
 				)
@@ -136,7 +142,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name
-					esc_html__( 'Unable to tell offset of file. File: %s', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to tell offset of file. File: %s', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name )
 				)
 			);
@@ -158,7 +164,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name
-					esc_html__( 'Unable to seek to end of file. File: %s', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to seek to end of file. File: %s', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name )
 				)
 			);
@@ -171,7 +177,7 @@ abstract class Archiver {
 				throw new \Exception(
 					sprintf(
 						// translators: %s: file name
-						esc_html__( 'Out of disk space. Unable to write end of block to file. File: %s', 'bluehost-site-migrator' ),
+						esc_html__( 'Out of disk space. Unable to write end of block to file. File: %s', 'nfd-site-migrator' ),
 						esc_xml( $this->file_name )
 					)
 				);
@@ -180,7 +186,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name
-					esc_html__( 'Unable to write end of block to file. File: %s', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to write end of block to file. File: %s', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name )
 				)
 			);
@@ -263,7 +269,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name
-					esc_html__( 'Unable to tell offset of file. File: %s', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to tell offset of file. File: %s', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name )
 				)
 			);
@@ -274,7 +280,7 @@ abstract class Archiver {
 				throw new \Exception(
 					sprintf(
 					// translators: %s: file name
-						esc_html__( 'Unable to truncate file. File: %s', 'bluehost-site-migrator' ),
+						esc_html__( 'Unable to truncate file. File: %s', 'nfd-site-migrator' ),
 						esc_xml( $this->file_name )
 					)
 				);
@@ -303,7 +309,7 @@ abstract class Archiver {
 			throw new \Exception(
 				sprintf(
 					// translators: %s: file name
-					esc_html__( 'Unable to close file. File: %s', 'bluehost-site-migrator' ),
+					esc_html__( 'Unable to close file. File: %s', 'nfd-site-migrator' ),
 					esc_xml( $this->file_name )
 				)
 			);

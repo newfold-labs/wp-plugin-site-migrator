@@ -4,19 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A WordPress plugin (`bluehost-site-migrator`) that packages a WordPress site into chunked zip archives and hands them off to Bluehost's "Can We Migrate" (CWM) API. PHP backend under `includes/` (PSR-4 `BluehostSiteMigrator\` via Composer) plus a React SPA under `src/` rendered on a single wp-admin page.
+A WordPress plugin (`nfd-site-migrator`) for moving a WordPress site between hosts. It is
+installed on **both** sites: the source exports its content into a package, the destination
+imports it. PHP backend under `includes/` (PSR-4 `NewfoldLabs\WP\SiteMigrator\` via Composer)
+plus a React SPA under `src/` rendered on a single wp-admin page.
+
+**The plugin is mid-rework and does not currently perform a migration.** It began life as the
+Bluehost Site Migrator, which packaged a site and handed it to a hosting backend; that backend
+integration has been removed and the export/import halves are being rebuilt. Read
+`docs/implementation-plan.md` before making changes — it is the authority on what is being
+built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
+and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
+
+Current state: phases 0 (deletion) and 1 (rename) are done. What survives is the compatibility
+check, the database dumper, the file archivers, and the manifest.
 
 ## Commands
 
 ```bash
 # JS/CSS
-yarn build            # generate:css + wp-scripts build -> build/<package.json version>/
+yarn build            # generate:css + wp-scripts build -> build/
 yarn start            # same, in watch mode
-yarn watch            # watch only the Tailwind CSS generation
-yarn generate:css     # assets/styles/app.css -> src/styles/bh-site-migrator.css (must run before webpack)
-yarn lint:js          # eslint (wp-scripts) over ./src
-yarn lint:js:fix
-yarn format           # prettier via wp-scripts
+yarn generate:css     # assets/styles/app.css -> src/styles/nfd-site-migrator.css (runs before webpack)
+yarn lint:js
+yarn format
 
 # PHP
 composer lint         # phpcs (Newfold standard)
@@ -26,62 +37,120 @@ composer fix          # phpcbf
 npx wp-env start
 npx wp-env stop
 
-# E2E tests (require wp-env running with the plugin built)
-yarn test                                         # cypress run, all specs
-yarn cypress run --spec cypress/e2e/checkRender.cy.js   # single spec
-yarn cypress open                                 # interactive
+# E2E (requires wp-env running with the plugin built)
+yarn test
+yarn cypress open
 ```
 
-CI runs `composer lint` on PHP changes and the Cypress suite on PRs. `.husky/pre-commit` runs `lint-staged` (no config committed, so it is effectively a no-op unless one is added).
+`build/` and `src/styles/nfd-site-migrator.css` are **generated and not tracked**. Run
+`yarn build` after cloning or the admin page renders an empty div.
 
-## Version bumping — four places must agree
+## Naming
 
-`build/` output is versioned: webpack writes to `build/${package.json version}/`, while PHP enqueues from `BH_SITE_MIGRATOR_PLUGIN_BUILD_DIR` = `build/BH_SITE_MIGRATOR_VERSION`. If they diverge, `WP_Admin::register_assets()` silently skips enqueueing and the admin page renders an empty div. Keep in sync:
+Settled in decision D1 of the implementation plan. Everything is consistent; keep it that way.
 
-1. `package.json` → `version`
-2. `constants.php` → `BH_SITE_MIGRATOR_VERSION`
-3. `bluehost-site-migrator.php` → plugin header `Version:`
-4. `readme.txt` → `Stable tag:`
+| Thing | Value |
+|---|---|
+| Namespace | `NewfoldLabs\WP\SiteMigrator\` → `includes/` |
+| Function prefix | `nfd_sm_` (procedural helpers in `functions.php`, not autoloaded) |
+| Constants | `NFD_SM_*` in `constants.php` |
+| Slug, text domain, REST namespace | `nfd-site-migrator` |
+| Single option key | `nfd_site_migrator` |
+| CSS scope / mount point | `.nfd-sm` / `#nfd-sm-app` |
 
-Built assets under `build/` are committed to the repo.
+**When renaming anything, drive it with text search, not an IDE refactor.** The namespace
+appears inside string literals (REST controller registration, and formerly task executors);
+a symbol-aware rename misses those and the failure is a runtime fatal, not a compile error.
+
+## Versioning
+
+The plugin header in `nfd-site-migrator.php` is the source of truth. `package.json` carries the
+same number for npm's benefit, but nothing breaks if they drift: **build output is unversioned**
+(`build/`, not `build/<version>/`) and cache busting comes from the content hash in
+`nfd-site-migrator.asset.php`. This replaced a four-place scheme where a mismatch made
+`WP_Admin::register_assets()` silently skip enqueueing.
 
 ## Architecture
 
-**Bootstrap** (`bluehost-site-migrator.php`): loads Composer autoload, `constants.php`, then `functions.php` (procedural helpers, all prefixed `nfd_bhsm_` — not autoloaded, required explicitly). Instantiates `WP_Admin`, `RestApi\RestApi`, primes `Utils\Options::fetch()`, registers `MigrationChecks\Checker::register()`, and persists options on `shutdown`.
+**Bootstrap** (`nfd-site-migrator.php`): Composer autoload, `constants.php`, then `functions.php`
+(procedural helpers, all prefixed `nfd_sm_`, required explicitly). Instantiates `WP_Admin` and
+`RestApi\RestApi`, primes `Utils\Options::fetch()`, registers `MigrationChecks\Checker::register()`,
+and persists options on `shutdown`. One deactivation hook (`nfd_sm_purge_all`); no activation hooks.
 
-**Options facade** (`Utils\Options`): all plugin state lives in the single `bluehost_site_migrator` wp_option as an array, read once at bootstrap and written once on shutdown via `maybe_persist()`. Use `Options::get/set/delete` for that state — never `update_option` for keys inside it. A handful of values (migration ID, auth token, regions, packaging status flags, geo data) are *separate* standalone options declared in `constants.php` and listed in `BH_SITE_MIGRATOR_OPTIONS_LIST`; `nfd_bhsm_purge_all()` deletes those plus the storage directory and the can-migrate transient on deactivation.
+**Options facade** (`Utils\Options`): all plugin state lives in the single `nfd_site_migrator`
+wp_option as an array, read once at bootstrap and written once on shutdown via `maybe_persist()`.
+Use `Options::get/set/delete` — never `update_option` for keys inside it. A few packaging status
+flags are separate standalone options declared in `constants.php` and listed in
+`NFD_SM_OPTIONS_LIST`; `nfd_sm_purge_all()` deletes those plus the storage directory and the
+can-migrate transient on deactivation.
 
-**Compatibility check** (`MigrationChecks\Checker`): a filter chain on `bluehost_site_migrator_can_migrate`. Each check both contributes a boolean and records a diagnostic in `Checker::$results` (returned to the UI). `can_we_migrate_api()` POSTs the manifest to `{BH_SITE_MIGRATOR_API_BASEURL}/manifestScan` and, on success, stores `migrationId`, `x-auth-token`, and region URLs, caching the verdict in a one-hour transient. To add a check, add a filter in `register()` and set a `self::$results` key.
+**Compatibility check** (`MigrationChecks\Checker`): a filter chain on `nfd_site_migrator_can_migrate`.
+Each check contributes a boolean and records a diagnostic in `Checker::$results`. Four local checks
+remain — disk-space functions, content-directory writability, multisite. This is scheduled to be
+replaced in phase 3 by `Preflight\Checker` returning a structured `Report` that fails closed.
 
-**Manifest** (`Manifest/`): `Manifest extends Registry` collects site facts (WP, plugins, themes) into an array cached under the `manifest` option key; it's the payload for the CWM feasibility scan.
+**Manifest** (`Manifest/`): collects site facts into an array cached under the `manifest` option key.
+Currently has **no callers** — its caller was the removed hosting-backend scan. It is kept
+deliberately (plan §11.1) as the site-facts source for the phase 3 preflight report.
 
-**Packaging pipeline** (`MigrationManager\MigrationTasks` + `Packager/`): work is queued as `newfold-labs/wp-module-tasks` `Task` objects whose `task_execute` is a `'Class::method'` string. Ordering is by descending `task_priority` (database dump 20 → root archive 6); `MigrationTasks::__construct()` rewrites `wp-config.php` to force `DISABLE_WP_CRON` to false, because the queue runs on wp-cron.
+**Packaging** (`Packager/`): six static archivers, each resumable — `prepare()` builds a CSV list
+file, `execute()` walks it tracking byte offsets stashed in Options under `<type>_task_params`, and
+bails after ~10s so the next invocation resumes. Nothing currently drives them: the wp-cron task
+queue that did was removed in phase 0. Phase 2 collapses all six into one `FileCollector`.
 
-Each packager is static and **resumable**: `prepare()` builds a CSV list file of everything to archive, `execute()` walks it while tracking byte offsets (`archive_bytes_offset`, `file_bytes_offset`, list-file offset, processed size) stashed in Options under `<type>_task_params`, and bails after ~10s (`nfd_bhsm_completed_timeout` filter) so the next cron tick resumes. On completion it calls `PackagerBase::persist_archive_path()`, which records hash/size/url into the `packaged_files` option map. Add a new archiver by extending `PackagerBase`, following the prepare/execute offset pattern, and queuing it in `MigrationTasks::queue_tasks()` **and** listing its task name in `Utils\Common::get_packaging_task_names()` (used for cancel and failure reporting).
+Archives are written by `Archiver\Compressor extends Archiver`, a custom incremental format with a
+fixed header block — not `ZipArchive`. Files land in `wp-content/uploads/nfd-site-migrator/`
+(`nfd_sm_storage_path()`). Phase 2 replaces this with standard zip.
 
-Archives are written by `Archiver\Compressor extends Archiver`, a custom incremental format with a fixed header block (name/size/mtime/prefix), not `ZipArchive` — this is what makes mid-file resume possible. Files land in `wp-content/uploads/bluehost-site-migrator/` (`nfd_bhsm_storage_path()`), with hashed filenames from `nfd_bhsm_get_hashed_file_path()`.
+**REST API** (`includes/RestApi/`, namespace `nfd-site-migrator/v1`): controllers are registered by
+listing the class name in `RestApi::register_routes()`. Every route requires `manage_options`.
+Only `migration-check` remains (POST run checks, GET `/compatible`, GET `/step`).
 
-**Progress** (`Utils\Status`): `set_status( message, progress, stage )` writes a single option polled by the UI; `set_packaging_success( bool )` sets the terminal success/failed flags.
+**Frontend** (`src/`): mounts into `#nfd-sm-app`. `components/Migration.js` fetches `/step` and picks
+the screen. Calls go through `utils/api.js` wrapped in `utils/apiCall.js`, which converts thrown
+errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
+The transfer screens were removed with their endpoints; phases 3 and 4b rebuild the UI.
 
-**REST API** (`includes/RestApi/`, namespace `bluehost-site-migrator/v1`): controllers are registered by listing the class name in `RestApi::register_routes()`. Every route uses a `check_permission()` requiring `manage_options`.
-- `migration-check` (POST run checks, GET `/compatible`, GET `/step`)
-- `migration-tasks` (POST queue, GET `/status`, POST `/cancel`, POST `/send-files`, POST `/report-errors`)
-- `migration-data` (GET migration ID, regions, country code)
+Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` compiles
+`assets/styles/app.css` into `src/styles/nfd-site-migrator.css`, which the JS entry imports.
+Component styles are `@apply` classes scoped under `.nfd-sm`.
 
-`/migration-check/step` is the state machine the SPA drives off of, returning `compatible` / `checked` / `transfer_queued` / `packaged_success` / `packaged_failed`.
+## Dead code: two kinds, opposite fates
 
-**Frontend** (`src/`): mounts into `#bh-sm-app` rendered by `WP_Admin::render_page()`. `components/Migration.js` fetches `/step` and picks the screen (CompatibilityCheck → BeginTransfer → TransferStatus → TransferSuccess, with `/error` and `/incompatible` as HashRouter routes in `routes.js`). All calls go through `utils/api.js` (`apiFetch` wrappers) wrapped in `utils/apiCall.js`, which converts thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`. Geolocation comes from an external `hiive.cloud` worker before the compatibility POST. Polling uses `useInterval` in `utils/hooks.js`.
+Read plan §11.1 before deleting anything that looks unused.
 
-Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` compiles `assets/styles/app.css` into `src/styles/bh-site-migrator.css`, which the JS entry imports. Component styles are `@apply` classes scoped under `.bh-sm` in `app.css`; Tailwind scans `./src/**/*.{html,jsx,js}`.
+- **Abandoned** — delete. Unused encryption parameters on `Compressor::add_file()`, path helpers
+  duplicated between `Archiver` and `functions.php`, the computed `$progress` variable.
+- **Orphaned — keep every line.** `DatabaseBase`'s `is_*_query()` predicates, `is_atomic_query()`,
+  `replace_table_collations()`, `repair_table()`, and `DatabaseUtility::replace_serialized_values()`
+  are dead because the import half was stripped when the file was forked from All-in-One WP
+  Migration. Phase 4a revives all of it. Deleting it would throw away the most valuable code here.
+
+Do not drive deletions from an IDE's "unused symbol" report — dispatch happens through string
+literals that no symbol graph follows.
 
 ## Conventions
 
-- Minimum PHP is 5.6 per the plugin header (phpcs `testVersion` is `7.0-`); avoid modern syntax — no short arrays are used, `array()` throughout, no typed properties or arrow functions.
-- PHPCS uses the `Newfold` standard from `newfold-labs/wp-php-standards`; `WordPress.WP.AlternativeFunctions` and `WordPress.DB.RestrictedFunctions` are downgraded to severity 0 because the packager needs raw file and DB access.
-- Procedural helpers go in `functions.php` with the `nfd_bhsm_` prefix; classes go in `includes/` under the PSR-4 namespace.
-- Text domain is `bluehost-site-migrator` (note: `WP_Admin` menu strings use `bluehost_site_migrator` — a pre-existing inconsistency).
-- Composer pulls `newfold-labs/*` packages from the Satis repo at https://newfold-labs.github.io/satis/.
+- Minimum PHP is 5.6 per the plugin header (phpcs `testVersion` is `7.0-`); avoid modern syntax —
+  `array()` throughout, no typed properties, no arrow functions. Phase 8 raises the floor to 7.4.
+- PHPCS uses the `Newfold` standard from `newfold-labs/wp-php-standards`, resolved from the Satis
+  repository declared in `composer.json`. It is not on Packagist, so that `repositories` block has
+  to stay. `WordPress.WP.AlternativeFunctions` and `WordPress.DB.RestrictedFunctions` are downgraded
+  to severity 0 because the packager needs raw file and DB access.
+- Procedural helpers go in `functions.php` with the `nfd_sm_` prefix; classes go in `includes/`
+  under the PSR-4 namespace.
+
+## Licensing
+
+GPL-2.0-or-later, with the licence text in `LICENSE`. `Database/`, `Archiver/`, and
+`Utils/DatabaseUtility.php` derive from All-in-One WP Migration (ServMask, Inc.) and carry
+attribution headers; `CREDITS.md` records the details. Preserve both when editing those files.
 
 ## Cypress notes
 
-Specs stub the REST layer with `cy.intercept` against URL-encoded `rest_route` paths, e.g. `` `**${ encodeURIComponent( '/bluehost-site-migrator/v1/migration-check/step' ) }**` ``, backed by fixtures in `cypress/fixtures/`. `cy.login()` (`cypress/support/commands.js`) is cookie-aware and skips the login form when already authenticated. Assertions target stable element IDs (`#check-compatibility-button`, `#begin-transfer-button`, `#transfer-status-heading`, `#copy-transfer-key-button`) — keep those IDs when editing components.
+Specs stub the REST layer with `cy.intercept` against URL-encoded `rest_route` paths, e.g.
+`` `**${ encodeURIComponent( '/nfd-site-migrator/v1/migration-check/step' ) }**` ``, backed by
+fixtures in `cypress/fixtures/`. `cy.login()` is cookie-aware and skips the form when already
+authenticated. Only `checkCompatibility.cy.js` remains — the others covered deleted screens. The
+plan replaces this whole approach (§12): these specs stub the entire backend and cannot catch a
+single defect in the analysis.

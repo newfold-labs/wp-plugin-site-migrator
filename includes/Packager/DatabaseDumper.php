@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\Packager;
+namespace NewfoldLabs\WP\SiteMigrator\Packager;
 
-use BluehostSiteMigrator\Database\DatabaseMysqli;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\Database\DatabaseMysqli;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Class to package the database for a site
@@ -45,22 +45,22 @@ class DatabaseDumper extends PackagerBase {
 		if ( isset( $database_task_params['table_list_path'] ) ) {
 			$table_list_file_path = $database_task_params['table_list_path'];
 		} else {
-			$table_list_file_path                    = nfd_bhsm_get_hashed_file_path( 'tables', 'config', 'list' );
+			$table_list_file_path                    = nfd_sm_get_hashed_file_path( 'tables', 'config', 'list' );
 			$database_task_params['table_list_path'] = $table_list_file_path;
 		}
 
 		// Set the status message and stage
 		Status::set_status(
-			__( 'Retrieving a list of WordPress database tables ', 'bluehost-site-migrator' ),
+			__( 'Retrieving a list of WordPress database tables ', 'nfd-site-migrator' ),
 			5,
-			BH_SITE_MIGRATOR_STAGE_DATABASE
+			NFD_SM_STAGE_DATABASE
 		);
 
 		// Get the database client
 		$mysql = new DatabaseMysqli( $wpdb );
 
 		// Include table prefixes
-		$table_prefixes = nfd_bhsm_table_prefix();
+		$table_prefixes = nfd_sm_table_prefix();
 
 		if ( $table_prefixes ) {
 			$mysql->add_table_prefix_filter( $table_prefixes );
@@ -84,19 +84,19 @@ class DatabaseDumper extends PackagerBase {
 		}
 
 		// Dump the tables list in a file
-		$tables_list = nfd_bhsm_open( $table_list_file_path, 'w' );
+		$tables_list = nfd_sm_open( $table_list_file_path, 'w' );
 
 		// Write table line
 		foreach ( $mysql->get_tables() as $table_name ) {
-			if ( nfd_bhsm_putcsv( $tables_list, array( $table_name ) ) ) {
+			if ( nfd_sm_putcsv( $tables_list, array( $table_name ) ) ) {
 				++$total_tables_count;
 			}
 		}
 
 		Status::set_status(
-			__( 'Done retrieving the WordPress database tables', 'bluehost-site-migrator' ),
+			__( 'Done retrieving the WordPress database tables', 'nfd-site-migrator' ),
 			8,
-			BH_SITE_MIGRATOR_STAGE_DATABASE
+			NFD_SM_STAGE_DATABASE
 		);
 
 		$database_task_params['total_tables_count'] = $total_tables_count;
@@ -163,19 +163,19 @@ class DatabaseDumper extends PackagerBase {
 		if ( isset( $params['database_dump_file_path'] ) ) {
 			$database_dump_path = $params['database_dump_file_path'];
 		} else {
-			$database_dump_path                = nfd_bhsm_get_hashed_file_path( 'db', 'backup', 'sql' );
+			$database_dump_path                = nfd_sm_get_hashed_file_path( 'db', 'backup', 'sql' );
 			$params['database_dump_file_path'] = $database_dump_path;
 		}
 
 		// What percent of tables have we processed?
 		$progress = (int) ( ( $table_index / $total_tables_count ) * 100 );
 		Status::set_status(
-			__( 'Exporting database ... ', 'bluehost-site-migrator' ),
+			__( 'Exporting database ... ', 'nfd-site-migrator' ),
 			10,
-			BH_SITE_MIGRATOR_STAGE_DATABASE
+			NFD_SM_STAGE_DATABASE
 		);
 
-		$tables_list = nfd_bhsm_open( $table_list_file_path, 'r' );
+		$tables_list = nfd_sm_open( $table_list_file_path, 'r' );
 
 		// Loop over the tables
 		$tables = array();
@@ -190,10 +190,10 @@ class DatabaseDumper extends PackagerBase {
 
 		// Exclude site options
 		$mysql->set_table_where_query(
-			nfd_bhsm_table_prefix() . 'options',
+			nfd_sm_table_prefix() . 'options',
 			vsprintf(
 				"`option_name` NOT IN ('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')",
-				BH_SITE_MIGRATOR_OPTIONS_LIST
+				NFD_SM_OPTIONS_LIST
 			)
 		);
 
@@ -210,10 +210,10 @@ class DatabaseDumper extends PackagerBase {
 			Status::set_status(
 				__(
 					'Done creating the database dump',
-					'bluehost-site-migrator'
+					'nfd-site-migrator'
 				),
 				13,
-				BH_SITE_MIGRATOR_STAGE_DATABASE
+				NFD_SM_STAGE_DATABASE
 			);
 
 			// Unset query offset
@@ -242,9 +242,9 @@ class DatabaseDumper extends PackagerBase {
 
 			// Set progress
 			Status::set_status(
-				__( 'Exporting database ...', 'bluehost-site-migrator' ),
+				__( 'Exporting database ...', 'nfd-site-migrator' ),
 				$progress,
-				BH_SITE_MIGRATOR_STAGE_DATABASE
+				NFD_SM_STAGE_DATABASE
 			);
 
 			// Set query offset

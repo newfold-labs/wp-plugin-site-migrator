@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\MigrationChecks;
+namespace NewfoldLabs\WP\SiteMigrator\MigrationChecks;
 
-use BluehostSiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
 
 /**
  * The all in one migration compatibility checker
@@ -22,7 +22,7 @@ class Checker {
 	 * @return bool True if migration is possible, false otherwise.
 	 */
 	public static function run() {
-		$can_we_migrate = apply_filters( 'bluehost_site_migrator_can_migrate', true );
+		$can_we_migrate = apply_filters( 'nfd_site_migrator_can_migrate', true );
 		Options::set( 'isCompatible', $can_we_migrate );
 
 		return $can_we_migrate;
@@ -32,10 +32,10 @@ class Checker {
 		 * Register migration checks.
 		 */
 	public static function register() {
-		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'has_disk_free_space' ), 5 );
-		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'has_disk_total_space' ), 5 );
-		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'is_content_directory_writable' ), 5 );
-		add_filter( 'bluehost_site_migrator_can_migrate', array( __CLASS__, 'is_not_multisite' ), 5 );
+		add_filter( 'nfd_site_migrator_can_migrate', array( __CLASS__, 'has_disk_free_space' ), 5 );
+		add_filter( 'nfd_site_migrator_can_migrate', array( __CLASS__, 'has_disk_total_space' ), 5 );
+		add_filter( 'nfd_site_migrator_can_migrate', array( __CLASS__, 'is_content_directory_writable' ), 5 );
+		add_filter( 'nfd_site_migrator_can_migrate', array( __CLASS__, 'is_not_multisite' ), 5 );
 	}
 
 	/**

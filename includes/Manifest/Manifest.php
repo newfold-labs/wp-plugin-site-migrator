@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\Manifest;
+namespace NewfoldLabs\WP\SiteMigrator\Manifest;
 
-use BluehostSiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
 
 /**
  * Class Manifest
@@ -60,18 +60,9 @@ class Manifest extends Registry {
 		$this->set( 'domain', wp_parse_url( get_home_url(), PHP_URL_HOST ) );
 		$this->set( 'timestamp', time() );
 		$this->set( 'env', $this->env() );
-		$this->set( 'geo', $this->geo() );
 		$this->set( 'wp', $this->wp() );
 	}
 
-	/**
-	 * Geo manifest.
-	 *
-	 * @return array
-	 */
-	protected function geo() {
-		return get_option( 'bh_site_migration_geo_data', array() );
-	}
 
 	/**
 	 * Environment manifest.
@@ -86,7 +77,7 @@ class Manifest extends Registry {
 				'documentRoot'   => $_SERVER['DOCUMENT_ROOT'],
 				'freeSpace'      => disk_free_space( ABSPATH ),
 				'totalSpace'     => disk_total_space( ABSPATH ),
-				'uploadsDirSize' => nfd_bhsm_get_dir_size( $uploads['basedir'] ),
+				'uploadsDirSize' => nfd_sm_get_dir_size( $uploads['basedir'] ),
 			),
 			'ipAddress'       => $_SERVER['SERVER_ADDR'],
 			'operatingSystem' => PHP_OS,

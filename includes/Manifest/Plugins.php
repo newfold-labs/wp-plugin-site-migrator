@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\Manifest;
+namespace NewfoldLabs\WP\SiteMigrator\Manifest;
 
-use BluehostSiteMigrator\Data\Plugin;
+use NewfoldLabs\WP\SiteMigrator\Data\Plugin;
 
 /**
  * Get the plugin manifest

@@ -1,6 +1,12 @@
 <?php
+/**
+ * Derived from All-in-One WP Migration by ServMask, Inc. (https://servmask.com/),
+ * licensed GPL-2.0-or-later. Modified for this plugin. See CREDITS.md.
+ *
+ * @package NewfoldLabs\WP\SiteMigrator
+ */
 
-namespace BluehostSiteMigrator\Utils;
+namespace NewfoldLabs\WP\SiteMigrator\Utils;
 
 /**
  * Utility functions for database.

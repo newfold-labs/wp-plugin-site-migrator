@@ -4,7 +4,7 @@
 @tailwind utilities;
 @tailwind variants;
 
-.bh-sm {
+.nfd-sm {
     @apply h-[90vh];
 
     .compatibility-div {
@@ -26,53 +26,6 @@
             bg-right-bottom
             bg-[length:60%]
             bg-[url('../images/computer-transfer-broken.svg')]
-            bg-[#E3F6FA]
-            pl-0
-            pt-2
-    }
-
-    .transfer-start-div {
-        @apply
-            h-3/4
-            bg-no-repeat
-            bg-right-bottom
-            bg-[length:60%]
-            bg-[url('../images/computer-transfer.svg')]
-            bg-[#E3F6FA]
-            pl-0
-            pt-2
-    }
-
-    .transfer-status-div {
-        @apply
-            h-full
-            bg-no-repeat
-            bg-right-bottom
-            bg-[length:40%]
-            bg-[url('../images/boxed-up.svg')]
-            bg-[#E3F6FA]
-            pl-0
-    }
-
-    .transfer-success-div {
-        @apply
-            h-full
-            bg-no-repeat
-            bg-bottom
-            bg-[length:50%]
-            bg-[url('../images/moving-truck-unloaded.svg')]
-            bg-[#E3F6FA]
-            pl-0
-            pt-2
-    }
-
-    .transfer-failed-div {
-        @apply
-            h-full
-            bg-no-repeat
-            bg-bottom
-            bg-[length:50%]
-            bg-[url('../images/moving-truck-with-cones.svg')]
             bg-[#E3F6FA]
             pl-0
             pt-2

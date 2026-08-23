@@ -1,14 +1,14 @@
 import domReady from '@wordpress/dom-ready';
 import { createRoot, render } from '@wordpress/element';
 
-import './styles/bh-site-migrator.css';
+import './styles/nfd-site-migrator.css';
 import App from './app';
 
-const BH_SITE_MIGRATOR_PAGE_ROOT_ELEMENT = 'bh-sm-app';
+const NFD_SM_PAGE_ROOT_ELEMENT = 'nfd-sm-app';
 
-const RenderBluehostSiteMigrator = () => {
+const RenderSiteMigrator = () => {
 	const DOM_ELEMENT = document.getElementById(
-		BH_SITE_MIGRATOR_PAGE_ROOT_ELEMENT
+		NFD_SM_PAGE_ROOT_ELEMENT
 	);
 
 	if ( null !== DOM_ELEMENT ) {
@@ -21,4 +21,4 @@ const RenderBluehostSiteMigrator = () => {
 	}
 };
 
-domReady( RenderBluehostSiteMigrator );
+domReady( RenderSiteMigrator );

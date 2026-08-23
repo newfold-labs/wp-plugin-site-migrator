@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\Utils;
+namespace NewfoldLabs\WP\SiteMigrator\Utils;
 
 /**
  * A class to easily get and persist the current status of entire migration task
@@ -10,7 +10,7 @@ class Status {
 	 * Get the current status
 	 */
 	public static function get_status() {
-		return get_option( BH_SITE_MIGRATOR_PACKAGING_STATUS_OPTION, array() );
+		return get_option( NFD_SM_PACKAGING_STATUS_OPTION, array() );
 	}
 
 	/**
@@ -22,7 +22,7 @@ class Status {
 	 */
 	public static function set_status( $message, $progress, $stage ) {
 		update_option(
-			BH_SITE_MIGRATOR_PACKAGING_STATUS_OPTION,
+			NFD_SM_PACKAGING_STATUS_OPTION,
 			array(
 				'message'  => $message,
 				'progress' => $progress,
@@ -38,10 +38,10 @@ class Status {
 	 */
 	public static function set_packaging_success( $success ) {
 		if ( $success ) {
-			update_option( BH_SITE_MIGRATOR_PACKAGING_SUCCESS_OPTION, true );
+			update_option( NFD_SM_PACKAGING_SUCCESS_OPTION, true );
 			return;
 		}
-		update_option( BH_SITE_MIGRATOR_PACKAGING_FAILED_OPTION, true );
+		update_option( NFD_SM_PACKAGING_FAILED_OPTION, true );
 	}
 
 	/**
@@ -49,8 +49,8 @@ class Status {
 	 */
 	public static function get_packaging_status() {
 		return array(
-			'success' => get_option( BH_SITE_MIGRATOR_PACKAGING_SUCCESS_OPTION, false ),
-			'failed'  => get_option( BH_SITE_MIGRATOR_PACKAGING_FAILED_OPTION, false ),
+			'success' => get_option( NFD_SM_PACKAGING_SUCCESS_OPTION, false ),
+			'failed'  => get_option( NFD_SM_PACKAGING_FAILED_OPTION, false ),
 		);
 	}
 }

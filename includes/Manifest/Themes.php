@@ -1,8 +1,8 @@
 <?php
 
-namespace BluehostSiteMigrator\Manifest;
+namespace NewfoldLabs\WP\SiteMigrator\Manifest;
 
-use BluehostSiteMigrator\Data\Theme;
+use NewfoldLabs\WP\SiteMigrator\Data\Theme;
 
 /**
  * The themes manifest data

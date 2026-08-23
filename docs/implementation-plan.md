@@ -934,7 +934,7 @@ dependency. Zero activation hooks, one deactivation hook, no `admin_init` hook. 
 compatibility checks survive and pass; three REST routes remain, all under `migration-check`.
 The export flow is intentionally gone until phase 3 rebuilds it.
 
-### Phase 1 — Rename, de-brand, repo hygiene · **M** — *unblocked*
+### Phase 1 — Rename, de-brand, repo hygiene · **M** — ✅ *done 2026-08-23*
 
 Mechanical, but touches everything, so it goes before any *new* code is written — otherwise
 Phase 2 authors fresh files under a name already known to be wrong. It goes *after* Phase 0
@@ -957,8 +957,11 @@ that a two-second question.
 - Delete wp.org machinery: `.wporg/`, `readme.txt`, `svn-deploy-*.yml`.
 - Collapse the four-place version scheme to **one** source of truth — read the version from the
   plugin header at build time so `build/` can never diverge again.
-- `composer.json`: name, description, autoload prefix; drop `newfold-labs/wp-module-tasks` and
-  the Satis `repositories` block.
+- `composer.json`: name, description, autoload prefix. `newfold-labs/wp-module-tasks` went in
+  phase 0. **Correction: the Satis `repositories` block stays.** This item assumed no
+  `newfold-labs/*` dependency would remain, but `newfold-labs/wp-php-standards` is still the
+  phpcs standard and returns 404 on Packagist, so Satis is the only way to resolve it. The block
+  is dev-only and already scoped to `newfold-labs/*`.
 - **Add the missing `LICENSE` file** and **restore upstream attribution** (**3.14**). The plugin
   header has declared `GPL-2.0-or-later` since 2020 with no licence text in the repository, and
   `Database/DatabaseBase.php` — 1533 lines the plan explicitly keeps — is a fork of All-in-One WP
@@ -967,7 +970,45 @@ that a two-second question.
   awkward later, and re-releasing under a new name without it makes it worse rather than
   neutral.
 
-**Exit:** activates cleanly under the new name; `composer lint` passes; no `bluehost|bh_sm|bhsm|BH_SITE_MIGRATOR` outside `docs/`; `LICENSE` present and derived files attributed.
+**Exit:** activates cleanly under the new name; `composer lint` passes; no branded **identifier**
+outside `docs/`; `LICENSE` present and derived files attributed.
+
+The identifier check is
+`grep -nE 'BluehostSiteMigrator|BH_SITE_MIGRATOR|nfd_bhsm_|bluehost[-_]site[-_]migrator|bh_site_migrat|bh-site-migrator|bh-sm|bhsm'`.
+It deliberately does **not** ban the bare word: `CREDITS.md` has to name the plugin's origin for
+the attribution to mean anything, and `CLAUDE.md` explains where the code came from. Banning
+provenance prose would make the licence fix impossible to write.
+
+**Done.** 390 substitutions across 47 files, plus the corrections verification caught — see
+below. Everything green: `composer lint` clean, every non-vendor file lints, all local JS imports
+resolve, every image the stylesheet references exists, `composer validate` passes with a synced
+lock, and the plugin boots against the WordPress stub with four checks registered and three REST
+routes under the new namespace.
+
+**Two misses the mechanical pass made, both instructive:**
+
+1. `WP_Admin.php` declared `namespace BluehostSiteMigrator;` — the **root** namespace, with no
+   trailing separator, so the `BluehostSiteMigrator\` rule did not match it. A single unconverted
+   namespace declaration is a fatal on load. This is the same class of hazard as the string
+   literals, in a different disguise: pattern-based renames miss the case that lacks the
+   delimiter you anchored on.
+2. `DatabaseBase.php` emitted `-- Bluehost Site MIgrator SQL Dump` into every dump — a
+   capital-I typo in the original meant the `Bluehost Site Migrator` rule skipped it.
+
+Both were caught by grepping after the pass rather than trusting it. **Verify renames by
+re-searching for the old identifiers; do not assume the substitution was total.**
+
+**Also folded in, since the rename exposed them:** the four Tailwind rules for the transfer
+screens deleted in phase 0 (which kept five now-unused illustrations alive), a Bluehost logo
+embedded in the admin menu icon as base64 and another inside `computer-transfer-broken.svg`, the
+dead `geo` manifest entry reading an option nothing writes, and the `NFD_SM_ENTRYPOINT_URL`
+constant orphaned when the redirect hijack went.
+
+**Version scheme collapsed, differently than planned.** Rather than making three files agree,
+build output is now **unversioned** — `build/`, not `build/<version>/` — so drift cannot break
+enqueueing at all; cache busting already came from the content hash in the generated
+`.asset.php`. `build/` and `src/styles/nfd-site-migrator.css` are generated, so both are now
+untracked; committing generated output is what let the versions diverge in the first place.
 
 ### Phase 2 — Core, package format, stepping engine · **L**
 

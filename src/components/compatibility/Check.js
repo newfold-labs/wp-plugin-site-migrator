@@ -37,14 +37,14 @@ export const CompatibilityCheck = () => {
 				<div className="pt-14 pl-12">
 					<h1 className="text-5xl font-bold">
 						{ __(
-							'Bluehost Site Migrator',
-							'bluehost-site-migrator'
+							'Site Migrator',
+							'nfd-site-migrator'
 						) }
 					</h1>
 					<p className="font-bold text-lg mt-6">
 						{ __(
 							"Let's get this truck rolling:",
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						) }
 					</p>
 					<p className="text-lg mt-6 w-2/5">
@@ -53,7 +53,7 @@ export const CompatibilityCheck = () => {
 								'before the transfer process can begin to verify that ',
 								'your website can be transferred'
 							),
-							'bluehost-site-migrator'
+							'nfd-site-migrator'
 						) }
 					</p>
 					<LoadingButton

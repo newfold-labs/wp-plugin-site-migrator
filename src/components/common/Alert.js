@@ -23,7 +23,7 @@ export const Alert = ( { message, visible, setVisible } ) => {
 				<span className="sr-only">Check icon</span>
 			</div>
 			<div className="ml-3 text-sm font-normal">
-				{ __( message, 'bluehost-site-migrator' ) }
+				{ __( message, 'nfd-site-migrator' ) }
 			</div>
 			<button
 				type="button"

@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\Utils;
+namespace NewfoldLabs\WP\SiteMigrator\Utils;
 
 /**
  * Save the tasks state, other config in options
@@ -73,14 +73,14 @@ class Options {
 	 * Fetch the options from the database and store locally.
 	 */
 	public static function fetch() {
-		self::$options = get_option( BH_SITE_MIGRATOR_OPTION_NAME, array() );
+		self::$options = get_option( NFD_SM_OPTION_NAME, array() );
 	}
 
 	/**
 	 * Save the local options to the database.
 	 */
 	public static function persist() {
-		update_option( BH_SITE_MIGRATOR_OPTION_NAME, self::$options, true );
+		update_option( NFD_SM_OPTION_NAME, self::$options, true );
 	}
 
 	/**
@@ -96,7 +96,7 @@ class Options {
 	 * Nuke all options in the database.
 	 */
 	public static function purge() {
-		delete_option( BH_SITE_MIGRATOR_OPTION_NAME );
+		delete_option( NFD_SM_OPTION_NAME );
 	}
 
 	/**

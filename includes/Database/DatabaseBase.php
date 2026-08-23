@@ -1,8 +1,14 @@
 <?php
+/**
+ * Derived from All-in-One WP Migration by ServMask, Inc. (https://servmask.com/),
+ * licensed GPL-2.0-or-later. Modified for this plugin. See CREDITS.md.
+ *
+ * @package NewfoldLabs\WP\SiteMigrator
+ */
 
-namespace BluehostSiteMigrator\Database;
+namespace NewfoldLabs\WP\SiteMigrator\Database;
 
-use BluehostSiteMigrator\Utils\DatabaseUtility;
+use NewfoldLabs\WP\SiteMigrator\Utils\DatabaseUtility;
 
 /**
  * The base database class for the db interactions
@@ -122,7 +128,7 @@ abstract class DatabaseBase {
 				throw new \Exception(
 					(
 						'Your WordPress installation uses Microsoft SQL Server. ' .
-						'To use Bluehost Site Migrator, please change your installation to MySQL and try again. '
+						'To use Site Migrator, please change your installation to MySQL and try again. '
 					)
 				);
 			}
@@ -557,7 +563,7 @@ abstract class DatabaseBase {
 	 */
 	public function export( $file_name, &$query_offset = 0, &$table_index = 0, &$table_offset = 0, &$table_rows = 0 ) {
 		// Set file handler
-		$file_handler = nfd_bhsm_open( $file_name, 'cb' );
+		$file_handler = nfd_sm_open( $file_name, 'cb' );
 
 		// Start time
 		$start = microtime( true );
@@ -579,7 +585,7 @@ abstract class DatabaseBase {
 
 			// Write headers
 			if ( 0 === $query_offset ) {
-				nfd_bhsm_write( $file_handler, $this->get_header() );
+				nfd_sm_write( $file_handler, $this->get_header() );
 			}
 
 			$tables_count = count( $tables );
@@ -600,7 +606,7 @@ abstract class DatabaseBase {
 						$drop_view = "\nDROP VIEW IF EXISTS `{$table_name}`;\n";
 
 						// Write drop view statement
-						nfd_bhsm_write( $file_handler, $drop_view );
+						nfd_sm_write( $file_handler, $drop_view );
 
 						// Get create view statement
 						$create_view = $this->get_create_view( $table_name );
@@ -612,10 +618,10 @@ abstract class DatabaseBase {
 						$create_view = $this->replace_view_options( $create_view );
 
 						// Write create view statement
-						nfd_bhsm_write( $file_handler, $create_view );
+						nfd_sm_write( $file_handler, $create_view );
 
 						// Write end of statement
-						nfd_bhsm_write( $file_handler, ";\n\n" );
+						nfd_sm_write( $file_handler, ";\n\n" );
 					}
 
 					// Set curent table index
@@ -633,7 +639,7 @@ abstract class DatabaseBase {
 						$drop_table = "\nDROP TABLE IF EXISTS `{$table_name}`;\n";
 
 						// Write table statement
-						nfd_bhsm_write( $file_handler, $drop_table );
+						nfd_sm_write( $file_handler, $drop_table );
 
 						// Get create table statement
 						$create_table = $this->get_create_table( $table_name );
@@ -645,10 +651,10 @@ abstract class DatabaseBase {
 						$create_table = $this->replace_table_options( $create_table );
 
 						// Write create table statement
-						nfd_bhsm_write( $file_handler, $create_table );
+						nfd_sm_write( $file_handler, $create_table );
 
 						// Write end of statement
-						nfd_bhsm_write( $file_handler, ";\n\n" );
+						nfd_sm_write( $file_handler, ";\n\n" );
 					}
 
 					// Get primary keys
@@ -685,7 +691,7 @@ abstract class DatabaseBase {
 							$select_columns = implode( ', ', $select_columns );
 
 							// Set query with offset and rows count
-							$query = sprintf( 'SELECT %s FROM `%s` AS t1 JOIN (SELECT %s FROM `%s` WHERE %s ORDER BY %s LIMIT %d, %d) AS t2 USING (%s)', $select_columns, $table_name, $table_keys, $table_name, $table_where, $table_keys, $table_offset, BH_SITE_MIGRATOR_SELECT_RECORDS, $table_keys );
+							$query = sprintf( 'SELECT %s FROM `%s` AS t1 JOIN (SELECT %s FROM `%s` WHERE %s ORDER BY %s LIMIT %d, %d) AS t2 USING (%s)', $select_columns, $table_name, $table_keys, $table_name, $table_where, $table_keys, $table_offset, NFD_SM_SELECT_RECORDS, $table_keys );
 
 						} else {
 
@@ -706,7 +712,7 @@ abstract class DatabaseBase {
 							$select_columns = implode( ', ', $select_columns );
 
 							// Set query with offset and rows count
-							$query = sprintf( 'SELECT %s FROM `%s` WHERE %s ORDER BY %s LIMIT %d, %d', $select_columns, $table_name, $table_where, $table_keys, $table_offset, BH_SITE_MIGRATOR_SELECT_RECORDS );
+							$query = sprintf( 'SELECT %s FROM `%s` WHERE %s ORDER BY %s LIMIT %d, %d', $select_columns, $table_name, $table_where, $table_keys, $table_offset, NFD_SM_SELECT_RECORDS );
 						}
 
 						// Run SQL query
@@ -731,8 +737,8 @@ abstract class DatabaseBase {
 							while ( $row ) {
 
 								// Write start transaction
-								if ( 0 === $table_offset % BH_SITE_MIGRATOR_MAX_TRANSACTION_QUERIES ) {
-									nfd_bhsm_write( $file_handler, "START TRANSACTION;\n" );
+								if ( 0 === $table_offset % NFD_SM_MAX_TRANSACTION_QUERIES ) {
+									nfd_sm_write( $file_handler, "START TRANSACTION;\n" );
 								}
 
 								$items = array();
@@ -747,7 +753,7 @@ abstract class DatabaseBase {
 								$table_insert = "INSERT INTO `{$table_name}` VALUES ({$table_values});\n";
 
 								// Write insert statement
-								nfd_bhsm_write( $file_handler, $table_insert );
+								nfd_sm_write( $file_handler, $table_insert );
 
 								// Set current table offset
 								++$table_offset;
@@ -756,8 +762,8 @@ abstract class DatabaseBase {
 								++$table_rows;
 
 								// Write end of transaction
-								if ( 0 === $table_offset % BH_SITE_MIGRATOR_MAX_TRANSACTION_QUERIES ) {
-									nfd_bhsm_write( $file_handler, "COMMIT;\n" );
+								if ( 0 === $table_offset % NFD_SM_MAX_TRANSACTION_QUERIES ) {
+									nfd_sm_write( $file_handler, "COMMIT;\n" );
 								}
 
 								$row = $this->fetch_assoc( $result );
@@ -765,8 +771,8 @@ abstract class DatabaseBase {
 						} else {
 
 							// Write end of transaction
-							if ( 0 !== $table_offset % BH_SITE_MIGRATOR_MAX_TRANSACTION_QUERIES ) {
-								nfd_bhsm_write( $file_handler, "COMMIT;\n" );
+							if ( 0 !== $table_offset % NFD_SM_MAX_TRANSACTION_QUERIES ) {
+								nfd_sm_write( $file_handler, "COMMIT;\n" );
 							}
 
 							// Set curent table index
@@ -780,7 +786,7 @@ abstract class DatabaseBase {
 						$this->free_result( $result );
 
 						// Time elapsed
-						$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+						$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 						if ( $timeout ) {
 							if ( ( microtime( true ) - $start ) > $timeout ) {
 								$completed = false;
@@ -1412,7 +1418,7 @@ abstract class DatabaseBase {
 	protected function get_header() {
 		// Some info about software, source and time
 		$header = sprintf(
-			"-- Bluehost Site MIgrator SQL Dump\n" .
+			"-- Site Migrator SQL Dump\n" .
 			"--\n" .
 			"-- Host: %s\n" .
 			"-- Database: %s\n" .

@@ -1,8 +1,14 @@
 <?php
+/**
+ * Derived from All-in-One WP Migration by ServMask, Inc. (https://servmask.com/),
+ * licensed GPL-2.0-or-later. Modified for this plugin. See CREDITS.md.
+ *
+ * @package NewfoldLabs\WP\SiteMigrator
+ */
 
-namespace BluehostSiteMigrator\Archiver;
+namespace NewfoldLabs\WP\SiteMigrator\Archiver;
 
-use BluehostSiteMigrator\Archiver\Archiver;
+use NewfoldLabs\WP\SiteMigrator\Archiver\Archiver;
 use Throwable;
 
 /**
@@ -37,10 +43,10 @@ class Compressor extends Archiver {
 		$file_written = 0;
 
 		// Replace forward slash with current directory separator in file name
-		$file_name = nfd_bhsm_replace_forward_slash_with_directory_separator( $file_name );
+		$file_name = nfd_sm_replace_forward_slash_with_directory_separator( $file_name );
 
 		// Escape Windows directory separator in file name
-		$file_name = nfd_bhsm_escape_windows_directory_separator( $file_name );
+		$file_name = nfd_sm_escape_windows_directory_separator( $file_name );
 
 		// Flag to hold if file data has been processed
 		$completed = true;
@@ -64,7 +70,7 @@ class Compressor extends Archiver {
 							throw new \Exception(
 								sprintf(
 									// translators: %s: file name
-									esc_html__( 'Out of disk space. Unable to write header to file. File: %s', 'bluehost-site-migrator' ),
+									esc_html__( 'Out of disk space. Unable to write header to file. File: %s', 'nfd-site-migrator' ),
 									esc_xml( $this->file_name )
 								)
 							);
@@ -73,7 +79,7 @@ class Compressor extends Archiver {
 						throw new \Exception(
 							sprintf(
 								// translators: %s: file name
-								esc_html__( 'Unable to write header to file. File: %s', 'bluehost-site-migrator' ),
+								esc_html__( 'Unable to write header to file. File: %s', 'nfd-site-migrator' ),
 								esc_xml( $this->file_name )
 							)
 						);
@@ -91,7 +97,7 @@ class Compressor extends Archiver {
 						if ( false !== $file_content ) {
 							// Don't encrypt package.json
 							if ( $encrypt && basename( $file_name ) !== 'package.json' ) {
-								$file_content = nfd_bhsm_encrypt_string( $file_content, $encrypt_pass );
+								$file_content = nfd_sm_encrypt_string( $file_content, $encrypt_pass );
 							}
 
 							$file_bytes = fwrite( $this->file_handle, $file_content );
@@ -101,7 +107,7 @@ class Compressor extends Archiver {
 									throw new \Exception(
 										sprintf(
 										// translators: %s: file name
-											esc_html__( 'Out of disk space. Unable to write content to file. File: %s', 'bluehost-site-migrator' ),
+											esc_html__( 'Out of disk space. Unable to write content to file. File: %s', 'nfd-site-migrator' ),
 											esc_xml( $this->file_name )
 										)
 									);
@@ -110,7 +116,7 @@ class Compressor extends Archiver {
 								throw new \Exception(
 									sprintf(
 										// translators: %s: file name
-										esc_html__( 'Unable to write content to file. File: %s', 'bluehost-site-migrator' ),
+										esc_html__( 'Unable to write content to file. File: %s', 'nfd-site-migrator' ),
 										esc_xml( $this->file_name )
 									)
 								);
@@ -121,7 +127,7 @@ class Compressor extends Archiver {
 						}
 
 						// Time elapsed
-						$timeout = apply_filters( 'nfd_bhsm_completed_timeout', 10 );
+						$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
 						if ( $timeout ) {
 							if ( ( microtime( true ) - $start ) > $timeout ) {
 								$completed = false;
@@ -141,7 +147,7 @@ class Compressor extends Archiver {
 					if ( -1 === fseek( $this->file_handle, - $file_offset - 4096 - 12 - 14, SEEK_CUR ) ) {
 						throw new \Exception(
 							sprintf(
-								esc_html__( 'Your PHP is 32-bit. In order to export your file, please change your PHP version to 64-bit and try again.', 'bluehost-site-migrator' )
+								esc_html__( 'Your PHP is 32-bit. In order to export your file, please change your PHP version to 64-bit and try again.', 'nfd-site-migrator' )
 							)
 						);
 					}
@@ -153,7 +159,7 @@ class Compressor extends Archiver {
 							throw new \Exception(
 								sprintf(
 									// translators: %s: file name
-									esc_html__( 'Out of disk space. Unable to write size to file. File: %s', 'bluehost-site-migrator' ),
+									esc_html__( 'Out of disk space. Unable to write size to file. File: %s', 'nfd-site-migrator' ),
 									esc_xml( $this->file_name )
 								)
 							);
@@ -162,7 +168,7 @@ class Compressor extends Archiver {
 						throw new \Exception(
 							sprintf(
 								// translators: %s: file name
-								esc_html__( 'Unable to write size to file. File: %s', 'bluehost-site-migrator' ),
+								esc_html__( 'Unable to write size to file. File: %s', 'nfd-site-migrator' ),
 								esc_xml( $this->file_name )
 							)
 						);
@@ -172,7 +178,7 @@ class Compressor extends Archiver {
 					if ( -1 === fseek( $this->file_handle, + $file_offset + 4096 + 12, SEEK_CUR ) ) {
 						throw new \Exception(
 							sprintf(
-								esc_html__( 'Your PHP is 32-bit. In order to export your file, please change your PHP version to 64-bit and try again.', 'bluehost-site-migrator' )
+								esc_html__( 'Your PHP is 32-bit. In order to export your file, please change your PHP version to 64-bit and try again.', 'nfd-site-migrator' )
 							)
 						);
 					}
@@ -216,9 +222,9 @@ class Compressor extends Archiver {
 
 			// Replace current directory separator with backward slash in file path
 			if ( empty( $new_file_name ) ) {
-				$path = nfd_bhsm_replace_directory_separator_with_forward_slash( dirname( $file_name ) );
+				$path = nfd_sm_replace_directory_separator_with_forward_slash( dirname( $file_name ) );
 			} else {
-				$path = nfd_bhsm_replace_directory_separator_with_forward_slash( dirname( $new_file_name ) );
+				$path = nfd_sm_replace_directory_separator_with_forward_slash( dirname( $new_file_name ) );
 			}
 
 			// Concatenate block format parts

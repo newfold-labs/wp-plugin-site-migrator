@@ -1,6 +1,6 @@
 <?php
 
-namespace BluehostSiteMigrator\RestApi;
+namespace NewfoldLabs\WP\SiteMigrator\RestApi;
 
 /**
  * Initialize them APIs
@@ -18,7 +18,7 @@ class RestApi {
 	 */
 	public function register_routes() {
 		$controllers = array(
-			'BluehostSiteMigrator\\RestApi\\MigrationCheckController',
+			'NewfoldLabs\\WP\\SiteMigrator\\RestApi\\MigrationCheckController',
 		);
 
 		foreach ( $controllers as $controller ) {

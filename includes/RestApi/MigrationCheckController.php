@@ -1,10 +1,10 @@
 <?php
 
-namespace BluehostSiteMigrator\RestApi;
+namespace NewfoldLabs\WP\SiteMigrator\RestApi;
 
-use BluehostSiteMigrator\MigrationChecks\Checker;
-use BluehostSiteMigrator\Utils\Options;
-use BluehostSiteMigrator\Utils\Status;
+use NewfoldLabs\WP\SiteMigrator\MigrationChecks\Checker;
+use NewfoldLabs\WP\SiteMigrator\Utils\Options;
+use NewfoldLabs\WP\SiteMigrator\Utils\Status;
 
 /**
  * Try the migration check
@@ -16,7 +16,7 @@ class MigrationCheckController extends \WP_REST_Controller {
 	 *
 	 * @var string
 	 */
-	protected $namespace = 'bluehost-site-migrator/v1';
+	protected $namespace = 'nfd-site-migrator/v1';
 
 	/**
 	 * The base of this controller's route.
@@ -139,7 +139,7 @@ class MigrationCheckController extends \WP_REST_Controller {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return new \WP_Error(
 				'rest_forbidden_context',
-				__( 'Sorry, you are not allowed to access this endpoint.', 'bluehost-site-migrator' ),
+				__( 'Sorry, you are not allowed to access this endpoint.', 'nfd-site-migrator' ),
 				array( 'status' => rest_authorization_required_code() )
 			);
 		}
