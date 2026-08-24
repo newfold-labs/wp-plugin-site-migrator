@@ -11,16 +11,15 @@ plus a React SPA under `src/` rendered on a single wp-admin page.
 
 **The plugin is mid-rework.** It began life as the Bluehost Site Migrator, which packaged a site
 and handed it to a hosting backend; that backend integration has been removed and the
-export/import halves have been rebuilt. A full migration works today **from WP-CLI**; the
-browser can drive an export but not yet an import. Read
+export/import halves have been rebuilt. Read
 `docs/implementation-plan.md` before making changes — it is the authority on what is being
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–4a are done.** Export, preflight, the export UI, and the whole import
-core all work; the round trip runs end to end from the CLI. What is not built is the import
-**UI** (phase 4b) — chunked upload, the import screens, and the two survival-kit pieces that only
-exist in a browser (the import-window token and the temporary mu-plugin).
+Current state: **phases 0–4b are done.** A full migration works end to end, from the CLI and
+through wp-admin. What is left is phase 5 (direct site-to-site transfer), phase 6 (WP-CLI as a
+supported surface), phase 7 (tests and CI — the verification harness is shell scripts, not
+PHPUnit) and phase 8 (hardening and distribution).
 
 ## Commands
 
@@ -153,9 +152,17 @@ harness, not the v3 product — but a real second consumer of `Core/` from the d
 and it is what makes the round-trip test a shell script.
 
 **Frontend** (`src/`): mounts into `#nfd-sm-app`. `routes.js` picks the screen; `utils/useExport.js`
-drives the step loop. Calls go through `utils/api.js` wrapped in `utils/apiCall.js`, which converts
+and `utils/useImport.js` drive the step loops. Calls go through `utils/api.js`, which converts
 thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
-The import screens are phase 4b.
+
+**Everything the import touches must survive the swap**, and three things in a browser do not
+survive it on their own. The REST *nonce* dies with the users table, so `ImportController` clears
+that specific error for a request bearing a valid import token (at priority **200** — core's own
+check is registered at 100). The REST *root* dies if the two sites' permalink structures differ,
+because apiFetch pins `/wp-json/…` at page render, so every import call goes through the
+`?rest_route=` form via `restEndpoint()`/`stableCall()`. And the *auth cookie* names the user's
+login, which the merge is allowed to change, so `Fixups` re-issues it. Do not "simplify" any of
+these back to the idiomatic form.
 
 Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` compiles
 `assets/styles/app.css` into `src/styles/nfd-site-migrator.css`, which the JS entry imports.

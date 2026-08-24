@@ -32,6 +32,15 @@ export const Download = () => {
 	const files = [];
 
 	if ( data?.package ) {
+		// First, and listed first, because the destination reads it to work out what the rest
+		// of these files are and where each one belongs.
+		files.push( {
+			name: 'manifest.json',
+			bytes: 0,
+			sha256: '',
+			kind: __( 'index — download this one', 'nfd-site-migrator' ),
+		} );
+
 		const db = data.package.database;
 		if ( db?.file ) {
 			files.push( {
@@ -120,10 +129,12 @@ export const Download = () => {
 							<tr key={ f.name }>
 								<td className="nfd-sm-mono">{ f.name }</td>
 								<td className="nfd-sm-mono nfd-sm-num">
-									{ mb( f.bytes ) }
+									{ f.bytes ? mb( f.bytes ) : '—' }
 								</td>
 								<td className="nfd-sm-mono nfd-sm-hash">
-									{ ( f.sha256 || '' ).slice( 0, 8 ) }…
+									{ f.sha256
+										? `${ f.sha256.slice( 0, 8 ) }…`
+										: '—' }
 								</td>
 								<td>
 									<a
@@ -144,7 +155,14 @@ export const Download = () => {
 
 			<div className="nfd-sm-note nfd-sm-note--info">
 				{ __(
-					'Very large site? Instead of downloading and uploading through the browser, copy these files straight into wp-content/uploads/nfd-site-migrator/package/ on the destination over FTP. It will find them on its own.',
+					'Keep them together in one folder. On the destination you can hand it the whole folder at once, and it will put everything back where it belongs.',
+					'nfd-site-migrator'
+				) }
+			</div>
+
+			<div className="nfd-sm-note nfd-sm-note--info">
+				{ __(
+					'Very large site? Instead of downloading and uploading through the browser, copy these files straight into wp-content/uploads/nfd-site-migrator/ on the destination over FTP. It will find them on its own.',
 					'nfd-site-migrator'
 				) }
 			</div>

@@ -140,6 +140,12 @@ class UserMerger {
 		$this->demote_undefined_roles();
 		$this->assert_unique();
 
+		// Which ID the person running this ended up as. The browser needs it: WordPress's auth
+		// cookie names the *login*, so an account that was renamed stops authenticating the
+		// instant the swap lands, and the admin screen the user is looking at is gone with it.
+		$this->report['acting_id']    = $this->staged_id_for_dest( $this->acting );
+		$this->report['acting_login'] = $this->staged_login( $this->report['acting_id'] );
+
 		return $this->report;
 	}
 
@@ -197,6 +203,31 @@ class UserMerger {
 		$source_users = $this->staged_users();
 		$dest_users   = $this->live_users();
 
+		$plan = self::plan( $source_users, $dest_users );
+
+		foreach ( $plan['matched'] as $match ) {
+			$this->apply_match( $dest_users[ $match['dest_id'] ], $source_users[ $match['source_id'] ] );
+		}
+
+		foreach ( $plan['carried'] as $carried ) {
+			$this->carry_user( $dest_users[ $carried['dest_id'] ], $carried );
+		}
+	}
+
+	/**
+	 * Decide what happens to every account, without touching anything.
+	 *
+	 * Pure, and static, because two callers need the same answer: the merge itself, and the
+	 * confirmation screen that shows the user what the merge is about to do. A preview computed
+	 * by separate code is a preview that can be wrong, and this is the one screen where being
+	 * wrong is unrecoverable — the person reads it and clicks the button that replaces a site.
+	 *
+	 * @param array $source_users Source accounts, keyed by ID.
+	 * @param array $dest_users   Destination accounts, keyed by ID.
+	 *
+	 * @return array `matched`, `carried`, `source_only`.
+	 */
+	public static function plan( array $source_users, array $dest_users ) {
 		$by_email = array();
 		$by_login = array();
 
@@ -206,7 +237,7 @@ class UserMerger {
 		}
 
 		$claimed = array();
-		$matches = array();
+		$matched = array();
 		$carried = array();
 
 		// The email address is the identity. Two accounts sharing one is one person; two
@@ -219,10 +250,22 @@ class UserMerger {
 		foreach ( $dest_users as $dest ) {
 			$key = \strtolower( $dest['user_email'] );
 
-			if ( isset( $by_email[ $key ] ) && ! isset( $claimed[ $by_email[ $key ]['ID'] ] ) ) {
-				$matches[ $dest['ID'] ]             = $by_email[ $key ];
-				$claimed[ $by_email[ $key ]['ID'] ] = true;
+			if ( ! isset( $by_email[ $key ] ) || isset( $claimed[ $by_email[ $key ]['ID'] ] ) ) {
+				continue;
 			}
+
+			$source = $by_email[ $key ];
+
+			$matched[] = array(
+				'dest_id'      => (int) $dest['ID'],
+				'source_id'    => (int) $source['ID'],
+				'email'        => $source['user_email'],
+				'source_login' => $source['user_login'],
+				'dest_login'   => $dest['user_login'],
+				'display_name' => isset( $source['display_name'] ) ? $source['display_name'] : '',
+			);
+
+			$claimed[ $source['ID'] ] = true;
 		}
 
 		/**
@@ -235,33 +278,123 @@ class UserMerger {
 		 */
 		$match_by_login = (bool) \apply_filters( 'nfd_sm_match_users_by_login', false );
 
+		$matched_dest = array();
+
+		foreach ( $matched as $match ) {
+			$matched_dest[ $match['dest_id'] ] = true;
+		}
+
+		// Names already spoken for, so a carried account can be given one that is free. Kept in
+		// memory rather than queried per candidate: the answer has to be the same whether this
+		// is running the merge or only describing it.
+		$taken = array(
+			'user_login'    => array(),
+			'user_email'    => array(),
+			'user_nicename' => array(),
+		);
+
+		foreach ( $source_users as $user ) {
+			foreach ( \array_keys( $taken ) as $column ) {
+				if ( isset( $user[ $column ] ) ) {
+					$taken[ $column ][ \strtolower( $user[ $column ] ) ] = true;
+				}
+			}
+		}
+
+		$next_id = 0;
+
+		foreach ( \array_merge( \array_keys( $source_users ), \array_keys( $dest_users ) ) as $id ) {
+			$next_id = \max( $next_id, (int) $id );
+		}
+
+		++$next_id;
+
 		foreach ( $dest_users as $dest ) {
-			if ( isset( $matches[ $dest['ID'] ] ) ) {
+			if ( isset( $matched_dest[ (int) $dest['ID'] ] ) ) {
 				continue;
 			}
 
 			$key = \strtolower( $dest['user_login'] );
 
 			if ( $match_by_login && isset( $by_login[ $key ] ) && ! isset( $claimed[ $by_login[ $key ]['ID'] ] ) ) {
-				$matches[ $dest['ID'] ]             = $by_login[ $key ];
-				$claimed[ $by_login[ $key ]['ID'] ] = true;
+				$source = $by_login[ $key ];
+
+				$matched[] = array(
+					'dest_id'      => (int) $dest['ID'],
+					'source_id'    => (int) $source['ID'],
+					'email'        => $source['user_email'],
+					'source_login' => $source['user_login'],
+					'dest_login'   => $dest['user_login'],
+					'display_name' => isset( $source['display_name'] ) ? $source['display_name'] : '',
+				);
+
+				$claimed[ $source['ID'] ] = true;
 
 				continue;
 			}
 
-			$carried[] = $dest;
-		}
+			$names = array();
 
-		foreach ( $matches as $dest_id => $source_user ) {
-			$this->apply_match( $dest_users[ $dest_id ], $source_user );
-		}
+			foreach ( \array_keys( $taken ) as $column ) {
+				$wanted           = isset( $dest[ $column ] ) ? $dest[ $column ] : '';
+				$names[ $column ] = self::free_name( $wanted, $taken[ $column ] );
 
-		$next_id = $this->next_free_id( $source_users, $dest_users );
+				$taken[ $column ][ \strtolower( $names[ $column ] ) ] = true;
+			}
 
-		foreach ( $carried as $dest ) {
-			$this->carry_user( $dest, $next_id );
+			$carried[] = array(
+				'dest_id'         => (int) $dest['ID'],
+				'new_id'          => $next_id,
+				'login'           => $names['user_login'],
+				'requested_login' => isset( $dest['user_login'] ) ? $dest['user_login'] : '',
+				'nicename'        => $names['user_nicename'],
+				'email'           => $names['user_email'],
+				'display_name'    => isset( $dest['display_name'] ) ? $dest['display_name'] : '',
+			);
+
 			++$next_id;
 		}
+
+		$source_only = array();
+
+		foreach ( $source_users as $user ) {
+			if ( isset( $claimed[ $user['ID'] ] ) ) {
+				continue;
+			}
+
+			$source_only[] = array(
+				'id'           => (int) $user['ID'],
+				'login'        => $user['user_login'],
+				'email'        => $user['user_email'],
+				'display_name' => isset( $user['display_name'] ) ? $user['display_name'] : '',
+			);
+		}
+
+		return array(
+			'matched'     => $matched,
+			'carried'     => $carried,
+			'source_only' => $source_only,
+		);
+	}
+
+	/**
+	 * A variant of a name that nothing has claimed yet.
+	 *
+	 * @param string $wanted Desired value.
+	 * @param array  $taken  Map of lowercased values already in use.
+	 *
+	 * @return string
+	 */
+	protected static function free_name( $wanted, array $taken ) {
+		$candidate = (string) $wanted;
+		$suffix    = 1;
+
+		while ( '' !== $candidate && isset( $taken[ \strtolower( $candidate ) ] ) ) {
+			++$suffix;
+			$candidate = $wanted . '-' . $suffix;
+		}
+
+		return $candidate;
 	}
 
 	/**
@@ -315,27 +448,24 @@ class UserMerger {
 	}
 
 	/**
-	 * Insert a destination-only account into the staged tables under a fresh ID.
+	 * Insert a destination-only account into the staged tables, as the plan decided.
+	 *
+	 * The ID and the names come from `plan()` rather than being worked out here, so what the
+	 * confirmation screen showed and what actually happens are the same thing by construction.
 	 *
 	 * @param array $dest    Destination user row.
-	 * @param int   $new_id  ID to give it.
+	 * @param array $planned Entry from the plan's `carried` list.
 	 *
 	 * @return void
 	 */
-	protected function carry_user( array $dest, $new_id ) {
+	protected function carry_user( array $dest, array $planned ) {
 		global $wpdb;
 
-		$row       = $dest;
-		$row['ID'] = (int) $new_id;
-
-		$original_login = $row['user_login'];
-
-		// `admin` exists on both sides of most migrations, belonging to two different people.
-		// Both are kept and the destination's is suffixed, because silently dropping either
-		// one loses an account somebody still logs in with.
-		$row['user_login']    = $this->unique_value( 'user_login', $row['user_login'] );
-		$row['user_nicename'] = $this->unique_value( 'user_nicename', $row['user_nicename'] );
-		$row['user_email']    = $this->unique_value( 'user_email', $row['user_email'] );
+		$row                  = $dest;
+		$row['ID']            = (int) $planned['new_id'];
+		$row['user_login']    = $planned['login'];
+		$row['user_nicename'] = $planned['nicename'];
+		$row['user_email']    = $planned['email'];
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$wpdb->insert( $this->stage . 'users', $row );
@@ -355,7 +485,7 @@ class UserMerger {
 			$wpdb->insert(
 				$this->stage . 'usermeta',
 				array(
-					'user_id'    => (int) $new_id,
+					'user_id'    => (int) $planned['new_id'],
 					'meta_key'   => $entry['meta_key'],
 					'meta_value' => $entry['meta_value'],
 				)
@@ -364,15 +494,15 @@ class UserMerger {
 
 		$this->report['carried'][] = array(
 			'dest_id' => (int) $dest['ID'],
-			'new_id'  => (int) $new_id,
-			'login'   => $row['user_login'],
-			'email'   => $row['user_email'],
+			'new_id'  => (int) $planned['new_id'],
+			'login'   => $planned['login'],
+			'email'   => $planned['email'],
 		);
 
-		if ( $row['user_login'] !== $original_login ) {
+		if ( $planned['login'] !== $planned['requested_login'] ) {
 			$this->report['renamed'][] = array(
-				'was'    => $original_login,
-				'now'    => $row['user_login'],
+				'was'    => $planned['requested_login'],
+				'now'    => $planned['login'],
 				'reason' => 'a different person on the source site already uses that username',
 			);
 		}
@@ -381,6 +511,8 @@ class UserMerger {
 	/**
 	 * Replace mode: keep only the source's users, plus whoever is running the import.
 	 *
+	 * The same plan as the merge, run over a destination of exactly one account.
+	 *
 	 * @return void
 	 */
 	protected function carry_acting_user() {
@@ -388,23 +520,23 @@ class UserMerger {
 			return;
 		}
 
-		$dest = $this->live_users();
+		$dest_users = $this->live_users();
 
-		if ( ! isset( $dest[ $this->acting ] ) ) {
+		if ( ! isset( $dest_users[ $this->acting ] ) ) {
 			return;
 		}
 
 		$source_users = $this->staged_users();
+		$only         = array( $this->acting => $dest_users[ $this->acting ] );
+		$plan         = self::plan( $source_users, $only );
 
-		foreach ( $source_users as $user ) {
-			if ( \strtolower( $user['user_email'] ) === \strtolower( $dest[ $this->acting ]['user_email'] ) ) {
-				$this->apply_match( $dest[ $this->acting ], $user );
-
-				return;
-			}
+		foreach ( $plan['matched'] as $match ) {
+			$this->apply_match( $dest_users[ $match['dest_id'] ], $source_users[ $match['source_id'] ] );
 		}
 
-		$this->carry_user( $dest[ $this->acting ], $this->next_free_id( $source_users, $dest ) );
+		foreach ( $plan['carried'] as $carried ) {
+			$this->carry_user( $dest_users[ $carried['dest_id'] ], $carried );
+		}
 	}
 
 	/**
@@ -560,65 +692,6 @@ class UserMerger {
 	}
 
 	/**
-	 * A value not already present in the staged users table.
-	 *
-	 * @param string $column Column to check.
-	 * @param string $value  Desired value.
-	 *
-	 * @return string
-	 */
-	protected function unique_value( $column, $value ) {
-		$candidate = $value;
-		$suffix    = 1;
-
-		while ( $this->staged_value_exists( $column, $candidate ) ) {
-			++$suffix;
-			$candidate = $value . '-' . $suffix;
-		}
-
-		return $candidate;
-	}
-
-	/**
-	 * Whether a value already exists in a staged users column.
-	 *
-	 * @param string $column Column.
-	 * @param string $value  Value.
-	 *
-	 * @return bool
-	 */
-	protected function staged_value_exists( $column, $value ) {
-		global $wpdb;
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
-		return (bool) $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT COUNT(*) FROM `' . \esc_sql( $this->stage . 'users' ) . '` WHERE LOWER(`'
-				. \esc_sql( $column ) . '`) = %s',
-				\strtolower( $value )
-			)
-		);
-	}
-
-	/**
-	 * The first ID above everything either side is using.
-	 *
-	 * @param array $source_users Staged users.
-	 * @param array $dest_users   Live users.
-	 *
-	 * @return int
-	 */
-	protected function next_free_id( array $source_users, array $dest_users ) {
-		$max = 0;
-
-		foreach ( \array_merge( \array_keys( $source_users ), \array_keys( $dest_users ) ) as $id ) {
-			$max = \max( $max, (int) $id );
-		}
-
-		return $max + 1;
-	}
-
-	/**
 	 * The staged user ID a destination user ended up as.
 	 *
 	 * @param int $dest_id Destination user ID.
@@ -639,6 +712,29 @@ class UserMerger {
 		}
 
 		return 0;
+	}
+
+	/**
+	 * The login a staged user ended up with.
+	 *
+	 * @param int $user_id Staged user ID.
+	 *
+	 * @return string
+	 */
+	protected function staged_login( $user_id ) {
+		global $wpdb;
+
+		if ( $user_id < 1 ) {
+			return '';
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
+		return (string) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT user_login FROM `' . \esc_sql( $this->stage . 'users' ) . '` WHERE ID = %d',
+				$user_id
+			)
+		);
 	}
 
 	/**

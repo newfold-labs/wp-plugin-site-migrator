@@ -401,9 +401,12 @@ class Compatibility {
 		$dst_prefix = (string) $this->destination->get( 'wp.prefix', '' );
 
 		if ( '' !== $src_prefix && '' !== $dst_prefix && $src_prefix !== $dst_prefix ) {
+			// Named by role, not by "here" and "there". This same comparison is rendered on the
+			// source during pairing and on the destination before the first write, and the two
+			// sides mean opposite things by "here".
 			$report->warn(
 				'table_prefix',
-				\sprintf( 'Table prefix differs: %s here, %s there.', $src_prefix, $dst_prefix ),
+				\sprintf( 'Table prefix differs: %s on the source, %s on the destination.', $src_prefix, $dst_prefix ),
 				array( 'detail' => 'Handled automatically. Mentioned because it shows up in support questions.' )
 			);
 		}
@@ -414,7 +417,11 @@ class Compatibility {
 		if ( '' !== $src_soft && '' !== $dst_soft && \strtok( $src_soft, '/' ) !== \strtok( $dst_soft, '/' ) ) {
 			$report->warn(
 				'server_software',
-				\sprintf( 'Different web server: %s here, %s there.', \strtok( $src_soft, '/' ), \strtok( $dst_soft, '/' ) ),
+				\sprintf(
+					'Different web server: %s on the source, %s on the destination.',
+					\strtok( $src_soft, '/' ),
+					\strtok( $dst_soft, '/' )
+				),
 				array( 'detail' => 'Rewrite rules may need re-creating by hand after the move.' )
 			);
 		}

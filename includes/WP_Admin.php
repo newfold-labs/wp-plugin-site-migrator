@@ -62,15 +62,27 @@ final class WP_Admin {
 				$asset['version']
 			);
 
-			// The download link is a plain navigation, not an apiFetch call, so it needs the
-			// REST root and a nonce of its own. wp-api-fetch installs middleware but does not
-			// expose these to page scripts.
+			// Two REST roots, deliberately.
+			//
+			// `rest_url()` returns the pretty form, `/wp-json/…`, whenever the site has a
+			// permalink structure. That is the right URL right up until an import replaces the
+			// options table with the source site's — at which point the permalink structure is
+			// the source's, and if the two sites differed, `/wp-json/` stops resolving and
+			// starts serving the home page instead. The tab driving the import is then talking
+			// to an address that no longer exists, one stage past the point of no return.
+			//
+			// `?rest_route=` is the form WordPress falls back to when there is no permalink
+			// structure at all, and it works whatever the setting is. Anything that has to keep
+			// working across the swap uses it.
 			\wp_localize_script(
 				self::$slug,
 				'nfdSiteMigrator',
 				array(
-					'restUrl' => \esc_url_raw( \rest_url( 'nfd-site-migrator/v1/' ) ),
-					'nonce'   => \wp_create_nonce( 'wp_rest' ),
+					'restUrl'      => \esc_url_raw( \rest_url( 'nfd-site-migrator/v1/' ) ),
+					'restRouteUrl' => \esc_url_raw(
+						\untrailingslashit( \home_url() ) . '/?rest_route=/nfd-site-migrator/v1/'
+					),
+					'nonce'        => \wp_create_nonce( 'wp_rest' ),
 				)
 			);
 

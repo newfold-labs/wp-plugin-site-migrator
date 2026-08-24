@@ -126,4 +126,61 @@
         rounded-md px-4 py-3 text-center m-0 mb-3 text-slate-900
     }
     .nfd-sm-paircode--url { @apply text-base tracking-normal }
+
+    /* Import: the stage list.
+       Shown in full rather than as a bar, because the useful information is not "how far" but
+       "has the switch happened yet". */
+    .nfd-sm-steps { @apply list-none m-0 p-0 mb-5 border border-slate-200 rounded-lg overflow-hidden bg-white }
+    .nfd-sm-step { @apply flex gap-3 items-start px-4 py-2.5 border-b border-slate-100 m-0 text-[14px] }
+    .nfd-sm-step:last-child { @apply border-b-0 }
+    .nfd-sm-step-mark {
+        @apply mt-1.5 h-2 w-2 shrink-0 rounded-full bg-slate-300
+    }
+    .nfd-sm-step-label { @apply text-slate-500 }
+    .nfd-sm-step-note { @apply block text-[12px] text-amber-700 }
+    .nfd-sm-step--done .nfd-sm-step-mark { @apply bg-emerald-500 }
+    .nfd-sm-step--done .nfd-sm-step-label { @apply text-slate-700 }
+    .nfd-sm-step--active { @apply bg-blue-50/60 }
+    .nfd-sm-step--active .nfd-sm-step-mark { @apply bg-blue-600 animate-pulse }
+    .nfd-sm-step--active .nfd-sm-step-label { @apply text-slate-900 font-semibold }
+
+    /* Import: upload */
+    .nfd-sm-hidden-input { @apply hidden }
+    .nfd-sm-progress { @apply mt-3 mb-1 }
+    .nfd-sm-progress-bar {
+        @apply h-1.5 rounded-full bg-blue-600 transition-all duration-200
+    }
+    .nfd-sm-progress { @apply rounded-full }
+    .nfd-sm-hint { @apply text-[13px] text-slate-500 mt-2 }
+
+    /* Import: lists of accounts, packages, notes */
+    .nfd-sm-list { @apply list-none m-0 p-0 text-[14px] }
+    .nfd-sm-list li {
+        @apply flex items-center justify-between gap-4 py-2 border-b border-slate-100 m-0
+    }
+    .nfd-sm-list li:last-child { @apply border-b-0 }
+
+    .nfd-sm-facts { @apply grid grid-cols-2 gap-x-6 gap-y-2 m-0 text-[14px] }
+    .nfd-sm-facts dt { @apply text-slate-500 text-[12px] uppercase tracking-wide }
+    .nfd-sm-facts dd { @apply m-0 text-slate-900 }
+
+    .nfd-sm-warn { @apply text-amber-700 }
+
+    /* Import: the commit gesture */
+    .nfd-sm-card--stop { @apply border-red-200 bg-red-50/50 }
+    .nfd-sm-card--commit { @apply border-slate-300 bg-slate-50 }
+    .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-slate-800 mb-3 cursor-pointer }
+    .nfd-sm-check input { @apply mt-1 }
+
+    .nfd-sm-block {
+        @apply font-mono text-[12.5px] bg-slate-900 text-slate-100 rounded-md p-3
+        overflow-x-auto whitespace-pre my-2
+    }
+
+    .nfd-sm-details { @apply text-[14px] mb-4 }
+    .nfd-sm-details summary { @apply cursor-pointer text-slate-600 }
+
+    .nfd-sm-btn--danger {
+        @apply bg-red-700 border-red-700 text-white hover:bg-red-800 hover:border-red-800
+    }
 }

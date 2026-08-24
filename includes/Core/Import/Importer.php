@@ -159,6 +159,151 @@ class Importer {
 	}
 
 	/**
+	 * Claim the import window: keep the plugin loadable, and mint authority that outlives the swap.
+	 *
+	 * Only the browser needs either of these. Under WP-CLI the plugin is loaded from disk on
+	 * every invocation and there is no cookie session to lose, which is why the core ran to
+	 * green without them and why this is the first time they are exercised.
+	 *
+	 * @param int $user_id The account running the import.
+	 *
+	 * @return array `token`, and whether the loader is in place.
+	 */
+	public function begin( $user_id ) {
+		$installed = Loader::install();
+		$token     = ImportToken::issue( $user_id );
+
+		return array(
+			'token'  => $token,
+			'loader' => $installed,
+		);
+	}
+
+	/**
+	 * Give up the import window.
+	 *
+	 * Part of every exit path rather than a cleanup step, because the thing being released is
+	 * a credential and a file in `mu-plugins`.
+	 *
+	 * @return void
+	 */
+	protected function release() {
+		ImportToken::revoke();
+		Loader::remove();
+	}
+
+	/**
+	 * What this package would do to this site, without doing any of it.
+	 *
+	 * Everything here is read-only. It is the last screen before the only irreversible action
+	 * in the product, so it has to describe the real thing: the merge plan comes from the same
+	 * function the merge itself runs, not from a second implementation of the same rules.
+	 *
+	 * @return array
+	 *
+	 * @throws \RuntimeException If the package cannot be read.
+	 */
+	public function preview() {
+		$problems = $this->package->verify();
+
+		if ( ! empty( $problems ) ) {
+			return array(
+				'ok'       => false,
+				'problems' => $problems,
+			);
+		}
+
+		$manifest = $this->package->manifest();
+		$report   = $this->compatibility( $manifest );
+
+		return array(
+			'ok'          => ! $report->is_blocked(),
+			'problems'    => array(),
+			'package'     => $this->package->inspect(),
+			'report'      => $report->to_array(),
+			'users'       => $this->user_plan( $manifest ),
+			'manual'      => $this->manual_steps(),
+			'target'      => $this->target(),
+			'backup_days' => self::BACKUP_DAYS,
+			'has_backup'  => $this->previous_backup_present(),
+		);
+	}
+
+	/**
+	 * Whether a previous import's tables are still retained.
+	 *
+	 * @return bool
+	 */
+	protected function previous_backup_present() {
+		global $wpdb;
+
+		$swap = new Swap(
+			self::STAGE_PREFIX . $wpdb->prefix,
+			$wpdb->prefix,
+			self::BACKUP_PREFIX . $wpdb->prefix
+		);
+
+		return $swap->has_backup();
+	}
+
+	/**
+	 * What the users merge would do.
+	 *
+	 * @param Manifest $manifest Package manifest.
+	 *
+	 * @return array
+	 */
+	protected function user_plan( Manifest $manifest ) {
+		global $wpdb;
+
+		$recorded = (array) $manifest->get( 'users', array() );
+
+		if ( ! empty( $recorded['truncated'] ) ) {
+			return array(
+				'available' => false,
+				'total'     => (int) \nfd_sm_data_get( $recorded, 'total', 0 ),
+				'reason'    => 'The source has too many accounts to list them individually here. '
+					. 'The merge itself is unaffected.',
+			);
+		}
+
+		$source = array();
+
+		foreach ( (array) \nfd_sm_data_get( $recorded, 'list', array() ) as $user ) {
+			$source[ (int) $user['ID'] ] = $user;
+		}
+
+		if ( empty( $source ) ) {
+			return array(
+				'available' => false,
+				'total'     => 0,
+				'reason'    => 'This package was built before the plugin recorded the source\'s accounts, '
+					. 'so the merge cannot be previewed. It will still run correctly.',
+			);
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$rows = $wpdb->get_results(
+			"SELECT ID, user_login, user_email, user_nicename, display_name FROM `{$wpdb->users}` ORDER BY ID ASC",
+			ARRAY_A
+		);
+
+		$dest = array();
+
+		foreach ( (array) $rows as $row ) {
+			$dest[ (int) $row['ID'] ] = $row;
+		}
+
+		$plan = UserMerger::plan( $source, $dest );
+
+		$plan['available'] = true;
+		$plan['total']     = \count( $source );
+		$plan['acting']    = (int) $this->options['acting_user'];
+
+		return $plan;
+	}
+
+	/**
 	 * Current state.
 	 *
 	 * @return array
@@ -662,7 +807,9 @@ class Importer {
 
 		$fixups = new Fixups();
 
-		foreach ( $fixups->run( $this->target() ) as $note ) {
+		$acting_final = (int) \nfd_sm_data_get( $state, 'users.acting_id', 0 );
+
+		foreach ( $fixups->run( $this->target(), $acting_final ) as $note ) {
 			$state['notes'][] = $note;
 		}
 
@@ -682,6 +829,8 @@ class Importer {
 		$state['manual'] = $this->manual_steps();
 
 		$this->progress->finish( ImportCheckpoint::STAGE_FIXUPS );
+
+		$this->release();
 
 		$state['finished_at'] = \gmdate( 'c' );
 		$state['stage']       = ImportCheckpoint::STAGE_DONE;
@@ -776,6 +925,8 @@ class Importer {
 		// source database that nothing can now reach. Rollback means undo, so they go.
 		$dropped = $swap->discard_staged();
 
+		$this->release();
+
 		\wp_cache_flush();
 
 		$state['notes'][] = \sprintf(
@@ -800,6 +951,7 @@ class Importer {
 			$this->swap( $state )->discard_staged();
 		}
 
+		$this->release();
 		$this->checkpoint->clear();
 	}
 
@@ -820,11 +972,14 @@ class Importer {
 	 * @return array
 	 */
 	protected function target() {
+		global $wpdb;
+
 		return array(
 			'site_url'    => '' !== $this->options['site_url'] ? $this->options['site_url'] : \get_site_url(),
 			'home_url'    => '' !== $this->options['home_url'] ? $this->options['home_url'] : \get_home_url(),
 			'abspath'     => \rtrim( ABSPATH, '/\\' ),
 			'content_dir' => \rtrim( \WP_CONTENT_DIR, '/\\' ),
+			'prefix'      => $wpdb->prefix,
 		);
 	}
 

@@ -1,5 +1,6 @@
 import { __ } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
+import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { api } from '../../utils/api';
 
@@ -13,6 +14,7 @@ import { api } from '../../utils/api';
  * @return {Element} The screen.
  */
 export const Receive = () => {
+	const navigate = useNavigate();
 	const [ code, setCode ] = useState( '' );
 	const [ siteUrl, setSiteUrl ] = useState( '' );
 	const [ status, setStatus ] = useState( null );
@@ -116,12 +118,27 @@ export const Receive = () => {
 				</div>
 			) }
 
-			<p className="nfd-sm-muted nfd-sm-footnote">
-				{ __(
-					'Nothing on this site changes until you upload a package and confirm. Importing arrives in a later release.',
-					'nfd-site-migrator'
-				) }
-			</p>
+			<div className="nfd-sm-card">
+				<p className="nfd-sm-eyebrow">
+					{ __( 'Already have the package?', 'nfd-site-migrator' ) }
+				</p>
+				<p className="nfd-sm-hint">
+					{ __(
+						'You do not need a pairing code to import — that is only for checking compatibility before the export. Nothing on this site changes until you have seen exactly what the package would do and confirmed it.',
+						'nfd-site-migrator'
+					) }
+				</p>
+				<div className="nfd-sm-actions">
+					<button
+						type="button"
+						className="nfd-sm-btn nfd-sm-btn--primary"
+						id="nfd-sm-go-import"
+						onClick={ () => navigate( '/import' ) }
+					>
+						{ __( 'Import a package', 'nfd-site-migrator' ) }
+					</button>
+				</div>
+			</div>
 		</Layout>
 	);
 };

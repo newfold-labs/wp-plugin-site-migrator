@@ -4,8 +4,8 @@ Move a WordPress site between hosts. Install the plugin on both sites: export th
 into a package, then import that package on the destination.
 
 > **Pre-release.** This plugin is being reworked and is not currently distributed. A full
-> migration works today **from WP-CLI**; in the browser you can export but not yet import.
-> See [`docs/implementation-plan.md`](docs/implementation-plan.md) for the phased plan and
+> migration works today, from wp-admin and from WP-CLI. See
+> [`docs/implementation-plan.md`](docs/implementation-plan.md) for the phased plan and
 > [`docs/code-analysis.md`](docs/code-analysis.md) for the analysis it came from.
 
 ## What it does
@@ -18,6 +18,17 @@ into a package, then import that package on the destination.
   one can be rolled back.
 - **Users are merged, not replaced.** The destination's accounts are kept, and the source's
   accounts are merged in with their IDs preserved, so migrated content stays attributed.
+
+## In wp-admin
+
+**Site Migrator** appears in the admin menu on both sites.
+
+On the source: check compatibility against the destination (paste a pairing code from it), package
+the site, download the files. On the destination: hand it the package — the whole folder, the loose
+files you downloaded, or a folder you put on the server yourself over FTP — and it shows you what
+the import would do before it does any of it, including what happens to every account. Nothing on
+the destination changes until you confirm, and afterwards the site it replaced is still there until
+you say you no longer need it.
 
 ## From the command line
 

@@ -1310,7 +1310,7 @@ reports it; nobody has watched it happen.
 Views are captured during the load and recreated against their final names after the swap, but the
 fixture has no views, so that path has been read and not run.
 
-### Phase 4b — Import in the UI · **L**
+### Phase 4b — Import in the UI · **L** — ✅ *done 2026-08-24*
 
 Wrapping a proven core. Every failure discovered here is a browser or transport failure, not a
 migration-correctness failure — which is exactly why the split is worth it.
@@ -1326,6 +1326,71 @@ migration-correctness failure — which is exactly why the split is worth it.
 
 **Exit:** a non-technical user completes the full import through wp-admin, including the
 uploads, on a host with an 8MB `upload_max_filesize`.
+
+#### What shipped
+
+`Core/Import/Upload` (chunked, resumable, plus drop-in-folder discovery), `Core/Import/ImportToken`
+and `Core/Import/Loader` — the two survival-kit pieces that only exist in a browser —
+`Rest/ImportController` with twelve routes, and the four screens: choose, review, run, done.
+`UserMerger::plan()` was extracted as a pure static so the confirmation screen and the merge
+itself cannot disagree; the manifest now carries the source's account list so that plan can be
+computed before anything is written.
+
+The review screen is the one that matters. It shows what arrives, what it replaces, the exact
+account-by-account outcome with the resulting usernames and which password each person will need,
+the `wp-config.php` block to paste, and a checkbox naming the site about to be overwritten. The
+run screen lists every stage with the swap marked as the point of no return, and the safety strip
+flips the moment it passes.
+
+#### Verified in a browser
+
+Two WordPress installs, the destination served over HTTP, driven through Chrome: upload five loose
+files (matched to their manifest paths by basename), verify, review, confirm, import 447 files and
+194 rows past the swap, land on the completion screen **still signed in**, then undo — back to the
+destination's own name, posts, users and password with no tables left behind. The drop-in-folder
+route was exercised the same way.
+
+#### Four defects, all browser-only
+
+Every one of these is invisible from the CLI, which is exactly why the phase split put them here.
+
+**REST URLs were built by string concatenation and broke on plain permalinks.** `rest_url()`
+returns `/index.php?rest_route=/ns/v1/` when a site has no permalink structure, so appending
+`?file=…` produced a second `?` and the route stopped resolving. This had shipped in Phase 3 —
+**the download buttons on the export screen were dead on any plain-permalink site** — and the new
+upload endpoint inherited it.
+
+**The REST root the page was rendered with stopped existing mid-import.** apiFetch pins
+`/wp-json/…` at render time. The import then replaces `permalink_structure` with the source's, and
+if the two sites differ — the destination had `/%year%/%monthnum%/…`, the source had none — that
+root starts serving the home page instead of JSON, one stage after the point of no return. Every
+import call now goes through the `?rest_route=` form, which no permalink setting can invalidate.
+The general rule this is an instance of: *the import must not depend on anything the swap can
+change.*
+
+**WordPress's nonce check rejected the requests before the token could speak.**
+`rest_cookie_check_errors()` runs on `rest_authentication_errors`, ahead of any permission
+callback, and the nonce is derived from the acting user — so it dies with the users table. A
+filter now clears that specific error for a request carrying a valid import token, which is a
+stronger claim than the nonce it stands in for. It has to run at priority **200**: core registers
+its check at 100, and the first attempt at 99 saw a null result, did nothing, and watched the
+error be raised immediately afterwards.
+
+**The acting user could be logged out by their own migration.** WordPress's auth cookie names the
+*login*, and the merge is allowed to change it — a matched account takes the source's username, a
+collision suffixes the destination's. `Fixups` now re-issues the cookie under whatever identity
+the person ended up with, and says so.
+
+Each step is also wrapped in an output buffer, because one `echo` from any hook still loaded would
+put text in front of the JSON and strand a user mid-import.
+
+#### Not done
+
+No test has been run against a host with a genuinely small `upload_max_filesize`; the chunk size is
+derived from `post_max_size` and `upload_max_filesize` and was exercised at 256KB and 2MB, but not
+against a server that actually refuses a larger request. The browser upload was verified with a
+104KB package and the REST harness with 13MB across 58 chunks — a multi-gigabyte upload through the
+UI remains unwatched, as does resuming one after a genuine connection drop.
 
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
@@ -1681,4 +1746,5 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 3.13 dead import scaffolding | 4a | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
 | 3.14 no LICENSE; stripped GPL attribution | 0 | `LICENSE` added, ServMask attribution and fork point recorded in `CREDITS` and in each derived file's header |
 | 3.15 `replace_serialized_values()` fatal on PHP 7+ | 4a | `is_string()` guard, and `is_serialized()` tested before `unserialize()` rather than after |
+| 3.16 REST URLs broken on plain permalinks | 4b | One helper builds them, choosing `?` or `&` from the base; the import uses the permalink-independent `?rest_route=` form throughout |
 | 4.1–4.8 refactors | 2, 3, 8 | As described above |

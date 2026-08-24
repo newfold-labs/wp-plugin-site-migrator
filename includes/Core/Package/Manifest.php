@@ -74,6 +74,10 @@ class Manifest {
 				// the first write, against facts gathered here rather than whatever the pairing
 				// handshake saw days earlier.
 				'profile'        => SiteProfile::gather( true )->to_array(),
+				// So the destination can show an accurate user-merge plan on the confirmation
+				// screen, before anything is written. Reading it out of the dump instead would
+				// mean parsing megabytes of SQL to answer a question the source already knows.
+				'users'          => self::site_users(),
 				'database'       => array(),
 				'parts'          => array(),
 				'large'          => array(),
@@ -82,6 +86,57 @@ class Manifest {
 					'files' => 0,
 				),
 			)
+		);
+	}
+
+	/**
+	 * The source's accounts, for the destination's merge preview.
+	 *
+	 * No new exposure: the package already contains the whole users table. What this adds is the
+	 * ability to describe the merge without loading it first.
+	 *
+	 * @return array
+	 */
+	protected static function site_users() {
+		global $wpdb;
+
+		$max = (int) \apply_filters( 'nfd_sm_manifest_user_limit', 5000 );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$wpdb->users}`" );
+
+		if ( $total > $max ) {
+			// A site with this many accounts turns the manifest into a liability and the
+			// preview into a wall. The merge itself is unaffected: it reads the real table.
+			return array(
+				'total'     => $total,
+				'truncated' => true,
+				'list'      => array(),
+			);
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$rows = $wpdb->get_results(
+			"SELECT ID, user_login, user_email, user_nicename, display_name FROM `{$wpdb->users}` ORDER BY ID ASC",
+			ARRAY_A
+		);
+
+		$list = array();
+
+		foreach ( (array) $rows as $row ) {
+			$list[] = array(
+				'ID'            => (int) $row['ID'],
+				'user_login'    => $row['user_login'],
+				'user_email'    => $row['user_email'],
+				'user_nicename' => $row['user_nicename'],
+				'display_name'  => $row['display_name'],
+			);
+		}
+
+		return array(
+			'total'     => $total,
+			'truncated' => false,
+			'list'      => $list,
 		);
 	}
 

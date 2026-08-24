@@ -124,7 +124,7 @@ suffix. Volumes keep individual files small enough to upload and to resume.
 }
 ```
 
-Four fields exist purely so the import half is not left guessing.
+Five fields exist purely so the import half is not left guessing.
 
 **`source.abspath`** cannot be derived from `content_dir`: the two are related by convention, and
 `WP_CONTENT_DIR` is precisely the constant people move. Import rewrites absolute paths out of the
@@ -135,6 +135,12 @@ the destination can map them onto wherever *it* keeps that kind of file. Extract
 straight into `ABSPATH` only works for two installs laid out identically. The part's `name` is
 carried alongside it because a volume file name — `plugins.002.zip` — no longer identifies which
 part it belongs to.
+
+**`users`** is the source's account list — id, login, email, nicename, display name — so the
+destination can show an accurate merge plan on its confirmation screen before anything is written.
+It adds no exposure: the package already contains the whole users table. Sites above
+`nfd_sm_manifest_user_limit` (5000) record only a count and a `truncated` flag; the merge itself
+reads the real table and is unaffected.
 
 **`profile`** is the source's full `SiteProfile` — what the pre-write compatibility check compares
 against. It carries its own `schema_version`, separate from the package's, and a destination that

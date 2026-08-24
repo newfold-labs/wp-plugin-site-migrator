@@ -6,6 +6,10 @@ import { Compatibility } from './components/screens/Compatibility';
 import { Exporting } from './components/screens/Exporting';
 import { Download } from './components/screens/Download';
 import { Receive } from './components/screens/Receive';
+import { Choose } from './components/screens/import/Choose';
+import { Review } from './components/screens/import/Review';
+import { Running } from './components/screens/import/Running';
+import { Done } from './components/screens/import/Done';
 import { api } from './utils/api';
 
 /**
@@ -20,16 +24,30 @@ const Resume = () => {
 	const navigate = useNavigate();
 
 	useEffect( () => {
-		api.exportState().then( ( state ) => {
-			if ( state.failed ) {
-				navigate( '/start', { replace: true } );
-			} else if ( state.complete ) {
-				navigate( '/download', { replace: true } );
-			} else if ( state.in_progress ) {
-				navigate( '/export', { replace: true } );
-			} else {
-				navigate( '/start', { replace: true } );
+		// An import in flight outranks anything on the export side: this site may already have
+		// been replaced, and dropping the user on the export screen would hide that.
+		api.import.state().then( ( imported ) => {
+			if ( ! imported.failed && imported.complete ) {
+				navigate( '/import/done', { replace: true } );
+				return;
 			}
+
+			if ( ! imported.failed && imported.in_progress ) {
+				navigate( '/import/run', { replace: true } );
+				return;
+			}
+
+			api.exportState().then( ( state ) => {
+				if ( state.failed ) {
+					navigate( '/start', { replace: true } );
+				} else if ( state.complete ) {
+					navigate( '/download', { replace: true } );
+				} else if ( state.in_progress ) {
+					navigate( '/export', { replace: true } );
+				} else {
+					navigate( '/start', { replace: true } );
+				}
+			} );
 		} );
 	}, [ navigate ] );
 
@@ -80,6 +98,10 @@ export default function Routes() {
 		{ path: '/export', element: <Exporting /> },
 		{ path: '/download', element: <Download /> },
 		{ path: '/receive', element: <Receive /> },
+		{ path: '/import', element: <Choose /> },
+		{ path: '/import/review', element: <Review /> },
+		{ path: '/import/run', element: <Running /> },
+		{ path: '/import/done', element: <Done /> },
 		{ path: '*', element: <Navigate to="/" replace /> },
 	] );
 }

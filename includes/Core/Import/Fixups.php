@@ -30,11 +30,12 @@ class Fixups {
 	/**
 	 * Run them all.
 	 *
-	 * @param array $target Destination facts: `site_url`, `home_url`.
+	 * @param array $target    Destination facts: `site_url`, `home_url`.
+	 * @param int   $acting_id  Final ID of the account running the import, or 0.
 	 *
 	 * @return array Notes.
 	 */
-	public function run( array $target ) {
+	public function run( array $target, $acting_id = 0 ) {
 		// Everything below reads options. The object cache is still holding the destination's
 		// pre-swap values, so this has to come first or every check below tests the old site.
 		\wp_cache_flush();
@@ -46,6 +47,7 @@ class Fixups {
 		$this->clear_transients();
 		$this->note_dropins();
 		$this->upgrade_database();
+		$this->reestablish_session( (int) $acting_id );
 
 		\wp_cache_flush();
 
@@ -214,6 +216,43 @@ class Fixups {
 			'The source site\'s drop-ins are now in place (%s). They talk to services this server '
 			. 'may not have; remove them if the site misbehaves.',
 			\implode( ', ', $found )
+		);
+	}
+
+	/**
+	 * Sign the person running this back in, under whatever identity they now have.
+	 *
+	 * WordPress's auth cookie names the user's *login*, not their ID. The merge can legitimately
+	 * change a login — a matched account takes the source's username, and a collision suffixes
+	 * the destination's — and at that moment the cookie in the browser stops resolving to
+	 * anybody. The import itself carries on, because the step requests authenticate with a token
+	 * instead, but the admin screen behind them is one refresh away from a login form.
+	 *
+	 * A fresh cookie costs nothing and is issued to the same person who started the import, on
+	 * a request they authenticated. Skipped outside a web request, where there is nobody to
+	 * hand it to.
+	 *
+	 * @param int $acting_id Final user ID.
+	 *
+	 * @return void
+	 */
+	protected function reestablish_session( $acting_id ) {
+		if ( $acting_id < 1 || 'cli' === PHP_SAPI || \headers_sent() ) {
+			return;
+		}
+
+		$user = \get_userdata( $acting_id );
+
+		if ( ! $user ) {
+			return;
+		}
+
+		\wp_set_current_user( $acting_id );
+		\wp_set_auth_cookie( $acting_id, false );
+
+		$this->notes[] = \sprintf(
+			'You are still signed in, now as %s.',
+			$user->user_login
 		);
 	}
 
