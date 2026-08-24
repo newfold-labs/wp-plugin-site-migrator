@@ -69,6 +69,20 @@ source's schema and WordPress has no downgrade path.
 `root-extras` never descends into subdirectories, and its allowlist is closed. Adding a name to
 it is a deliberate act.
 
+Every part additionally refuses, at any depth:
+
+| Refused | Why |
+|---|---|
+| `.git`, `.svn`, `.hg`, `.bzr`, `CVS` | Version control metadata. Not site content, restores to nothing useful, and routinely the largest thing in a plugin directory — one observed `.git` pack was 129.8MB |
+| `node_modules` | Build-time dependencies. Never read by PHP at runtime, and the usual reason an install has a hundred thousand files, which is what the export's cost is measured in |
+| `wp-content/upgrade`, `upgrade-temp-backup` | Core's update scratch space, temporary by definition |
+| this plugin's storage directory | Otherwise the export packages the package. It sits inside uploads, so this is computed per part from where it actually is |
+| symlinks, of either kind | Following one copies content from outside the site into the package |
+
+The first three are filterable through `nfd_sm_excluded_names`. Everything refused is **named in
+the manifest** — `skipped_paths` for directories, `skipped_links` for symlinks — because a package
+that is quietly missing something is worse than one that is honestly smaller.
+
 ## Large files
 
 Standard zip cannot append a single entry incrementally: a 2GB video cannot be written across
@@ -142,9 +156,14 @@ make each file fractionally larger. Everything else is deflated normally.
   "large": [
     { "path": "wp-content/uploads/2024/03/film.mp4", "bytes": 398…, "sha256": "…" }
   ],
+  "skipped_links": { "total": 2, "paths": [ "wp-content/uploads/shared-media" ] },
+  "skipped_paths": { "total": 37, "paths": [ "wp-content/plugins/acme/vendor/x/.git" ] },
   "totals": { "bytes": 4021…, "files": 18422 }
 }
 ```
+
+`skipped_links` and `skipped_paths` each carry a full count and a sample of at most 50 paths, so
+a site that symlinks a thousand things does not turn the manifest into a list of them.
 
 Five fields exist purely so the import half is not left guessing.
 

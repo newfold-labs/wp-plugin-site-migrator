@@ -237,6 +237,25 @@ class Manifest {
 	}
 
 	/**
+	 * Record the directories left out because of what they are.
+	 *
+	 * Version control metadata and build dependencies are not site content, but leaving them
+	 * out is still a decision somebody may need to see — particularly the person wondering why
+	 * the destination is missing a directory they remember.
+	 *
+	 * @param array $paths Sample of paths.
+	 * @param int   $total How many there were in all.
+	 *
+	 * @return void
+	 */
+	public function set_skipped_paths( array $paths, $total ) {
+		$this->data['skipped_paths'] = array(
+			'total' => (int) $total,
+			'paths' => $paths,
+		);
+	}
+
+	/**
 	 * Record one loosely stored large file.
 	 *
 	 * @param array $file File descriptor.

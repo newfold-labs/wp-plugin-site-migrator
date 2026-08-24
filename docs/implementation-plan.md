@@ -1601,6 +1601,52 @@ browser's side. The query form is tried first because it works in both cases, wi
 as a fallback; an answer that arrives as JSON is treated as the destination's real answer, so a
 wrong code still costs one request rather than two.
 
+### Phase 4g — What goes in the package, and getting it out · **S** — ✅ *done 2026-08-25*
+
+A 1GB site produced a **2256MB package in 131 files**, and the file list said why.
+
+**Finding 3.18 — the export packaged the package.** Entries like
+`wp-content/uploads/nfd-site-migrator/package/parts/plugins.060.zip` were in it. The storage
+directory lives inside uploads and the `uploads` part had no exclusions at all, so a run swept
+up the volumes it had already written — and, because the walk happens as the export goes, some
+it wrote *while walking*. Roughly doubling the export, and then the upload, and then the import.
+
+The exclusion existed; it was on the wrong part. `content-other` excluded the storage directory,
+which reads as correct and is useless: `content-other` already excludes the whole of `uploads`,
+so the storage exclusion there could never fire. Now computed per part from where the storage
+directory actually is, so it holds for whichever part contains it — `nfd_sm_storage_path()` is
+filterable and need not stay under uploads.
+
+**Finding 3.19 — version control metadata and build trees were packaged.** A single vendored
+dependency carried a **129.8MB** `.git` pack; the same site's file count (113,665) is the
+signature of `node_modules`. Neither is site content: `.git` restores to nothing useful, and
+`node_modules` is never read by PHP at runtime. Both are now refused wherever they appear —
+`PartSpec::exclude_names()`, matched on the directory's own name rather than one fixed path,
+because a `.git` nine levels down inside `vendor/` is still a `.git`.
+
+This is a judgement call and it is recorded as one. The failure mode of leaving `node_modules`
+out is somebody running `npm install` on the other side; the failure mode of carrying it is
+hours of packaging, since **the export is bound by the count of files, not their size**. Both
+lists are filterable (`nfd_sm_excluded_names`) and everything left out is named in the manifest
+under `skipped_paths` — the same rule as symlinks: never drop data silently.
+
+Core's own `wp-content/upgrade` and `upgrade-temp-backup` go too. They are update scratch space
+by definition, and are sometimes left behind holding a whole copy of a plugin.
+
+**One button for the whole package.** A package is many files on purpose — volumes are bounded
+so a single zip close fits inside a shared host's execution limit — and that is the right shape
+for the server and a miserable one for the person clicking Download sixty times.
+
+Deliberately **not** solved by zipping the package server-side: it is already compressed, so
+that would spend the whole site's size in disk and time to produce something no smaller, not
+resumable, and needing unpacking again at the other end. The loop belongs in the browser, where
+it is free. Where the File System Access API exists the files are **streamed into a folder the
+user picks**, subdirectories and all, so the folder can be handed straight to the destination's
+folder picker; bytes go to disk as they arrive rather than through memory, because a part is
+hundreds of megabytes and a loose file can be far more. Elsewhere they are handed to the
+browser's own downloader in sequence, and the screen says it is reporting downloads *started*
+rather than pretending to know when they finish.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

@@ -74,6 +74,7 @@ class Checkpoint {
 			'large_meta'        => array(),
 			'plan'              => array(),
 			'skipped_links'     => array(),
+			'skipped_paths'     => array(),
 			'rate'              => 0,
 			'last_volume_bytes' => 0,
 			'database'          => array(

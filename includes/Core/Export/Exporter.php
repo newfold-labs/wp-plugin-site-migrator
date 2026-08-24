@@ -330,6 +330,10 @@ class Exporter {
 				foreach ( (array) $totals['links'] as $link ) {
 					$state['skipped_links'][] = $link;
 				}
+
+				foreach ( (array) $totals['skipped'] as $path ) {
+					$state['skipped_paths'][] = $path;
+				}
 			}
 
 			$complete = $collector->step( $spec, $state, $deadline );
@@ -412,9 +416,11 @@ class Exporter {
 		// Named, and capped, so a site that symlinks a thousand things does not turn the
 		// manifest into a list of them. The count is what matters; the names help the few
 		// people who need to act on it.
-		$links = (array) $state['skipped_links'];
+		$links   = (array) $state['skipped_links'];
+		$skipped = isset( $state['skipped_paths'] ) ? (array) $state['skipped_paths'] : array();
 
 		$manifest->set_skipped_links( \array_slice( $links, 0, 50 ), \count( $links ) );
+		$manifest->set_skipped_paths( \array_slice( $skipped, 0, 50 ), \count( $skipped ) );
 
 		$this->package->finalize( $manifest );
 		$this->progress->finish( Checkpoint::STAGE_FINALIZE );
@@ -461,6 +467,7 @@ class Exporter {
 			'planned_files' => $planned_files,
 			'planned_bytes' => $planned_bytes,
 			'skipped_links' => \count( (array) ( isset( $state['skipped_links'] ) ? $state['skipped_links'] : array() ) ),
+			'skipped_paths' => \count( (array) ( isset( $state['skipped_paths'] ) ? $state['skipped_paths'] : array() ) ),
 			'manifest'      => $done ? $this->package->path( Manifest::NAME ) : '',
 		);
 	}

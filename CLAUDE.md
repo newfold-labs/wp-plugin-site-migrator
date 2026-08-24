@@ -147,6 +147,18 @@ six near-identical archivers: everything that differed between them is data on a
 **Symlinks are never packaged**, and are recorded in the manifest's `skipped_links` rather than
 dropped silently. Following one copies content from outside the site into the package.
 
+**Neither is anything the site does not need to run.** `PartSpecs::$excluded_names` refuses
+`.git`, `.svn`, `.hg`, `.bzr`, `CVS` and `node_modules` **wherever they appear** — matched on the
+directory's own name, because a `.git` nine levels down inside a vendored dependency is still a
+`.git`, and one was found at 129.8MB (findings 3.18–3.19). Core's `upgrade` directories go too.
+All of it is listed in the manifest's `skipped_paths`, and the list is filterable via
+`nfd_sm_excluded_names`.
+
+**The storage directory is excluded from every part that contains it**, computed from where it
+actually is. It lives inside uploads, and without this the export packages the package: a 1GB
+site produced 2.2GB containing a copy of itself. The old exclusion named `content-other`, which
+can never see it, because `content-other` already excludes all of `uploads`.
+
 **Pause abandons the in-flight request rather than waiting for it.** A step cannot be interrupted
 once it is inside `ZipArchive::close()`, so waiting was the two minutes that made the button look
 broken. The step still completes and writes its checkpoint — safe, because the checkpoint only

@@ -39,6 +39,34 @@ class PartSpecs {
 	);
 
 	/**
+	 * Directory names that are never site content, wherever they appear.
+	 *
+	 * Version control metadata is the big one and the reason this list exists: a plugin
+	 * installed by checking it out, or a vendored dependency that shipped its history, brings
+	 * a `.git` directory whose pack files can be larger than the entire rest of the site — one
+	 * observed at 130MB inside a single module. It restores to nothing useful.
+	 *
+	 * `node_modules` is here on the same grounds. It is a build-time dependency tree, never
+	 * read by PHP at runtime, and it is the usual reason a WordPress install has a hundred
+	 * thousand files in it. The failure mode of leaving it out is a developer running `npm
+	 * install` on the other side; the failure mode of carrying it is hours of packaging and a
+	 * package several times the size of the site.
+	 *
+	 * Everything left out this way is listed in the manifest. Filter `nfd_sm_excluded_names`
+	 * to change it.
+	 *
+	 * @var array
+	 */
+	protected static $excluded_names = array(
+		'.git',
+		'.svn',
+		'.hg',
+		'.bzr',
+		'CVS',
+		'node_modules',
+	);
+
+	/**
 	 * Drop-ins WordPress recognises in wp-content.
 	 *
 	 * @var array
@@ -115,7 +143,14 @@ class PartSpecs {
 		// Everything under wp-content that no other part claims. Without this,
 		// wp-content/languages/ and any custom directory are silently dropped.
 		$other = new PartSpec( 'content-other', $content, self::prefix_for( $content ) );
-		$other->exclude_dirs( self::relative_children( $content, $covered ) );
+		// Plus core's own update scratch space, which is temporary by definition and is
+		// sometimes left behind holding a full copy of a plugin mid-upgrade.
+		$other->exclude_dirs(
+			\array_merge(
+				self::relative_children( $content, $covered ),
+				array( 'upgrade', 'upgrade-temp-backup' )
+			)
+		);
 		// Drop-ins have their own part; without this they are collected twice and stored twice.
 		$other->exclude_files( self::$dropins );
 		$specs[] = $other;
@@ -125,11 +160,65 @@ class PartSpecs {
 		$specs[] = $root_extras;
 
 		/**
+		 * Filter the directory names left out of every part.
+		 *
+		 * @param array $names Directory basenames.
+		 */
+		$names = (array) \apply_filters( 'nfd_sm_excluded_names', self::$excluded_names );
+
+		foreach ( $specs as $spec ) {
+			$spec->exclude_names( $names );
+			$spec->exclude_dirs(
+				\array_values(
+					\array_unique(
+						\array_merge( $spec->excluded_dirs(), self::storage_within( $spec->root() ) )
+					)
+				)
+			);
+		}
+
+		/**
 		 * Filter the parts a package is built from.
 		 *
 		 * @param array $specs List of PartSpec.
 		 */
 		return \apply_filters( 'nfd_sm_part_specs', $specs );
+	}
+
+	/**
+	 * This plugin's own storage directory, expressed relative to a part's root.
+	 *
+	 * **The export must never package the package.** The storage directory lives inside
+	 * uploads, and the uploads part had no exclusions at all, so a run swept up whatever
+	 * volumes it had already written — and, because it walks as it goes, the ones it wrote
+	 * while walking. A 1GB site produced a 2.2GB package containing a copy of itself at
+	 * `wp-content/uploads/nfd-site-migrator/package/…`, doubling the export and every
+	 * subsequent upload.
+	 *
+	 * `content-other` already excluded it, which is why this went unnoticed: the exclusion was
+	 * written against the one part that happened not to need it, since `uploads` excludes the
+	 * whole directory from `content-other` anyway. Computed per part rather than named once,
+	 * because `nfd_sm_storage_path()` is filterable and need not stay under uploads.
+	 *
+	 * @param string $root Absolute part root.
+	 *
+	 * @return array Empty when the storage directory is not below this root.
+	 */
+	protected static function storage_within( $root ) {
+		$root    = \rtrim( (string) $root, '/\\' );
+		$storage = \rtrim( \nfd_sm_storage_path(), '/\\' );
+
+		if ( '' === $root || '' === $storage ) {
+			return array();
+		}
+
+		$relative = \nfd_sm_relative_path( $root, $storage );
+
+		if ( '' === $relative || $relative === $storage || false !== \strpos( $relative, '..' ) ) {
+			return array();
+		}
+
+		return array( $relative );
 	}
 
 	/**

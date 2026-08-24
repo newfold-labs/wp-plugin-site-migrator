@@ -160,6 +160,13 @@ class FileCollector {
 	protected $links = array();
 
 	/**
+	 * Directories the walk refused because of what they are.
+	 *
+	 * @var array
+	 */
+	protected $skipped = array();
+
+	/**
 	 * How long a single volume close should aim to take.
 	 *
 	 * @var float
@@ -190,16 +197,18 @@ class FileCollector {
 	 * @return array Totals as `files` and `bytes`.
 	 */
 	public function prepare( PartSpec $spec ) {
-		$this->links = array();
+		$this->links   = array();
+		$this->skipped = array();
 
 		$list_path = $this->package->list_path( $spec->name() );
 		$handle    = \fopen( $list_path, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		if ( false === $handle ) {
 			return array(
-				'files' => 0,
-				'bytes' => 0,
-				'links' => array(),
+				'files'   => 0,
+				'bytes'   => 0,
+				'links'   => array(),
+				'skipped' => array(),
 			);
 		}
 
@@ -215,9 +224,10 @@ class FileCollector {
 		\fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		return array(
-			'files' => $files,
-			'bytes' => $bytes,
-			'links' => $this->links,
+			'files'   => $files,
+			'bytes'   => $bytes,
+			'links'   => $this->links,
+			'skipped' => $this->skipped,
 		);
 	}
 
@@ -228,6 +238,15 @@ class FileCollector {
 	 */
 	public function links() {
 		return $this->links;
+	}
+
+	/**
+	 * Directories the walk left out on purpose, so the export can say what it did not take.
+	 *
+	 * @return array
+	 */
+	public function skipped() {
+		return $this->skipped;
 	}
 
 	/**
@@ -329,15 +348,17 @@ class FileCollector {
 		$entries  = array();
 		$root     = $spec->root();
 		$excluded = $spec->excluded_dirs();
+		$names    = $spec->excluded_names();
 		$skip     = $spec->excluded_files();
 
 		$flags    = \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::UNIX_PATHS;
 		$dir_iter = new \RecursiveDirectoryIterator( $root, $flags );
 		$links    = array();
+		$dropped  = array();
 
 		$filter = new \RecursiveCallbackFilterIterator(
 			$dir_iter,
-			function ( $current ) use ( $root, $excluded, $skip, &$links ) {
+			function ( $current ) use ( $root, $excluded, $names, $skip, &$links, &$dropped ) {
 				$relative = \nfd_sm_relative_path( $root, $current->getPathname() );
 
 				// Deliberate exclusions are settled first, so that something this plugin
@@ -347,6 +368,15 @@ class FileCollector {
 					// intended behaviour here and was the accidental behaviour that made the
 					// old RootArchiver collect nothing but top-level files.
 					if ( \in_array( $relative, $excluded, true ) ) {
+						return false;
+					}
+
+					// Not site content wherever it appears. Reported rather than dropped
+					// quietly: a package that is silently missing something is worse than a
+					// package that is honestly smaller.
+					if ( \in_array( $current->getFilename(), $names, true ) ) {
+						$dropped[] = $relative;
+
 						return false;
 					}
 				} elseif ( \in_array( $relative, $skip, true ) ) {
@@ -401,6 +431,10 @@ class FileCollector {
 
 		foreach ( $links as $link ) {
 			$this->links[] = ( '' === $prefix ? $link : $prefix . '/' . $link );
+		}
+
+		foreach ( $dropped as $path ) {
+			$this->skipped[] = ( '' === $prefix ? $path : $prefix . '/' . $path );
 		}
 
 		return $entries;

@@ -44,6 +44,13 @@ class PartSpec {
 	protected $exclude_dirs = array();
 
 	/**
+	 * Directory basenames excluded wherever they appear below the root.
+	 *
+	 * @var array
+	 */
+	protected $exclude_names = array();
+
+	/**
 	 * Paths relative to the root, which another part already collects.
 	 *
 	 * @var array
@@ -114,6 +121,15 @@ class PartSpec {
 	}
 
 	/**
+	 * Directory basenames excluded at any depth.
+	 *
+	 * @return array
+	 */
+	public function excluded_names() {
+		return $this->exclude_names;
+	}
+
+	/**
 	 * Files another part already collects.
 	 *
 	 * @return array
@@ -163,6 +179,23 @@ class PartSpec {
 	 */
 	public function is_allowlisted() {
 		return ! empty( $this->allowlist );
+	}
+
+	/**
+	 * Do not descend into any directory with one of these names, wherever it appears.
+	 *
+	 * Distinct from `exclude_dirs`, which names one place. This is for things that are not
+	 * site content no matter where they turn up — a `.git` directory is a `.git` directory
+	 * whether it sits at the root or nine levels down inside a vendored dependency.
+	 *
+	 * @param array $names Directory basenames.
+	 *
+	 * @return PartSpec
+	 */
+	public function exclude_names( array $names ) {
+		$this->exclude_names = $names;
+
+		return $this;
 	}
 
 	/**
