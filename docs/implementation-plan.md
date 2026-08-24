@@ -1562,6 +1562,45 @@ Rate is now measured from a baseline taken when the run starts, not from zero. C
 previous run wrote against the seconds this one has been going put the estimate out by however
 long the export sat paused.
 
+### Phase 4f — The pairing is remembered · **XS** — ✅ *done 2026-08-25*
+
+Stepping back to the Destination screen showed an empty form asking for a pairing code — one
+that is minted on the *other* site and lives fifteen minutes. Backtracking through the stepper
+is a thing the stepper exists to allow, so the screen was charging the user a trip to another
+server for our own forgetfulness. A reload on the Compatibility screen was worse: it redirected
+to pairing, because the result lived only in React state.
+
+`Core/Preflight/Destination.php` stores what the destination reported. Coming back to the
+Destination screen now shows *who* we are paired with, when we read them, and their WordPress
+and PHP versions, with **Continue** and **Pair with a different destination**; the Compatibility
+screen rebuilds itself from the same record instead of bouncing.
+
+**The facts are stored, never the verdict.** A comparison is a statement about two sites and one
+of them is this one, which the user has quite possibly just changed in order to fix whatever was
+blocking. It is recomputed against a freshly gathered local profile every time it is asked for.
+This is the same reasoning that kept the old code from persisting the result at all — the
+mistake there was throwing away the *inputs* along with the answer.
+
+**The code is deliberately not stored.** It is a credential for reading another site and its
+whole life is fifteen minutes, so keeping it buys almost nothing. While it is still in memory,
+re-checking re-reads the destination live; once it is not — a reload, or a step away and back —
+re-checking re-tests *this* site against the reading already taken, which is what somebody
+fixing a local gate actually wants. The line under the heading says which of the two is
+happening rather than implying the stronger one, and an expired code falls back to the stored
+reading instead of reporting a wrong code when the only thing that changed is the clock.
+
+**Finding 3.17 — pairing could not reach a destination with plain permalinks.** Found while
+testing the above, and it made pairing fail outright rather than degrade. `fetch_profile()` built
+`{url}/wp-json/…` by hand. A site with pretty permalinks serves both REST forms; a site without
+them serves only `?rest_route=` and answers `/wp-json/…` with a redirect to its home page, which
+arrives as HTML and was reported as *"The destination answered, but not with a profile. Is the
+plugin installed?"* — a message pointing at the wrong problem entirely. Plain permalinks are the
+default on a fresh WordPress and common on exactly the hosts this plugin exists for, so this was
+the *destination* half of finding 3.16, unnoticed because the local half was fixed from the
+browser's side. The query form is tried first because it works in both cases, with the path form
+as a fallback; an answer that arrives as JSON is treated as the destination's real answer, so a
+wrong code still costs one request rather than two.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

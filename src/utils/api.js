@@ -169,6 +169,17 @@ export const api = {
 			data: body,
 		} ),
 
+	// The destination this site is already paired with. Read back rather than re-asked: the
+	// pairing code expires in fifteen minutes and lives on the other site.
+	destination: {
+		get: () => call( { path: `${ BASE }/preflight/destination` } ),
+		forget: () =>
+			call( {
+				path: `${ BASE }/preflight/destination`,
+				method: 'DELETE',
+			} ),
+	},
+
 	pairing: {
 		issue: () => call( { path: `${ BASE }/pairing/code`, method: 'POST' } ),
 		revoke: () =>

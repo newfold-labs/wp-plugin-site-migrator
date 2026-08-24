@@ -118,6 +118,18 @@ run is not a check that passed. There are three checkpoints: at pairing, before 
 again on the destination immediately before the first write, against live facts rather than
 whatever the handshake saw days earlier.
 
+`Pairing::fetch_profile()` reaches the destination through **`?rest_route=` first**, `/wp-json/`
+only as a fallback: a site on plain permalinks serves only the query form and answers the path
+form with a redirect to its home page, which arrives as HTML and reads as "the plugin is not
+installed there" (finding 3.17). Same hazard as the import UI's `restEndpoint()`, on the outbound
+side. An answer that arrives as JSON is the REST API's own, so it is final and no second URL is
+tried.
+
+`Destination` remembers who this source paired with, so backtracking does not demand a new code
+from the other site. It stores the destination's **facts, never the verdict** — the comparison is
+recomputed on every read, because half of it is this site and this site changes. The code itself
+is deliberately not stored.
+
 **Package** (`Core/Package/`): `PackageWriter` owns the directory layout and nothing else should
 build paths inside a package by hand. `Manifest` is written last, so its presence is what makes a
 package complete. `PackageReader::verify()` checks sizes and SHA-256 against it. `Checkpoint` is

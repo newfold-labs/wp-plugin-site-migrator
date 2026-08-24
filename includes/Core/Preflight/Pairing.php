@@ -149,8 +149,62 @@ class Pairing {
 			return array( 'error' => 'Give me the destination\'s address.' );
 		}
 
-		$endpoint = \trailingslashit( $url ) . 'wp-json/nfd-site-migrator/v1/pairing/profile';
+		$last = array( 'error' => 'The destination did not answer with a profile.' );
 
+		foreach ( self::endpoints( $url ) as $endpoint ) {
+			$attempt = self::ask( $endpoint, $code );
+
+			if ( isset( $attempt['profile'] ) || ! empty( $attempt['final'] ) ) {
+				unset( $attempt['final'] );
+
+				return $attempt;
+			}
+
+			$last = $attempt;
+		}
+
+		unset( $last['final'] );
+
+		return $last;
+	}
+
+	/**
+	 * Where the destination's REST API might be, best guess first.
+	 *
+	 * A site with pretty permalinks serves both forms; a site without them serves only
+	 * `?rest_route=`, and answers `/wp-json/…` with a redirect to its home page — which arrives
+	 * as HTML and reads as "the plugin is not installed there". Plain permalinks are the default
+	 * on a fresh install and common on exactly the hosts this plugin exists for, so pairing
+	 * against them failed for a reason the message did not name (finding 3.17). The query form
+	 * works in both cases, so it goes first; the path form stays as a fallback for a host that
+	 * blocks the query form.
+	 *
+	 * @param string $url Destination site URL.
+	 *
+	 * @return array Absolute URLs.
+	 */
+	protected static function endpoints( $url ) {
+		$base = \trailingslashit( $url );
+
+		return array(
+			$base . '?rest_route=/nfd-site-migrator/v1/pairing/profile',
+			$base . 'wp-json/nfd-site-migrator/v1/pairing/profile',
+		);
+	}
+
+	/**
+	 * Ask one endpoint for the profile.
+	 *
+	 * An answer in JSON came from the REST API, so it is the destination's real answer and no
+	 * other URL will do better — those are marked `final`. Anything else means we probably
+	 * knocked on the wrong door.
+	 *
+	 * @param string $endpoint Absolute URL.
+	 * @param string $code     Pairing code.
+	 *
+	 * @return array `profile` on success, or `error` plus `final`.
+	 */
+	protected static function ask( $endpoint, $code ) {
 		$response = \wp_remote_get(
 			$endpoint,
 			array(
@@ -169,29 +223,36 @@ class Pairing {
 			return array(
 				'error'       => 'Could not reach the destination: ' . $response->get_error_message(),
 				'unreachable' => true,
+				'final'       => true,
 			);
 		}
 
 		$status = (int) \wp_remote_retrieve_response_code( $response );
+		$json   = false !== \strpos( (string) \wp_remote_retrieve_header( $response, 'content-type' ), 'json' );
 
 		if ( 404 === $status ) {
 			return array(
 				'error' => 'The destination did not accept that code. Check it is correct and has not expired, then generate a new one.',
+				'final' => $json,
 			);
 		}
 
 		if ( 200 !== $status ) {
-			return array( 'error' => \sprintf( 'The destination answered with status %d.', $status ) );
+			return array(
+				'error' => \sprintf( 'The destination answered with status %d.', $status ),
+				'final' => $json,
+			);
 		}
 
 		$body = \json_decode( \wp_remote_retrieve_body( $response ), true );
 
 		if ( ! \is_array( $body ) || ! isset( $body['profile'] ) ) {
-			return array( 'error' => 'The destination answered, but not with a profile. Is the plugin installed and up to date there?' );
+			return array(
+				'error' => 'The destination answered, but not with a profile. Is the plugin installed and up to date there?',
+				'final' => false,
+			);
 		}
 
-		$profile = new SiteProfile( $body['profile'] );
-
-		return array( 'profile' => $profile );
+		return array( 'profile' => new SiteProfile( $body['profile'] ) );
 	}
 }

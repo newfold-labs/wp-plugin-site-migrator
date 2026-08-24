@@ -9,6 +9,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Rest;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Checker;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Destination;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
 
@@ -51,6 +52,76 @@ class PreflightController extends Controller {
 				),
 			)
 		);
+
+		\register_rest_route(
+			$this->namespace,
+			'/preflight/destination',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_destination' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+				array(
+					'methods'             => \WP_REST_Server::DELETABLE,
+					'callback'            => array( $this, 'forget_destination' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * The destination this site is already paired with, compared afresh.
+	 *
+	 * The comparison is recomputed rather than stored: it is a statement about two sites, and
+	 * one of them is this one, which the user may well have just changed in order to fix
+	 * whatever was blocking.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function get_destination() {
+		$saved = Destination::load();
+
+		if ( null === $saved ) {
+			return \rest_ensure_response( array( 'saved' => false ) );
+		}
+
+		$profile = new SiteProfile( $saved['profile'] );
+
+		if ( $profile->is_stale() ) {
+			return \rest_ensure_response(
+				array(
+					'saved' => false,
+					'stale' => true,
+					'url'   => $saved['url'],
+				)
+			);
+		}
+
+		$response = $this->comparison( $profile, $saved['via'] );
+
+		return \rest_ensure_response(
+			\array_merge(
+				$response,
+				array(
+					'saved'      => true,
+					'url'        => $saved['url'],
+					'fetched_at' => (int) $saved['fetched_at'],
+				)
+			)
+		);
+	}
+
+	/**
+	 * Forget the paired destination, so the next pairing starts clean.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function forget_destination() {
+		Destination::forget();
+
+		return \rest_ensure_response( array( 'saved' => false ) );
 	}
 
 	/**
@@ -130,23 +201,37 @@ class PreflightController extends Controller {
 	 * @return \WP_REST_Response
 	 */
 	protected function respond( SiteProfile $destination, $via ) {
+		// Remembered on the way past, so stepping back to this screen does not cost the user
+		// another trip to the other site for a code that only lives fifteen minutes.
+		Destination::save( $destination, $destination->get( 'site_url', '' ), $via );
+
+		return \rest_ensure_response( $this->comparison( $destination, $via ) );
+	}
+
+	/**
+	 * Compare this site against a destination profile.
+	 *
+	 * @param SiteProfile $destination Destination profile.
+	 * @param string      $via         How the profile was obtained.
+	 *
+	 * @return array
+	 */
+	protected function comparison( SiteProfile $destination, $via ) {
 		$source     = SiteProfile::gather( true );
 		$comparison = new Compatibility( $source, $destination );
 		$report     = $comparison->check();
 
-		return \rest_ensure_response(
-			array(
-				'ok'          => true,
-				'via'         => $via,
-				'destination' => array(
-					'site_url'   => $destination->get( 'site_url', '' ),
-					'wp_version' => $destination->get( 'wp.version', '' ),
-					'php'        => $destination->get( 'php.version', '' ),
-					'free_bytes' => $destination->get( 'host.free_bytes', null ),
-					'minted_at'  => $destination->get( 'minted_at', 0 ),
-				),
-				'report'      => $report->to_array(),
-			)
+		return array(
+			'ok'          => true,
+			'via'         => $via,
+			'destination' => array(
+				'site_url'   => $destination->get( 'site_url', '' ),
+				'wp_version' => $destination->get( 'wp.version', '' ),
+				'php'        => $destination->get( 'php.version', '' ),
+				'free_bytes' => $destination->get( 'host.free_bytes', null ),
+				'minted_at'  => $destination->get( 'minted_at', 0 ),
+			),
+			'report'      => $report->to_array(),
 		);
 	}
 }
