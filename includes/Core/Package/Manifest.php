@@ -218,6 +218,25 @@ class Manifest {
 	}
 
 	/**
+	 * Record the symlinks the walk refused to package.
+	 *
+	 * Reported rather than silently dropped: a host that symlinks an uploads directory onto a
+	 * shared volume would otherwise produce a package that is quietly missing it, and the
+	 * absence would only show up on the destination as broken images.
+	 *
+	 * @param array $links Sample of paths.
+	 * @param int   $total How many there were in all.
+	 *
+	 * @return void
+	 */
+	public function set_skipped_links( array $links, $total ) {
+		$this->data['skipped_links'] = array(
+			'total' => (int) $total,
+			'paths' => $links,
+		);
+	}
+
+	/**
 	 * Record one loosely stored large file.
 	 *
 	 * @param array $file File descriptor.

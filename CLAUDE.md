@@ -126,6 +126,15 @@ six near-identical archivers: everything that differed between them is data on a
 `ConfigScanner` reads the source's `wp-config.php` with `token_get_all()` — read-only, never
 `include`, never a regex.
 
+**Symlinks are never packaged**, and are recorded in the manifest's `skipped_links` rather than
+dropped silently. Following one copies content from outside the site into the package.
+
+**Pause abandons the in-flight request rather than waiting for it.** A step cannot be interrupted
+once it is inside `ZipArchive::close()`, so waiting was the two minutes that made the button look
+broken. The step still completes and writes its checkpoint — safe, because the checkpoint only
+advances after a successful close — and `Exporter`'s run lock stops a quick Resume starting a
+second step on the same archive. Do not "fix" this by making Pause wait.
+
 **Packaging is bound by the first read of each file, not by zip or compression.** Measured: 8,000
 small files cost 185s cold and 2.0s warm, about 23ms each. So the per-file path is kept as thin as
 possible — the walk takes the size from the iterator's own stat rather than calling `filesize()`,

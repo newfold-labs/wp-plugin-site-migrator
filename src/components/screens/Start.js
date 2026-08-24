@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Gates } from '../Gate';
 import { api } from '../../utils/api';
+import { SOURCE_STEPS } from '../../steps';
 
 /**
  * Choose a direction, and see whether this site can export at all.
@@ -42,6 +43,8 @@ export const Start = () => {
 
 	return (
 		<Layout
+			steps={ SOURCE_STEPS }
+			step="start"
 			eyebrow={ profile?.site_url || '' }
 			title={ __(
 				'Move this site, or bring one here',

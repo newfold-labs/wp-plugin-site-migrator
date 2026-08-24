@@ -9,6 +9,7 @@ import {
 	readText,
 	uploadPackage,
 } from '../../../utils/upload';
+import { DESTINATION_STEPS } from '../../../steps';
 
 const size = ( bytes ) => {
 	if ( bytes >= 1073741824 ) {
@@ -187,6 +188,8 @@ export const Choose = () => {
 
 	return (
 		<Layout
+			steps={ DESTINATION_STEPS }
+			step="choose"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Bring in a package', 'nfd-site-migrator' ) }
 			intro={ __(

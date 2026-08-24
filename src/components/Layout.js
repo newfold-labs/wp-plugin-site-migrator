@@ -1,4 +1,5 @@
 import { __ } from '@wordpress/i18n';
+import { Steps } from './Steps';
 
 /**
  * Frame shared by every screen.
@@ -8,12 +9,15 @@ import { __ } from '@wordpress/i18n';
  * making them infer it from a progress bar.
  *
  * @param {Object}  props
- * @param {string}  props.eyebrow    Small label above the heading.
- * @param {string}  props.title      Screen heading.
- * @param {string}  props.intro      Sentence under the heading.
- * @param {string}  props.safety     'safe' or 'committed'.
- * @param {string}  props.safetyText Override for the safety line.
- * @param {Element} props.children   Screen body.
+ * @param {string}  props.eyebrow     Small label above the heading.
+ * @param {string}  props.title       Screen heading.
+ * @param {string}  props.intro       Sentence under the heading.
+ * @param {string}  props.safety      'safe' or 'committed'.
+ * @param {string}  props.safetyText  Override for the safety line.
+ * @param {Array}   props.steps       Journey definition, when this screen is part of one.
+ * @param {string}  props.step        Id of this screen's step.
+ * @param {boolean} props.stepsLocked Whether the journey has passed its point of no return.
+ * @param {Element} props.children    Screen body.
  * @return {Element} The framed screen.
  */
 export const Layout = ( {
@@ -22,6 +26,9 @@ export const Layout = ( {
 	intro,
 	safety = 'safe',
 	safetyText = '',
+	steps = null,
+	step = '',
+	stepsLocked = false,
 	children,
 } ) => (
 	<div className="nfd-sm-shell">
@@ -47,6 +54,10 @@ export const Layout = ( {
 				</span>
 			) }
 		</div>
+
+		{ steps && (
+			<Steps steps={ steps } current={ step } locked={ stepsLocked } />
+		) }
 
 		<div className="nfd-sm-head">
 			{ eyebrow && <p className="nfd-sm-eyebrow">{ eyebrow }</p> }

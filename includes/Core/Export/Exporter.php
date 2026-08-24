@@ -32,6 +32,14 @@ class Exporter {
 	const LOOSE_THRESHOLD = 67108864;
 
 	/**
+	 * How long a run lock is trusted before it is treated as abandoned.
+	 *
+	 * Longer than any single step should take, short enough that a killed request does not
+	 * block the next one for long.
+	 */
+	const LOCK_SECONDS = 120;
+
+	/**
 	 * Default volume limit, 128MB.
 	 *
 	 * This is the unit of writing, not just of splitting. Each volume is opened, filled and
@@ -142,6 +150,15 @@ class Exporter {
 		$deadline = $budget > 0 ? \microtime( true ) + (float) $budget : 0;
 
 		$this->package->prepare();
+
+		// Pausing in the browser abandons the request rather than waiting for it, because a
+		// step cannot be interrupted once it is inside a zip close. The step it abandoned is
+		// still running, and pressing Resume a second later would start a second one on the
+		// same archive. The lock is what makes abandoning safe.
+		if ( ! $this->claim() ) {
+			return $this->report( $this->checkpoint->load(), false, 'busy' );
+		}
+
 		$state = $this->checkpoint->load();
 
 		if ( Checkpoint::STAGE_DATABASE === $state['stage'] ) {
@@ -151,12 +168,66 @@ class Exporter {
 		}
 
 		if ( Checkpoint::STAGE_FINALIZE === $state['stage'] ) {
-			return $this->finalize( $state );
+			$report = $this->finalize( $state );
+
+			$this->release();
+
+			return $report;
 		}
 
 		$this->checkpoint->save( $state );
+		$this->release();
 
 		return $this->report( $state, false );
+	}
+
+	/**
+	 * Take the run lock, if nothing else holds it.
+	 *
+	 * A stale lock is one whose holder is no longer running — a request killed by the host, or a
+	 * browser tab that went away mid-step. It is taken over rather than waited on, because
+	 * nothing would ever release it.
+	 *
+	 * @return bool
+	 */
+	protected function claim() {
+		$path = $this->lock_path();
+		$now  = \time();
+
+		if ( \is_readable( $path ) ) {
+			$held = (int) \file_get_contents( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+			if ( $held > 0 && ( $now - $held ) < self::LOCK_SECONDS ) {
+				return false;
+			}
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions
+		\file_put_contents( $path, (string) $now, LOCK_EX );
+
+		return true;
+	}
+
+	/**
+	 * Give the run lock back.
+	 *
+	 * @return void
+	 */
+	protected function release() {
+		$path = $this->lock_path();
+
+		if ( \file_exists( $path ) ) {
+			\unlink( $path );
+		}
+	}
+
+	/**
+	 * Where the run lock lives.
+	 *
+	 * @return string
+	 */
+	protected function lock_path() {
+		return $this->package->path( 'export.lock' );
 	}
 
 	/**
@@ -222,6 +293,10 @@ class Exporter {
 					'files' => (int) $totals['files'],
 					'bytes' => (int) $totals['bytes'],
 				);
+
+				foreach ( (array) $totals['links'] as $link ) {
+					$state['skipped_links'][] = $link;
+				}
 			}
 
 			$complete = $collector->step( $spec, $state, $deadline );
@@ -301,6 +376,13 @@ class Exporter {
 			);
 		}
 
+		// Named, and capped, so a site that symlinks a thousand things does not turn the
+		// manifest into a list of them. The count is what matters; the names help the few
+		// people who need to act on it.
+		$links = (array) $state['skipped_links'];
+
+		$manifest->set_skipped_links( \array_slice( $links, 0, 50 ), \count( $links ) );
+
 		$this->package->finalize( $manifest );
 		$this->progress->finish( Checkpoint::STAGE_FINALIZE );
 
@@ -312,12 +394,13 @@ class Exporter {
 	/**
 	 * Shape the state for a caller.
 	 *
-	 * @param array $state Run state.
-	 * @param bool  $done  Whether the export finished.
+	 * @param array  $state  Run state.
+	 * @param bool   $done   Whether the export finished.
+	 * @param string $status Non-empty when the step did nothing, and why.
 	 *
 	 * @return array
 	 */
-	protected function report( array $state, $done ) {
+	protected function report( array $state, $done, $status = '' ) {
 		$part = isset( $this->specs[ $state['part_index'] ] ) ? $this->specs[ $state['part_index'] ]->name() : '';
 		$plan = isset( $state['plan'] ) ? (array) $state['plan'] : array();
 
@@ -335,6 +418,7 @@ class Exporter {
 
 		return array(
 			'done'          => (bool) $done,
+			'status'        => $status,
 			'stage'         => $state['stage'],
 			'part'          => $part,
 			'part_index'    => (int) $state['part_index'],
@@ -343,6 +427,7 @@ class Exporter {
 			'bytes'         => (int) $state['bytes_done'],
 			'planned_files' => $planned_files,
 			'planned_bytes' => $planned_bytes,
+			'skipped_links' => \count( (array) ( isset( $state['skipped_links'] ) ? $state['skipped_links'] : array() ) ),
 			'manifest'      => $done ? $this->package->path( Manifest::NAME ) : '',
 		);
 	}

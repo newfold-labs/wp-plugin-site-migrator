@@ -3,6 +3,7 @@ import { useEffect, useState } from '@wordpress/element';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '../../Layout';
 import { api, importToken } from '../../../utils/api';
+import { DESTINATION_STEPS } from '../../../steps';
 
 const size = ( bytes ) => {
 	if ( bytes >= 1073741824 ) {
@@ -63,6 +64,8 @@ export const Review = () => {
 	if ( error ) {
 		return (
 			<Layout
+				steps={ DESTINATION_STEPS }
+				step="review"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __(
 					'This package cannot be used',
@@ -86,6 +89,8 @@ export const Review = () => {
 	if ( ! preview ) {
 		return (
 			<Layout
+				steps={ DESTINATION_STEPS }
+				step="review"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __( 'Checking the package…', 'nfd-site-migrator' ) }
 			/>
@@ -99,6 +104,8 @@ export const Review = () => {
 
 	return (
 		<Layout
+			steps={ DESTINATION_STEPS }
+			step="review"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Check this before you commit', 'nfd-site-migrator' ) }
 			intro={ sprintf(

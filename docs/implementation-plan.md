@@ -1485,6 +1485,54 @@ not bound memory, because `ZipArchive` holds a record per pending entry until cl
 plugin writing a hundred thousand 1KB files into uploads would exhaust the memory limit long
 before reaching 128MB.
 
+### Phase 4d — Symlinks, pause, and knowing where you are · **S** — ✅ *done 2026-08-24*
+
+Three things found by using it on a real site.
+
+**Symlinks were followed, not skipped.** A symlinked *file* was read through and its contents
+stored, which turns a link into a real file on the destination and — when it points outside the
+site, at a shared plugin directory or another account on the same host — copies content that is
+not this site's into the package. A symlinked *directory* was never descended into, which was
+correct, but it happened silently: a host that symlinks an uploads year onto a shared volume
+produced a package quietly missing it, and the absence only showed up later as broken images.
+Both are now refused deliberately and **recorded** — `manifest.json` carries a `skipped_links`
+list, because dropping data without saying so is the worse failure. Deliberate exclusions are
+settled first, so the plugin's own directory is not reported as a surprise.
+
+**Pause took two minutes.** The loop can only stop between steps, and a step cannot be
+interrupted once it is inside a zip close: `addFile()` defers everything, so all the reading and
+writing happens in `close()`, and on slow storage one close is minutes of work.
+
+The first attempt was to bound the close by sizing volumes from observed throughput. That was
+wrong twice over. The floor was 4MB, which on storage costing 40ms per small file is thirteen
+seconds — the clamp defeated the adaptation it was protecting; and shrinking volumes far enough
+to make Pause feel instant would fragment a large site into *thousands* of files.
+
+So Pause **abandons the request** instead. The step finishes server-side and writes its
+checkpoint regardless — safe, because the checkpoint only advances after a successful close — and
+the UI stops immediately. Measured at **106ms**, against two minutes. A run lock makes that safe:
+pressing Resume a second later would otherwise start a second step on the same archive, and it
+now waits for the abandoned one instead. Stale locks are taken over rather than waited on.
+
+Bounding the close is still worth doing, for a different reason: a host with a 30-second
+`max_execution_time` handed a close that takes 60 seconds kills it every time, and since the
+checkpoint does not advance, that volume is retried forever. Volume size now tracks observed
+**files per second** rather than bytes — the cost is per file, not per byte, which is why a byte
+budget alone let a directory of thumbnails build a volume that took minutes — and targets a
+little over half the step's budget.
+
+**A stepper, and going back.** Each screen hard-coded its position as text ("Step 4 · Source"),
+which cannot be navigated and drifts the moment a screen is added. `src/steps.js` now names both
+journeys once, and every screen renders its position.
+
+On whether the user can go back: **yes, up to the point of no return, and not after.** Everything
+before the import confirmation is a decision that can be revisited — re-pairing, re-checking
+compatibility, re-choosing a package are all re-runnable, and a migration is exactly the
+situation where somebody wants to check what they answered. Past the swap the list still shows
+where you are but stops being navigable, because there is no "back" from a replaced database;
+there is rollback, which is an action with consequences and belongs on its own screen rather than
+in a breadcrumb. One irreversible step behind you locks the whole list, not just that step.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

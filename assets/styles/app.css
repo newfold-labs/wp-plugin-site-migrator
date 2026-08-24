@@ -183,4 +183,38 @@
     .nfd-sm-btn--danger {
         @apply bg-red-700 border-red-700 text-white hover:bg-red-800 hover:border-red-800
     }
+
+    /* The journey.
+       Completed steps are buttons, not decoration: up to the point of no return every one of
+       them is a decision that can be revisited, and this is where somebody goes to check what
+       they answered. */
+    .nfd-sm-journey {
+        @apply flex flex-wrap items-center gap-1 list-none m-0 p-0 mb-6 text-[13px]
+    }
+    .nfd-sm-journey-step { @apply flex items-center m-0 }
+    .nfd-sm-journey-step + .nfd-sm-journey-step::before {
+        @apply content-[''] block w-6 h-px bg-slate-300 mx-1
+    }
+    .nfd-sm-journey-link {
+        @apply flex items-center gap-2 rounded-full border border-transparent px-2.5 py-1
+        text-slate-500 bg-transparent
+    }
+    .nfd-sm-journey-num {
+        @apply flex items-center justify-center h-5 w-5 shrink-0 rounded-full
+        border border-slate-300 text-[11px] font-semibold leading-none
+    }
+    .nfd-sm-journey-step.is-done .nfd-sm-journey-link {
+        @apply text-slate-700 cursor-pointer hover:bg-slate-100 hover:border-slate-200
+    }
+    button.nfd-sm-journey-link { @apply cursor-pointer }
+    .nfd-sm-journey-step.is-done .nfd-sm-journey-num {
+        @apply bg-emerald-500 border-emerald-500 text-white
+    }
+    .nfd-sm-journey-step.is-current .nfd-sm-journey-link {
+        @apply text-slate-900 font-semibold bg-white border-slate-200
+    }
+    .nfd-sm-journey-step.is-current .nfd-sm-journey-num {
+        @apply bg-blue-600 border-blue-600 text-white
+    }
+    .nfd-sm-journey-step.is-todo .nfd-sm-journey-link { @apply text-slate-400 }
 }

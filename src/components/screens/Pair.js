@@ -3,6 +3,7 @@ import { useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { api } from '../../utils/api';
+import { SOURCE_STEPS } from '../../steps';
 
 /**
  * Pair with the destination, or fall back to a pasted profile.
@@ -50,7 +51,9 @@ export const Pair = ( { onResult } ) => {
 
 	return (
 		<Layout
-			eyebrow={ __( 'Step 2 · Source', 'nfd-site-migrator' ) }
+			steps={ SOURCE_STEPS }
+			step="pair"
+			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Pair with the destination', 'nfd-site-migrator' ) }
 			intro={ __(
 				'Open Site Migrator on the destination and choose Receive a site. It will show you an address and a pairing code. Paste both here and this site will read the destination’s setup directly.',

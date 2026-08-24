@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { Layout } from '../Layout';
 import { api } from '../../utils/api';
+import { SOURCE_STEPS } from '../../steps';
 
 const mb = ( bytes ) => `${ ( bytes / 1048576 ).toFixed( 1 ) } MB`;
 
@@ -70,7 +71,9 @@ export const Download = () => {
 
 	return (
 		<Layout
-			eyebrow={ __( 'Step 5 · Source', 'nfd-site-migrator' ) }
+			steps={ SOURCE_STEPS }
+			step="download"
+			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Package ready', 'nfd-site-migrator' ) }
 			intro={ __(
 				'Download these to your computer, then upload them on the destination. Downloads resume if interrupted, and you can do them one at a time.',

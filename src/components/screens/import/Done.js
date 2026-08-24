@@ -3,6 +3,7 @@ import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
 import { api, updateNonce } from '../../../utils/api';
+import { DESTINATION_STEPS } from '../../../steps';
 
 /**
  * What happened, and the two things still to decide.
@@ -76,6 +77,8 @@ export const Done = () => {
 	if ( 'rolled-back' === outcome ) {
 		return (
 			<Layout
+				steps={ DESTINATION_STEPS }
+				step="done"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __( 'Put back', 'nfd-site-migrator' ) }
 				safety="safe"
@@ -103,6 +106,8 @@ export const Done = () => {
 
 	return (
 		<Layout
+			steps={ DESTINATION_STEPS }
+			step="done"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Migration complete', 'nfd-site-migrator' ) }
 			safety="committed"

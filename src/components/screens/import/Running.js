@@ -3,6 +3,7 @@ import { useEffect, useRef } from '@wordpress/element';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '../../Layout';
 import { STAGES, useImport } from '../../../utils/useImport';
+import { DESTINATION_STEPS } from '../../../steps';
 
 /**
  * The import in progress.
@@ -54,6 +55,8 @@ export const Running = () => {
 
 	return (
 		<Layout
+			steps={ DESTINATION_STEPS }
+			step="run"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Importing', 'nfd-site-migrator' ) }
 			safety={ swapped ? 'committed' : 'safe' }

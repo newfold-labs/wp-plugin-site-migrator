@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Gates } from '../Gate';
 import { api } from '../../utils/api';
+import { SOURCE_STEPS } from '../../steps';
 
 /**
  * The verdict, with a re-check that does not require leaving the page.
@@ -41,7 +42,9 @@ export const Compatibility = ( { result, onResult, request } ) => {
 
 	return (
 		<Layout
-			eyebrow={ __( 'Step 3 · Source', 'nfd-site-migrator' ) }
+			steps={ SOURCE_STEPS }
+			step="compatibility"
+			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Compatibility', 'nfd-site-migrator' ) }
 			intro={
 				'paired' === result.via

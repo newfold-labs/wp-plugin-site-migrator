@@ -33,6 +33,29 @@ class FileCollector {
 	const BATCH = 256;
 
 	/**
+	 * Smallest volume worth writing, in bytes and in entries.
+	 *
+	 * A step's budget governs the loop that *adds* files, but adding is nearly free —
+	 * `ZipArchive` only records what it has been given and does the reading and writing in
+	 * `close()`. The close is therefore the part that can overrun a request, and the only way to
+	 * bound it is to bound how much has been added since the last one.
+	 *
+	 * This is not about making Pause responsive — Pause abandons the request instead, because
+	 * shrinking volumes far enough to stop quickly would fragment a large site into thousands of
+	 * files. It is about a step being *able to finish at all*: a host with a 30-second
+	 * `max_execution_time` that is handed a close taking 60 seconds kills it every time, and
+	 * since the checkpoint only advances after a successful close, that volume is retried
+	 * forever. Sizing by observed throughput is what stops an export from being unable to
+	 * progress on slow storage.
+	 *
+	 * The floors are deliberately low. An earlier attempt floored volumes at 4MB, which on
+	 * storage costing 40ms per small file is thirteen seconds of work — the clamp defeated the
+	 * adaptation it was supposed to protect.
+	 */
+	const MIN_VOLUME  = 1048576;
+	const MIN_ENTRIES = 100;
+
+	/**
 	 * Entries held in one volume before it is written out, whatever its size.
 	 *
 	 * The size cap alone is not enough. `ZipArchive` keeps a record per pending entry until
@@ -130,6 +153,20 @@ class FileCollector {
 	protected $pending = 0;
 
 	/**
+	 * Symlinks met during the walk, which are not packaged.
+	 *
+	 * @var array
+	 */
+	protected $links = array();
+
+	/**
+	 * How long a single volume close should aim to take.
+	 *
+	 * @var float
+	 */
+	protected $target_seconds = 3.0;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param PackageWriter $package         Package writer.
@@ -153,6 +190,8 @@ class FileCollector {
 	 * @return array Totals as `files` and `bytes`.
 	 */
 	public function prepare( PartSpec $spec ) {
+		$this->links = array();
+
 		$list_path = $this->package->list_path( $spec->name() );
 		$handle    = \fopen( $list_path, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
@@ -160,6 +199,7 @@ class FileCollector {
 			return array(
 				'files' => 0,
 				'bytes' => 0,
+				'links' => array(),
 			);
 		}
 
@@ -177,7 +217,17 @@ class FileCollector {
 		return array(
 			'files' => $files,
 			'bytes' => $bytes,
+			'links' => $this->links,
 		);
+	}
+
+	/**
+	 * Symlinks the walk refused, so the export can say what it did not take.
+	 *
+	 * @return array
+	 */
+	public function links() {
+		return $this->links;
 	}
 
 	/**
@@ -218,6 +268,12 @@ class FileCollector {
 		foreach ( $spec->allowlist() as $name ) {
 			$path = $spec->root() . DIRECTORY_SEPARATOR . $name;
 
+			if ( \is_link( $path ) ) {
+				$this->links[] = '' === $spec->prefix() ? $name : $spec->prefix() . '/' . $name;
+
+				continue;
+			}
+
 			if ( \is_file( $path ) && \is_readable( $path ) ) {
 				$entries[] = $this->entry( $path, $name, $spec );
 			}
@@ -248,6 +304,12 @@ class FileCollector {
 
 			$path = $spec->root() . DIRECTORY_SEPARATOR . $name;
 
+			if ( \is_link( $path ) ) {
+				$this->links[] = '' === $spec->prefix() ? $name : $spec->prefix() . '/' . $name;
+
+				continue;
+			}
+
 			if ( \is_file( $path ) && \is_readable( $path ) ) {
 				$entries[] = $this->entry( $path, $name, $spec );
 			}
@@ -271,20 +333,44 @@ class FileCollector {
 
 		$flags    = \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::UNIX_PATHS;
 		$dir_iter = new \RecursiveDirectoryIterator( $root, $flags );
+		$links    = array();
 
 		$filter = new \RecursiveCallbackFilterIterator(
 			$dir_iter,
-			function ( $current ) use ( $root, $excluded, $skip ) {
+			function ( $current ) use ( $root, $excluded, $skip, &$links ) {
 				$relative = \nfd_sm_relative_path( $root, $current->getPathname() );
 
+				// Deliberate exclusions are settled first, so that something this plugin
+				// always leaves out is not then also announced as a surprise.
 				if ( $current->isDir() ) {
 					// Returning false for a directory blocks descent into it, which is the
 					// intended behaviour here and was the accidental behaviour that made the
 					// old RootArchiver collect nothing but top-level files.
-					return ! \in_array( $relative, $excluded, true );
+					if ( \in_array( $relative, $excluded, true ) ) {
+						return false;
+					}
+				} elseif ( \in_array( $relative, $skip, true ) ) {
+					return false;
 				}
 
-				return ! \in_array( $relative, $skip, true );
+				// Symlinks are never packaged, in either direction.
+				//
+				// A symlinked file would be read through and its *contents* stored, which turns
+				// a link into a real file on the destination and, when it points outside the
+				// site — a shared plugin directory, someone else's home on the same host —
+				// copies content that is not this site's into the package.
+				//
+				// A symlinked directory is not descended into either. That has always been the
+				// behaviour, because RecursiveDirectoryIterator does not follow them, but it
+				// used to happen silently: a host that symlinks an uploads year onto a shared
+				// volume would simply lose it. Now it is refused on purpose and reported.
+				if ( $current->isLink() ) {
+					$links[] = $relative;
+
+					return false;
+				}
+
+				return true;
 			}
 		);
 
@@ -311,6 +397,10 @@ class FileCollector {
 				'relative' => '' === $prefix ? $relative : $prefix . '/' . $relative,
 				'size'     => (int) $file->getSize(),
 			);
+		}
+
+		foreach ( $links as $link ) {
+			$this->links[] = ( '' === $prefix ? $link : $prefix . '/' . $link );
 		}
 
 		return $entries;
@@ -347,6 +437,12 @@ class FileCollector {
 	 * @throws \RuntimeException If the part's file list cannot be read.
 	 */
 	public function step( PartSpec $spec, array &$state, $deadline ) {
+		// Aim to spend a little over half a step's budget inside any one close, so a step still
+		// finishes within a host's execution limit. With no budget — the CLI — there is no limit
+		// to respect and volumes can be as large as the configured cap allows.
+		$budget               = $deadline > 0 ? \max( 1.0, $deadline - \microtime( true ) ) : 30.0;
+		$this->target_seconds = \max( 2.0, \min( 15.0, $budget * 0.6 ) );
+
 		$list_path = $this->package->list_path( $spec->name() );
 		$handle    = \fopen( $list_path, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
@@ -386,7 +482,8 @@ class FileCollector {
 
 			// Full volumes are written out as we go, so the work is spread across the step
 			// rather than landing in one lump at the end of it.
-			if ( $state['volume_bytes'] >= $this->volume_limit || $this->pending >= self::VOLUME_ENTRIES ) {
+			if ( $state['volume_bytes'] >= $this->volume_target( $state )
+				|| $this->pending >= $this->entry_target( $state ) ) {
 				$this->close_volume( $spec, $state );
 				$committed = $pending;
 			}
@@ -597,9 +694,34 @@ class FileCollector {
 			return;
 		}
 
+		$written = (int) $state['volume_bytes'];
+		$entries = $this->pending;
+		$started = \microtime( true );
+
 		$this->zip->close();
+
+		$elapsed       = \microtime( true ) - $started;
 		$this->zip     = null;
 		$this->pending = 0;
+
+		// What this host actually manages, smoothed, so one unusually warm or cold volume does
+		// not set the size for the rest of the run.
+		if ( $elapsed > 0.05 ) {
+			if ( $written > 0 ) {
+				$previous      = isset( $state['rate'] ) ? (float) $state['rate'] : 0.0;
+				$observed      = $written / $elapsed;
+				$state['rate'] = $previous > 0 ? ( ( $previous + $observed ) / 2 ) : $observed;
+			}
+
+			if ( $entries > 0 ) {
+				$previous           = isset( $state['file_rate'] ) ? (float) $state['file_rate'] : 0.0;
+				$observed           = $entries / $elapsed;
+				$state['file_rate'] = $previous > 0 ? ( ( $previous + $observed ) / 2 ) : $observed;
+			}
+		}
+
+		$state['last_volume_bytes']   = $written;
+		$state['last_volume_entries'] = $entries;
 
 		// Checksum the volume now, while it is the thing that was just written and is still
 		// warm in the page cache. Doing every volume at the end instead put the whole cost of
@@ -615,6 +737,66 @@ class FileCollector {
 
 		++$state['volume'];
 		$state['volume_bytes'] = 0;
+	}
+
+	/**
+	 * How large the current volume should be allowed to get.
+	 *
+	 * Starts small, because nothing is known about the host yet, and grows towards the
+	 * configured limit as measurements come in — but never by more than a factor of four at a
+	 * time. A single jump to the maximum on the strength of one fast volume is how a host that
+	 * turns out to be slow ends up with a close that takes minutes, which is the failure this
+	 * is here to prevent.
+	 *
+	 * @param array $state Run state.
+	 *
+	 * @return int Bytes.
+	 */
+	protected function volume_target( array $state ) {
+		$rate = isset( $state['rate'] ) ? (float) $state['rate'] : 0.0;
+
+		if ( $rate <= 0 ) {
+			return \min( self::MIN_VOLUME, $this->volume_limit );
+		}
+
+		$target = (int) ( $rate * $this->target_seconds );
+		$last   = isset( $state['last_volume_bytes'] ) ? (int) $state['last_volume_bytes'] : 0;
+
+		// Never more than a fourfold jump. Going straight to the maximum on the strength of one
+		// fast volume is how a host that turns out to be slow gets a close it cannot finish.
+		if ( $last > 0 ) {
+			$target = \min( $target, $last * 4 );
+		}
+
+		return \max( \min( self::MIN_VOLUME, $this->volume_limit ), \min( $this->volume_limit, $target ) );
+	}
+
+	/**
+	 * How many entries the current volume should be allowed to hold.
+	 *
+	 * Measured in files rather than bytes because that is what the cost actually tracks: a small
+	 * file costs about as much to read as a large one on the storage where this matters, so a
+	 * byte budget alone lets a directory of thumbnails build a volume that takes minutes.
+	 *
+	 * @param array $state Run state.
+	 *
+	 * @return int
+	 */
+	protected function entry_target( array $state ) {
+		$rate = isset( $state['file_rate'] ) ? (float) $state['file_rate'] : 0.0;
+
+		if ( $rate <= 0 ) {
+			return self::MIN_ENTRIES;
+		}
+
+		$target = (int) ( $rate * $this->target_seconds );
+		$last   = isset( $state['last_volume_entries'] ) ? (int) $state['last_volume_entries'] : 0;
+
+		if ( $last > 0 ) {
+			$target = \min( $target, $last * 4 );
+		}
+
+		return \max( self::MIN_ENTRIES, \min( self::VOLUME_ENTRIES, $target ) );
 	}
 
 	/**
@@ -699,7 +881,7 @@ class FileCollector {
 			$state['large_offset'] = 0;
 
 			// Hashed here rather than at finalize, for the same reason volumes are.
-			$in_package                      = PackageWriter::LARGE_DIR . '/' . \ltrim( $relative, '/' );
+			$in_package                       = PackageWriter::LARGE_DIR . '/' . \ltrim( $relative, '/' );
 			$state['large_meta'][ $relative ] = array(
 				'bytes'  => $this->package->size( $in_package ),
 				'sha256' => $this->package->checksum( $in_package ),

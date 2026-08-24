@@ -3,6 +3,7 @@ import { useEffect } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { useExport } from '../../utils/useExport';
+import { SOURCE_STEPS } from '../../steps';
 
 const STAGE = {
 	database: __( 'Copying the database', 'nfd-site-migrator' ),
@@ -76,7 +77,9 @@ export const Exporting = () => {
 
 	return (
 		<Layout
-			eyebrow={ __( 'Step 4 · Source', 'nfd-site-migrator' ) }
+			steps={ SOURCE_STEPS }
+			step="export"
+			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Building the package', 'nfd-site-migrator' ) }
 			intro={ __(
 				'Your site stays online and unchanged throughout. This tab drives the work, so leave it open if you can — but closing it is safe, and reopening picks up where it stopped.',
@@ -166,6 +169,7 @@ export const Exporting = () => {
 					<button
 						type="button"
 						className="nfd-sm-btn"
+						id="nfd-sm-pause"
 						onClick={ pause }
 					>
 						{ __( 'Pause', 'nfd-site-migrator' ) }
