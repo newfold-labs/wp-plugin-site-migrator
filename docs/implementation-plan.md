@@ -1533,6 +1533,35 @@ where you are but stops being navigable, because there is no "back" from a repla
 there is rollback, which is an action with consequences and belongs on its own screen rather than
 in a breadcrumb. One irreversible step behind you locks the whole list, not just that step.
 
+### Phase 4e — A reloaded tab knows what it is joining · **XS** — ✅ *done 2026-08-25*
+
+Pause and reload, and the screen read `Getting ready · 0 files · 0.0 MB` for half a minute
+before the numbers reappeared. Two separate faults behind one symptom.
+
+**The screen had no way to know anything until it did some work.** `useExport` started at zero
+and learned the truth from the first step's response, so on a large site the first honest number
+was however long a step takes — thirty seconds, watching a page that looks like it lost the run.
+The checkpoint on disk knew all of it the whole time. `Exporter::snapshot()` reads it without
+advancing anything, `/export/state` returns it in the shape a step returns, and the screen
+hydrates from that before asking for more work: **one 33ms request, numbers on screen at mount**.
+
+**And a reload silently overruled the user.** The screen called `start()` unconditionally, so a
+run somebody had deliberately paused resumed itself on refresh. Reopening a closed tab *should*
+pick up where it stopped — that is the promise the screen makes — but a pause is an instruction,
+not a property of a browser tab, so it now outlives the tab. `/export/pause` records it and the
+mount only auto-starts when nothing said otherwise.
+
+The flag is **its own option, not a key inside `nfd_site_migrator`**. That one is read once per
+request and written back whole on shutdown, so the long export step — which is exactly the
+request in flight when somebody presses Pause — would persist a copy of the array it read
+minutes earlier and undo a pause it never saw. Same reason the export checkpoint is on disk:
+read-modify-write over a long request is a lost update waiting to happen. For the same reason
+`step()` does not touch the flag at all; the client clears it when the user actually resumes.
+
+Rate is now measured from a baseline taken when the run starts, not from zero. Counting bytes a
+previous run wrote against the seconds this one has been going put the estimate out by however
+long the export sat paused.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

@@ -104,6 +104,12 @@ flags are separate standalone options declared in `constants.php` and listed in
 `NFD_SM_OPTIONS_LIST`; `nfd_sm_purge_all()` deletes those plus the storage directory and the
 can-migrate transient on deactivation.
 
+**Anything a long request might race must not live inside that array.** It is read once and
+written back *whole* on shutdown, so a request that runs for minutes — an export step — persists
+a copy of the world as it was when the request started, silently undoing whatever landed in the
+meantime. The export's paused flag (`NFD_SM_PAUSED_OPTION`) is standalone for exactly that
+reason: it is set while a step is in flight. Same instinct as the on-disk checkpoint.
+
 **Preflight** (`Core/Preflight/`): `Checker` runs the local gates; `SiteProfile::gather()` collects
 a site's facts; `Pairing` lets the source fetch the destination's profile live over HTTP, using a
 single-use code the user pastes once; `Compatibility` compares two profiles and returns a `Report`.

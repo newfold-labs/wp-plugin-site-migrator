@@ -19,7 +19,9 @@ const STAGE = {
  */
 export const Exporting = () => {
 	const {
+		hydrated,
 		running,
+		paused,
 		done,
 		stage,
 		part,
@@ -30,15 +32,35 @@ export const Exporting = () => {
 		plannedFiles,
 		plannedBytes,
 		startedAt,
+		baseBytes,
 		error,
+		hydrate,
 		start,
 		pause,
 	} = useExport();
 	const navigate = useNavigate();
 
+	// Read the checkpoint before asking for more work, so the screen opens on the run it is
+	// joining. Reopening a tab picks up where it stopped — but a run somebody deliberately
+	// paused stays paused, because a reload is not a change of mind.
 	useEffect( () => {
-		start();
-	}, [ start ] );
+		let live = true;
+
+		hydrate().then( ( snapshot ) => {
+			if (
+				live &&
+				! snapshot.failed &&
+				! snapshot.paused &&
+				! snapshot.complete
+			) {
+				start();
+			}
+		} );
+
+		return () => {
+			live = false;
+		};
+	}, [ hydrate, start ] );
 
 	useEffect( () => {
 		if ( done ) {
@@ -47,6 +69,18 @@ export const Exporting = () => {
 	}, [ done, navigate ] );
 
 	const megabytes = ( bytes / 1048576 ).toFixed( 1 );
+
+	// Until the checkpoint has been read this screen knows nothing, and saying "Getting ready"
+	// would be a guess that is wrong for every export that is already half done.
+	const label = () => {
+		if ( ! hydrated ) {
+			return __( 'Picking up where you left off', 'nfd-site-migrator' );
+		}
+		if ( paused && ! running ) {
+			return __( 'Paused', 'nfd-site-migrator' );
+		}
+		return STAGE[ stage ] || __( 'Getting ready', 'nfd-site-migrator' );
+	};
 
 	// Progress is reported against what the walk has actually counted, so it is a real
 	// fraction of real work. Parts are walked as they are reached, so the denominator grows;
@@ -57,7 +91,8 @@ export const Exporting = () => {
 			: 0;
 
 	const elapsed = startedAt ? ( Date.now() - startedAt ) / 1000 : 0;
-	const rate = elapsed > 2 && bytes > 0 ? bytes / elapsed : 0;
+	const rate =
+		elapsed > 2 && bytes > baseBytes ? ( bytes - baseBytes ) / elapsed : 0;
 	const left =
 		rate > 0 && plannedBytes > bytes ? ( plannedBytes - bytes ) / rate : 0;
 
@@ -101,8 +136,7 @@ export const Exporting = () => {
 
 			<div className="nfd-sm-card" id="nfd-sm-export-progress">
 				<p className="nfd-sm-stage">
-					{ STAGE[ stage ] ||
-						__( 'Getting ready', 'nfd-site-migrator' ) }
+					{ label() }
 					{ part && (
 						<span className="nfd-sm-muted"> · { part }</span>
 					) }
@@ -175,10 +209,12 @@ export const Exporting = () => {
 						{ __( 'Pause', 'nfd-site-migrator' ) }
 					</button>
 				) : (
-					! error && (
+					! error &&
+					hydrated && (
 						<button
 							type="button"
 							className="nfd-sm-btn nfd-sm-btn--primary"
+							id="nfd-sm-resume"
 							onClick={ start }
 						>
 							{ __( 'Resume', 'nfd-site-migrator' ) }

@@ -26,11 +26,20 @@ if ( ! defined( 'NFD_SM_OPTION_NAME' ) ) {
 	define( 'NFD_SM_OPTION_NAME', 'nfd_site_migrator' );
 }
 
+// Deliberately its own option rather than a key inside NFD_SM_OPTION_NAME. That one is read
+// once per request and written back whole on shutdown, so a long export step — which is exactly
+// when somebody presses Pause — would persist a copy of the array it read minutes earlier and
+// undo the pause it never saw.
+if ( ! defined( 'NFD_SM_PAUSED_OPTION' ) ) {
+	define( 'NFD_SM_PAUSED_OPTION', 'nfd_site_migrator_paused' );
+}
+
 if ( ! defined( 'NFD_SM_OPTIONS_LIST' ) ) {
 	define(
 		'NFD_SM_OPTIONS_LIST',
 		array(
 			NFD_SM_OPTION_NAME,
+			NFD_SM_PAUSED_OPTION,
 		)
 	);
 }

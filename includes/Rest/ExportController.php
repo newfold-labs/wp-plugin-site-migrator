@@ -58,6 +58,24 @@ class ExportController extends Controller {
 
 		\register_rest_route(
 			$this->namespace,
+			'/export/pause',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'pause' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+					'args'                => array(
+						'paused' => array(
+							'type'    => 'boolean',
+							'default' => true,
+						),
+					),
+				),
+			)
+		);
+
+		\register_rest_route(
+			$this->namespace,
 			'/export/manifest',
 			array(
 				array(
@@ -141,12 +159,40 @@ class ExportController extends Controller {
 		$reader   = new PackageReader( $dir );
 
 		return \rest_ensure_response(
-			array(
-				'exists'      => \is_dir( $dir ),
-				'in_progress' => $exporter->is_resumable(),
-				'complete'    => $reader->is_complete(),
+			\array_merge(
+				$exporter->snapshot(),
+				array(
+					'exists'      => \is_dir( $dir ),
+					'in_progress' => $exporter->is_resumable(),
+					'complete'    => $reader->is_complete(),
+					'paused'      => (bool) \get_option( NFD_SM_PAUSED_OPTION, false ),
+				)
 			)
 		);
+	}
+
+	/**
+	 * Record that a human stopped the export, or started it again.
+	 *
+	 * Pausing is an instruction, not a state of the browser tab, so it outlives the tab. A
+	 * reloaded page that resumed on its own would be overruling the last thing the user
+	 * actually said, and on a site where each step is a minute of disk that is not a small
+	 * thing to get wrong.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function pause( $request ) {
+		$paused = (bool) $request->get_param( 'paused' );
+
+		if ( $paused ) {
+			\update_option( NFD_SM_PAUSED_OPTION, 1, false );
+		} else {
+			\delete_option( NFD_SM_PAUSED_OPTION );
+		}
+
+		return \rest_ensure_response( array( 'paused' => $paused ) );
 	}
 
 	/**
@@ -185,6 +231,7 @@ class ExportController extends Controller {
 	 */
 	public function cancel() {
 		\nfd_sm_delete_directory( $this->package_dir() );
+		\delete_option( NFD_SM_PAUSED_OPTION );
 
 		return \rest_ensure_response( array( 'cancelled' => true ) );
 	}

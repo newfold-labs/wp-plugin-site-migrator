@@ -8,11 +8,17 @@ import { api } from './api';
  * stale: the request that reports progress is the request that did the work, so the number on
  * screen cannot describe something that is not happening.
  *
+ * That leaves one thing a reloaded tab cannot know — what happened before it existed — which is
+ * what `hydrate` is for. Progress is read back from the checkpoint on mount, so the screen draws
+ * the run it is joining instead of a row of zeroes until the first step returns.
+ *
  * @return {Object} Export state and controls.
  */
 export function useExport() {
 	const [ state, setState ] = useState( {
+		hydrated: false,
 		running: false,
+		paused: false,
 		done: false,
 		stage: '',
 		part: '',
@@ -23,7 +29,7 @@ export function useExport() {
 		plannedFiles: 0,
 		plannedBytes: 0,
 		startedAt: 0,
-		pausing: false,
+		baseBytes: 0,
 		error: '',
 	} );
 
@@ -33,22 +39,66 @@ export function useExport() {
 	// Lets Pause abandon the request that is already in flight instead of waiting for it.
 	const inflight = useRef( null );
 
+	/**
+	 * Copy a server report into the state, whether it came from a step or from the checkpoint.
+	 *
+	 * @param {Object} report Server report.
+	 * @param {Object} s      Previous state.
+	 * @return {Object} Next state.
+	 */
+	const absorb = ( report, s ) => ( {
+		...s,
+		stage: report.stage || s.stage,
+		part: report.part || '',
+		files: report.files ?? s.files,
+		bytes: report.bytes ?? s.bytes,
+		partIndex: report.part_index ?? s.partIndex,
+		partCount: report.part_count ?? s.partCount,
+		plannedFiles: report.planned_files ?? s.plannedFiles,
+		plannedBytes: report.planned_bytes ?? s.plannedBytes,
+	} );
+
+	// What the export already did, before this tab asked it to do any more.
+	const hydrate = useCallback( async () => {
+		const snapshot = await api.exportState();
+
+		if ( snapshot.failed ) {
+			setState( ( s ) => ( { ...s, hydrated: true } ) );
+			return snapshot;
+		}
+
+		setState( ( s ) => ( {
+			...absorb( snapshot, s ),
+			hydrated: true,
+			paused: !! snapshot.paused,
+			done: !! snapshot.complete,
+		} ) );
+
+		return snapshot;
+	}, [] );
+
 	const loop = useCallback( async () => {
 		stop.current = false;
+
+		// Resuming is as much an instruction as pausing was, and the server is holding the
+		// answer for the next tab that asks.
+		api.exportPause( false );
+
 		setState( ( s ) => ( {
 			...s,
 			running: true,
-			pausing: false,
+			paused: false,
 			error: '',
+			// Rate is measured over this run only. Counting bytes a previous run wrote against
+			// the seconds this one has been going would put the estimate out by however long
+			// the export was paused for.
+			startedAt: Date.now(),
+			baseBytes: s.bytes,
 		} ) );
 
 		for (;;) {
 			if ( stop.current ) {
-				setState( ( s ) => ( {
-					...s,
-					running: false,
-					pausing: false,
-				} ) );
+				setState( ( s ) => ( { ...s, running: false } ) );
 				return;
 			}
 
@@ -62,11 +112,7 @@ export function useExport() {
 
 			// An aborted request is not a failure; it is what Pause does.
 			if ( stop.current ) {
-				setState( ( s ) => ( {
-					...s,
-					running: false,
-					pausing: false,
-				} ) );
+				setState( ( s ) => ( { ...s, running: false } ) );
 				return;
 			}
 
@@ -89,18 +135,9 @@ export function useExport() {
 			}
 
 			setState( ( s ) => ( {
-				...s,
+				...absorb( step, s ),
 				running: ! step.done,
 				done: !! step.done,
-				stage: step.stage || s.stage,
-				part: step.part || '',
-				files: step.files ?? s.files,
-				bytes: step.bytes ?? s.bytes,
-				partIndex: step.part_index ?? s.partIndex,
-				partCount: step.part_count ?? s.partCount,
-				plannedFiles: step.planned_files ?? s.plannedFiles,
-				plannedBytes: step.planned_bytes ?? s.plannedBytes,
-				startedAt: s.startedAt || Date.now(),
 			} ) );
 
 			if ( step.done ) {
@@ -109,10 +146,6 @@ export function useExport() {
 		}
 	}, [] );
 
-	// The loop can only stop between steps, and a step is already in flight when this is
-	// clicked. Saying so is the difference between a button that looks broken and one that is
-	// simply waiting — the server-side work is bounded to a few seconds precisely so that wait
-	// is short.
 	// Stops now, not at the end of the current step. A step cannot be interrupted once it is
 	// inside a zip close, and waiting for one on slow storage is the two minutes that made this
 	// button look broken. The request is abandoned instead: the server finishes it and writes
@@ -126,7 +159,11 @@ export function useExport() {
 			inflight.current = null;
 		}
 
-		setState( ( s ) => ( { ...s, running: false, pausing: false } ) );
+		// Recorded on the server, because a pause the user has to repeat after every reload is
+		// not a pause.
+		api.exportPause( true );
+
+		setState( ( s ) => ( { ...s, running: false, paused: true } ) );
 	}, [] );
 
 	// A closed tab must not leave a loop believing it is still in charge.
@@ -141,5 +178,5 @@ export function useExport() {
 		[]
 	);
 
-	return { ...state, start: loop, pause };
+	return { ...state, hydrate, start: loop, pause };
 }

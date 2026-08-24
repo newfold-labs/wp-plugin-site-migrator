@@ -179,6 +179,12 @@ export const api = {
 	exportState: () => call( { path: `${ BASE }/export/state` } ),
 	exportStep: ( signal ) =>
 		call( { path: `${ BASE }/export/step`, method: 'POST', signal } ),
+	exportPause: ( paused ) =>
+		call( {
+			path: `${ BASE }/export/pause`,
+			method: 'POST',
+			data: { paused },
+		} ),
 	exportManifest: () => call( { path: `${ BASE }/export/manifest` } ),
 	exportCancel: () =>
 		call( { path: `${ BASE }/export/cancel`, method: 'POST' } ),

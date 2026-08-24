@@ -125,6 +125,24 @@ class Exporter {
 	}
 
 	/**
+	 * What the export looks like right now, without advancing it.
+	 *
+	 * A reloaded tab has to be able to draw the progress it already made before it asks for
+	 * more of it. Without this the screen renders zeroes until the first step returns, which on
+	 * a large site is half a minute of a page that looks like it has lost the run.
+	 *
+	 * @return array The same shape a step returns, plus `running`.
+	 */
+	public function snapshot() {
+		$state = $this->checkpoint->load();
+
+		return \array_merge(
+			$this->report( $state, false ),
+			array( 'running' => $this->is_running() )
+		);
+	}
+
+	/**
 	 * Run the export to completion.
 	 *
 	 * @param float $budget Seconds per step, or 0 for no limit.
@@ -191,21 +209,36 @@ class Exporter {
 	 * @return bool
 	 */
 	protected function claim() {
-		$path = $this->lock_path();
-		$now  = \time();
-
-		if ( \is_readable( $path ) ) {
-			$held = (int) \file_get_contents( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-
-			if ( $held > 0 && ( $now - $held ) < self::LOCK_SECONDS ) {
-				return false;
-			}
+		if ( $this->is_running() ) {
+			return false;
 		}
 
 		// phpcs:ignore WordPress.WP.AlternativeFunctions
-		\file_put_contents( $path, (string) $now, LOCK_EX );
+		\file_put_contents( $this->lock_path(), (string) \time(), LOCK_EX );
 
 		return true;
+	}
+
+	/**
+	 * Whether a step is running right now.
+	 *
+	 * The lock is the only honest answer available. Pausing abandons the request rather than
+	 * waiting for it, so the browser that asked for the step is often gone while the step is
+	 * still finishing; nothing on the client side knows that, and the checkpoint will not say
+	 * so until the step ends.
+	 *
+	 * @return bool
+	 */
+	public function is_running() {
+		$path = $this->lock_path();
+
+		if ( ! \is_readable( $path ) ) {
+			return false;
+		}
+
+		$held = (int) \file_get_contents( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		return $held > 0 && ( \time() - $held ) < self::LOCK_SECONDS;
 	}
 
 	/**
