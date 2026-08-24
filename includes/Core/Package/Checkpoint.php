@@ -20,7 +20,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Package;
  */
 class Checkpoint {
 
-	const SCHEMA = 2;
+	const SCHEMA = 3;
 	const NAME   = 'checkpoint.json';
 
 	const STAGE_DATABASE = 'database';
@@ -71,6 +71,7 @@ class Checkpoint {
 			'bytes_done'   => 0,
 			'parts'        => array(),
 			'large'        => array(),
+			'large_meta'   => array(),
 			'database'     => array(
 				'query_offset' => 0,
 				'table_index'  => 0,

@@ -28,9 +28,66 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\PartSpec;
 class FileCollector {
 
 	/**
-	 * Files added to the archive before it is flushed and the clock re-checked.
+	 * Files read from the list before the clock is re-checked.
 	 */
-	const BATCH = 64;
+	const BATCH = 256;
+
+	/**
+	 * Entries held in one volume before it is written out, whatever its size.
+	 *
+	 * The size cap alone is not enough. `ZipArchive` keeps a record per pending entry until
+	 * close, so a directory of a hundred thousand 1KB files — a cache plugin writing into
+	 * uploads will do exactly that — reaches the memory limit long before it reaches 128MB.
+	 */
+	const VOLUME_ENTRIES = 20000;
+
+	/**
+	 * Extensions whose contents are already compressed.
+	 *
+	 * Deflating a JPEG spends CPU to make the file very slightly larger. Uploads — the part
+	 * that dominates every real site — are almost entirely these.
+	 *
+	 * @var array
+	 */
+	protected static $incompressible = array(
+		'jpg',
+		'jpeg',
+		'png',
+		'gif',
+		'webp',
+		'avif',
+		'heic',
+		'heif',
+		'ico',
+		'mp4',
+		'm4v',
+		'mov',
+		'avi',
+		'mkv',
+		'webm',
+		'flv',
+		'wmv',
+		'mp3',
+		'm4a',
+		'aac',
+		'ogg',
+		'oga',
+		'opus',
+		'flac',
+		'wav',
+		'zip',
+		'gz',
+		'tgz',
+		'bz2',
+		'xz',
+		'7z',
+		'rar',
+		'jar',
+		'pdf',
+		'woff',
+		'woff2',
+		'br',
+	);
 
 	/**
 	 * Bytes copied per read when streaming a large file.
@@ -57,6 +114,20 @@ class FileCollector {
 	 * @var int
 	 */
 	protected $volume_limit;
+
+	/**
+	 * The volume currently being filled, open until it is written out.
+	 *
+	 * @var \ZipArchive|null
+	 */
+	protected $zip = null;
+
+	/**
+	 * Entries added to the open volume but not yet written to disk.
+	 *
+	 * @var int
+	 */
+	protected $pending = 0;
 
 	/**
 	 * Constructor.
@@ -282,29 +353,49 @@ class FileCollector {
 
 		$complete = false;
 
+		// Where the list had got to when the open volume was last written out. The checkpoint
+		// may only ever advance to here: everything added since is still inside an unclosed
+		// ZipArchive and does not exist on disk yet.
+		$committed = (int) $state['list_offset'];
+		$pending   = $committed;
+
 		while ( true ) {
 			$batch = $this->read_batch( $handle, $spec, $state, $deadline );
 
-			// Flush before acting on `exhausted`. The batch that reaches the end of the list
+			// Add before acting on `exhausted`. The batch that reaches the end of the list
 			// still holds files, and a part smaller than one batch reaches the end on its
 			// first read — breaking out first would discard every file it collected.
 			if ( ! empty( $batch['files'] ) ) {
-				$this->flush_batch( $spec, $batch['files'], $state );
+				$this->open_volume( $spec, $state );
+				$this->add_batch( $spec, $batch['files'], $state );
 			}
 
-			// The checkpoint advances only now, after the archive has been closed and the
-			// bytes are on disk.
-			$state['list_offset'] = $batch['offset'];
+			$pending = $batch['offset'];
 
 			if ( $batch['exhausted'] ) {
 				$complete = true;
 				break;
 			}
 
+			// Full volumes are written out as we go, so the work is spread across the step
+			// rather than landing in one lump at the end of it.
+			if ( $state['volume_bytes'] >= $this->volume_limit || $this->pending >= self::VOLUME_ENTRIES ) {
+				$this->close_volume( $spec, $state );
+				$committed = $pending;
+			}
+
 			if ( $batch['out_of_time'] ) {
 				break;
 			}
 		}
+
+		// Whatever is still open is written out here, whether the part finished or the clock
+		// did. A part-filled volume is closed rather than carried into the next step: reopening
+		// it would rewrite it, which is the cost this whole arrangement exists to avoid.
+		$this->close_volume( $spec, $state );
+		$committed = $pending;
+
+		$state['list_offset'] = $committed;
 
 		\fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
@@ -400,17 +491,20 @@ class FileCollector {
 	}
 
 	/**
-	 * Add a batch of files to the current volume and flush it.
+	 * Open the current volume, if it is not open already.
 	 *
 	 * @param PartSpec $spec  Part description.
-	 * @param array    $files Batch of files.
-	 * @param array    $state Run state, modified in place.
+	 * @param array    $state Run state.
 	 *
 	 * @return void
 	 *
 	 * @throws \RuntimeException If the archive cannot be opened.
 	 */
-	protected function flush_batch( PartSpec $spec, array $files, array &$state ) {
+	protected function open_volume( PartSpec $spec, array $state ) {
+		if ( null !== $this->zip ) {
+			return;
+		}
+
 		$path = $this->package->part_path( $spec->name(), (int) $state['volume'] );
 		$zip  = new \ZipArchive();
 
@@ -418,40 +512,116 @@ class FileCollector {
 			throw new \RuntimeException( \esc_html( 'Unable to open archive: ' . $path ) );
 		}
 
+		$this->zip = $zip;
+	}
+
+	/**
+	 * Add a batch of files to the open volume.
+	 *
+	 * Nothing reaches the disk here. `ZipArchive` records what it has been given and does the
+	 * whole job in `close()`, which is exactly why closing is rare.
+	 *
+	 * @param PartSpec $spec  Part description.
+	 * @param array    $files Batch of files.
+	 * @param array    $state Run state, modified in place.
+	 *
+	 * @return void
+	 */
+	protected function add_batch( PartSpec $spec, array $files, array &$state ) {
 		$added = 0;
 
 		foreach ( $files as $file ) {
-			if ( $zip->addFile( $file['source'], $file['relative'] ) ) {
-				++$added;
-				$state['volume_bytes'] = (int) $state['volume_bytes'] + $file['size'];
-				$state['bytes_done']   = (int) $state['bytes_done'] + $file['size'];
-				++$state['files_done'];
-			}
-		}
-
-		$zip->close();
-
-		if ( $added > 0 ) {
-			$relative = $this->package->part_relative( $spec->name(), (int) $state['volume'] );
-
-			// Keyed by volume path, but carrying the part it belongs to. Import needs the
-			// part name and the source prefix to decide where the files land; deriving them
-			// from the file name loses both, since `plugins.002.zip` is still the plugins part.
-			if ( ! isset( $state['parts'][ $relative ] ) ) {
-				$state['parts'][ $relative ] = array(
-					'name'   => $spec->name(),
-					'prefix' => $spec->prefix(),
-					'files'  => 0,
-				);
+			if ( ! $this->zip->addFile( $file['source'], $file['relative'] ) ) {
+				continue;
 			}
 
-			$state['parts'][ $relative ]['files'] += $added;
+			if ( $this->is_incompressible( $file['relative'] ) ) {
+				$this->zip->setCompressionName( $file['relative'], \ZipArchive::CM_STORE );
+			}
+
+			++$added;
+			++$this->pending;
+			$state['volume_bytes'] = (int) $state['volume_bytes'] + $file['size'];
+			$state['bytes_done']   = (int) $state['bytes_done'] + $file['size'];
+			++$state['files_done'];
 		}
 
-		if ( $state['volume_bytes'] >= $this->volume_limit ) {
-			++$state['volume'];
-			$state['volume_bytes'] = 0;
+		if ( $added < 1 ) {
+			return;
 		}
+
+		$relative = $this->package->part_relative( $spec->name(), (int) $state['volume'] );
+
+		// Keyed by volume path, but carrying the part it belongs to. Import needs the
+		// part name and the source prefix to decide where the files land; deriving them
+		// from the file name loses both, since `plugins.002.zip` is still the plugins part.
+		if ( ! isset( $state['parts'][ $relative ] ) ) {
+			$state['parts'][ $relative ] = array(
+				'name'   => $spec->name(),
+				'prefix' => $spec->prefix(),
+				'files'  => 0,
+			);
+		}
+
+		$state['parts'][ $relative ]['files'] += $added;
+	}
+
+	/**
+	 * Write the open volume out and move to the next one.
+	 *
+	 * A volume is written exactly once and never reopened. That is the whole performance
+	 * story: `ZipArchive::close()` does not append, it rebuilds the archive into a temporary
+	 * file and renames it over the original. Reopening a growing archive to add another
+	 * handful of files therefore rewrites everything already in it, so the cost of packaging
+	 * N bytes in K sittings is not N but something closer to N×K/2. On a 1.5GB uploads
+	 * directory in batches of 64 files that was hundreds of gigabytes of disk traffic to
+	 * produce a 1.5GB archive.
+	 *
+	 * @param PartSpec $spec  Part description.
+	 * @param array    $state Run state, modified in place.
+	 *
+	 * @return void
+	 */
+	protected function close_volume( PartSpec $spec, array &$state ) {
+		if ( null === $this->zip ) {
+			return;
+		}
+
+		$this->zip->close();
+		$this->zip     = null;
+		$this->pending = 0;
+
+		// Checksum the volume now, while it is the thing that was just written and is still
+		// warm in the page cache. Doing every volume at the end instead put the whole cost of
+		// hashing the package into `finalize`, which is one step and cannot be split: on a
+		// large site that single step is minutes long, which is exactly the shape of work the
+		// execution contract exists to forbid.
+		$relative = $this->package->part_relative( $spec->name(), (int) $state['volume'] );
+
+		if ( isset( $state['parts'][ $relative ] ) ) {
+			$state['parts'][ $relative ]['bytes']  = $this->package->size( $relative );
+			$state['parts'][ $relative ]['sha256'] = $this->package->checksum( $relative );
+		}
+
+		++$state['volume'];
+		$state['volume_bytes'] = 0;
+	}
+
+	/**
+	 * Whether a file is already compressed.
+	 *
+	 * @param string $relative Path inside the archive.
+	 *
+	 * @return bool
+	 */
+	protected function is_incompressible( $relative ) {
+		$dot = \strrpos( $relative, '.' );
+
+		if ( false === $dot ) {
+			return false;
+		}
+
+		return \in_array( \strtolower( \substr( $relative, $dot + 1 ) ), self::$incompressible, true );
 	}
 
 	/**
@@ -517,6 +687,13 @@ class FileCollector {
 			$done                  = true;
 			$state['large_file']   = '';
 			$state['large_offset'] = 0;
+
+			// Hashed here rather than at finalize, for the same reason volumes are.
+			$in_package                      = PackageWriter::LARGE_DIR . '/' . \ltrim( $relative, '/' );
+			$state['large_meta'][ $relative ] = array(
+				'bytes'  => $this->package->size( $in_package ),
+				'sha256' => $this->package->checksum( $in_package ),
+			);
 		}
 
 		\fclose( $in ); // phpcs:ignore WordPress.WP.AlternativeFunctions

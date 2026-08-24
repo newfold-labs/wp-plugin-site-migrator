@@ -81,9 +81,31 @@ zip cannot shrink anyway.
 
 ## Volumes
 
-A part is split when the current volume reaches the **volume limit** (default 1GB), producing
+A part is split when the current volume reaches the **volume limit** (default 128MB), producing
 `uploads.001.zip`, `uploads.002.zip`, and so on. A part that fits in one volume has no numeric
 suffix. Volumes keep individual files small enough to upload and to resume.
+
+**A volume is the unit of writing, not just of splitting: it is opened, filled, and closed
+exactly once, and never reopened.** That is a performance property, not a tidiness one.
+`ZipArchive::close()` does not append — it rebuilds the archive into a temporary file and renames
+it over the original. Reopening a growing archive to add a few more files therefore rewrites
+everything already in it, so packaging N bytes in K sittings costs roughly N×K/2 in disk traffic
+rather than N. An earlier design flushed every 64 files into a volume capped at 1GB, which turned
+a 1.5GB uploads directory into hundreds of gigabytes of writing; the same export now costs 1.5GB
+of writing and runs about six times faster.
+
+The limit is what bounds one close, so it is also what keeps a single step inside a shared host's
+execution budget — which is why it is 128MB and not something larger.
+
+Each volume is also sized and checksummed as it is closed, rather than all of them being hashed at
+the end. Hashing a whole package is minutes of work on a large site, and `finalize` is one step
+that cannot be split.
+
+## Compression
+
+Files whose contents are already compressed — JPEG, PNG, WebP, MP4, PDF, woff2, and the rest —
+are **stored**, not deflated. Uploads are almost entirely these, and deflating them spends CPU to
+make each file fractionally larger. Everything else is deflated normally.
 
 ## `manifest.json`
 

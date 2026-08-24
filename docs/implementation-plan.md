@@ -1392,6 +1392,50 @@ against a server that actually refuses a larger request. The browser upload was 
 104KB package and the REST harness with 13MB across 58 chunks — a multi-gigabyte upload through the
 UI remains unwatched, as does resuming one after a genuine connection drop.
 
+### Phase 4c — Export performance · **S** — ✅ *done 2026-08-24*
+
+Not a planned phase. The export was tried on a real site and was too slow, so it was measured.
+
+**The volume was a splitting convenience; it needed to be the unit of writing.** `FileCollector`
+opened the current volume, added 64 files, and closed it — and `ZipArchive::close()` does not
+append. It rebuilds the archive into a temporary file and renames it over the original. Adding to
+a growing archive therefore rewrote everything already in it, so packaging N bytes in K sittings
+cost roughly N×K/2 in disk traffic rather than N. You could watch it happen: a 698MB
+`uploads.zip` sitting next to a 708MB `uploads.zip.bbdl2i.part`.
+
+A volume is now opened, filled, and closed **exactly once**, and never reopened. The limit came
+down from 1GB to **128MB**, because the limit is what bounds a single close — and therefore what
+keeps one step inside a shared host's execution budget.
+
+**Already-compressed files are stored, not deflated.** Uploads are almost entirely JPEG, PNG, WebP
+and MP4; deflating them spends CPU to make each file fractionally larger.
+
+**Sizes and checksums are taken as each volume is closed.** They were all computed in `finalize`,
+which is one step and cannot be split — minutes of hashing in a single un-resumable request on a
+large site, in direct contradiction of [§4](#4-the-execution-model).
+
+Measured on 1.5GB across 5,760 files, shaped like a real uploads directory:
+
+| | Before | After |
+|---|---|---|
+| uploads part | 60.6s | 18.2s |
+| finalize | 8.8s | 0.2s |
+| **total** | **69.5s** | **18.5s** |
+| throughput | 22 MB/s | 83 MB/s |
+
+The same package — sixteen volumes — was then exported, verified, and imported into the
+destination, and every one of the 5,761 files compared byte for byte against the source. The only
+differences were the importer's own state files, which is correct.
+
+A local SSD is the *friendly* case for the old behaviour. The rewrite amplification lands on disk
+I/O, which is the scarcest resource on the shared hosting this plugin exists for, so the
+improvement there should be larger than 3.8×.
+
+One guard added while in there: a volume also closes at 20,000 entries. The size cap alone does
+not bound memory, because `ZipArchive` holds a record per pending entry until close, and a cache
+plugin writing a hundred thousand 1KB files into uploads would exhaust the memory limit long
+before reaching 128MB.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

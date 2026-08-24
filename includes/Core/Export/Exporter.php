@@ -32,9 +32,15 @@ class Exporter {
 	const LOOSE_THRESHOLD = 67108864;
 
 	/**
-	 * Default volume limit, 1GB.
+	 * Default volume limit, 128MB.
+	 *
+	 * This is the unit of writing, not just of splitting. Each volume is opened, filled and
+	 * closed exactly once, so the limit sets both how much disk traffic one close costs and how
+	 * long it takes — which is what keeps a step inside a shared host's execution budget. It was
+	 * 1GB when volumes were only a splitting convenience; at that size a single close is a
+	 * gigabyte of writing, and any host that cannot finish it never finishes the export at all.
 	 */
-	const VOLUME_LIMIT = 1073741824;
+	const VOLUME_LIMIT = 134217728;
 
 	/**
 	 * Package writer.
@@ -255,14 +261,17 @@ class Exporter {
 			$this->package->checksum( $database )
 		);
 
+		// Sizes and checksums were taken as each volume and each loose file was written. They
+		// are read back here rather than recomputed, so finalize stays a bookkeeping step
+		// instead of a second pass over the whole package.
 		foreach ( $state['parts'] as $relative => $part ) {
 			$manifest->add_part(
 				array(
 					'name'   => $part['name'],
 					'prefix' => $part['prefix'],
 					'file'   => $relative,
-					'bytes'  => $this->package->size( $relative ),
-					'sha256' => $this->package->checksum( $relative ),
+					'bytes'  => isset( $part['bytes'] ) ? (int) $part['bytes'] : $this->package->size( $relative ),
+					'sha256' => isset( $part['sha256'] ) ? $part['sha256'] : $this->package->checksum( $relative ),
 					'files'  => (int) $part['files'],
 				)
 			);
@@ -270,13 +279,14 @@ class Exporter {
 
 		foreach ( $state['large'] as $relative ) {
 			$in_package = PackageWriter::LARGE_DIR . '/' . \ltrim( $relative, '/' );
+			$meta       = isset( $state['large_meta'][ $relative ] ) ? $state['large_meta'][ $relative ] : array();
 
 			$manifest->add_large(
 				array(
 					'path'   => $relative,
 					'file'   => $in_package,
-					'bytes'  => $this->package->size( $in_package ),
-					'sha256' => $this->package->checksum( $in_package ),
+					'bytes'  => isset( $meta['bytes'] ) ? (int) $meta['bytes'] : $this->package->size( $in_package ),
+					'sha256' => isset( $meta['sha256'] ) ? $meta['sha256'] : $this->package->checksum( $in_package ),
 				)
 			);
 		}

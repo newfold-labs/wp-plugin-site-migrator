@@ -126,6 +126,14 @@ six near-identical archivers: everything that differed between them is data on a
 `ConfigScanner` reads the source's `wp-config.php` with `token_get_all()` — read-only, never
 `include`, never a regex.
 
+**A zip volume is opened, filled and closed exactly once, and never reopened.** `ZipArchive::close()`
+rebuilds the whole archive into a temp file rather than appending, so reopening one to add a few
+more files rewrites everything already in it. Flushing every 64 files into a 1GB volume made a
+1.5GB export cost hundreds of gigabytes of writing. The volume limit (128MB) is what bounds a
+single close, and therefore what keeps a step inside a shared host's budget. Sizes and checksums
+are taken at close for the same reason — hashing the whole package in `finalize` is one step that
+cannot be split. Already-compressed extensions are stored rather than deflated.
+
 **Import** (`Core/Import/`): `Importer` runs eight stages — precheck, files, database, transform,
 users, validate, swap, fixups. **The order is the design.** Files land before the database; the
 database loads into `nfdimp_`-prefixed staging tables the live site never reads; and every
