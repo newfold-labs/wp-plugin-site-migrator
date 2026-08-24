@@ -255,14 +255,15 @@ class Exporter {
 			$this->package->checksum( $database )
 		);
 
-		foreach ( $state['parts'] as $relative => $files ) {
+		foreach ( $state['parts'] as $relative => $part ) {
 			$manifest->add_part(
 				array(
-					'name'   => \basename( $relative, '.zip' ),
+					'name'   => $part['name'],
+					'prefix' => $part['prefix'],
 					'file'   => $relative,
 					'bytes'  => $this->package->size( $relative ),
 					'sha256' => $this->package->checksum( $relative ),
-					'files'  => (int) $files,
+					'files'  => (int) $part['files'],
 				)
 			);
 		}

@@ -3,9 +3,9 @@
 Move a WordPress site between hosts. Install the plugin on both sites: export the source
 into a package, then import that package on the destination.
 
-> **Pre-release.** This plugin is being reworked and is not currently distributed. The
-> export and import flows are under construction — see
-> [`docs/implementation-plan.md`](docs/implementation-plan.md) for the phased plan and
+> **Pre-release.** This plugin is being reworked and is not currently distributed. A full
+> migration works today **from WP-CLI**; in the browser you can export but not yet import.
+> See [`docs/implementation-plan.md`](docs/implementation-plan.md) for the phased plan and
 > [`docs/code-analysis.md`](docs/code-analysis.md) for the analysis it came from.
 
 ## What it does
@@ -18,6 +18,21 @@ into a package, then import that package on the destination.
   one can be rolled back.
 - **Users are merged, not replaced.** The destination's accounts are kept, and the source's
   accounts are merged in with their IDs preserved, so migrated content stays attributed.
+
+## From the command line
+
+```bash
+wp site-migrator export --to=/tmp/mysite     # on the source
+wp site-migrator verify /tmp/mysite          # optional, checks the package against its manifest
+wp site-migrator import /tmp/mysite          # on the destination
+
+wp site-migrator rollback                    # put the destination back
+wp site-migrator confirm                     # keep it, and drop the retained tables
+wp site-migrator cancel                      # abandon an import that has not been swapped in
+```
+
+An import replaces every table on the destination, so it asks first. `--yes` skips the prompt.
+Its own accounts are kept and merged with the source's; `--mode=replace` keeps only the source's.
 
 ## Requirements
 

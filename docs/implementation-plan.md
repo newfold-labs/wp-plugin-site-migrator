@@ -1157,7 +1157,7 @@ which matters because the fallback path asks a human to copy and paste it.
 download are verified through REST against that site; what has not been watched end to end is the
 progress screen during a multi-gigabyte run.
 
-### Phase 4a — Import core, driven headless · **L** — *the genuinely new work*
+### Phase 4a — Import core, driven headless · **L** — ✅ *done 2026-08-24*
 
 None of this exists today, and it carries nearly all the project's risk. **Spike
 [§9](#9-surviving-the-database-swap) first.**
@@ -1199,6 +1199,116 @@ export site A, import into site B at a different URL *and* table prefix, B funct
 equivalent to A; B's pre-existing users can still log in and A's authorship is intact; and a
 deliberately failed import leaves site B untouched. Nothing in Phase 4b starts until this is
 green.
+
+#### What shipped
+
+`Core/Import/`: `Importer` (eight stages behind the same `step( $budget )` contract as the
+exporter), `PathMap`, `FileRestorer`, `DatabaseImporter`, `SearchReplace`, `UserMerger`, `Swap`,
+`Fixups`, `ImportCheckpoint`. `DatabaseBase` gained the `import()` half it was forked without.
+`Core/Export/ConfigScanner` reads the source's `wp-config.php` with `token_get_all()`. The CLI
+gained `import`, `rollback` and `cancel`.
+
+Every orphaned symbol listed in [§11.1](#111-dead-code-that-must-not-be-deleted) now has a caller:
+`is_drop_table_query()`, `is_create_table_query()`, `is_insert_into_query()`,
+`is_start_transaction_query()`, `is_commit_query()`, `is_atomic_query()`, `is_cache_query()`,
+`replace_table_collations()`, `replace_table_name()`, and
+`DatabaseUtility::replace_serialized_values()`. Keeping them was worth it.
+
+The stage order is the design: files before database, database into staging tables, and every
+remaining way to fail — the merge, the uniqueness check, the verification — placed before the swap.
+By the time anything irreversible runs, the only operation left is one `RENAME TABLE`.
+
+#### The round trip
+
+Two real WordPress 7.1 installs against one MySQL 8.0.35: source at `http://source.test` with
+prefix `wp_`, destination at `http://dest.test` with prefix `dst_`. The destination is seeded to
+hit all three merge outcomes at once — `alice@example.com` on both sides under different logins,
+`carol` who exists only on the destination, `admin` on both sides belonging to two different
+people, and `dave` holding a `shop_manager` role the source has never heard of.
+
+**44 assertions, all green**, over one command and again over the same import driven one step per
+*process*, thirteen separate PHP invocations, to prove that resuming works rather than that a loop
+works. Beyond the exit criterion, the run checks that a serialized option survives rewriting two
+levels deep and still unserializes; that a non-string neighbour inside it is untouched; that
+`wp-config.php` is byte-for-byte unchanged; that the prefix-bearing usermeta keys and
+`{prefix}user_roles` all moved to `dst_`; and that each of the four accounts signs in with the
+password the design says it should keep.
+
+Rollback returns the destination to its own name, posts, users, IDs and passwords.
+
+Three deliberate failures, each leaving the destination completely untouched: a package whose
+checksum no longer matches (refused at precheck), a package with valid checksums and invalid SQL
+(fails mid-load, one staged table left, live site serving normally), and — unplanned — a PHP fatal
+in the middle of the transform stage, which turned out to be the most convincing demonstration of
+the lot.
+
+#### Defects found by building and testing it
+
+**`replace_serialized_values()` was broken on PHP 7+ and could never have worked.** The recursion
+hands itself arrays, and from PHP 8.0 `unserialize()` throws a `TypeError` for a non-string
+argument. A `TypeError` is an `Error`, not an `Exception`, so the function's own
+`catch ( \Exception $e )` does not stop it: the first serialized option in the database kills the
+whole import. This is retained All-in-One WP Migration code that has been dead since the fork, so
+nothing had ever executed it. Fixed with an `is_string()` guard and by testing `is_serialized()`
+before the call rather than after it.
+
+**The symlink guard had a hole exactly where it mattered.** `FileRestorer` checked for a symlinked
+ancestor only when the parent directory did *not* exist. If it did exist and was a link pointing
+out of the tree, every path check passed and the write followed it out — and `safe_path()` cannot
+catch that, because the *name* is entirely innocent. Now the deepest existing ancestor is resolved
+with `realpath()`, which follows every link, and the result has to still be under the root.
+
+**Import state written into the package travelled with the package.** Copying a package carried a
+finished import's checkpoint into the copy, which the importer read as "already done" and reported
+as `Success: Imported 447 files` without doing anything at all. [D15](#14-open-decisions-for-review)
+moves it to the destination's own storage. A run is bound to its package only once precheck passes,
+so a rejected package does not lock the site.
+
+**`run()` spun forever on a failed stage** — `step()` catches the error and returns neither done nor
+advanced, so the loop retried a step that had already decided it could not proceed.
+
+**The `nfd_sm_completed_timeout` filter was added per step and never removed**, in the exporter as
+well as the importer, leaving one closure per step in a CLI run. Fixed in both.
+
+**`composer fix` silently rewrote data keys, and the preflight caught it.** Newfold's ruleset
+includes a "spell WordPress correctly" sniff; phpcbf applies it inside string literals without
+knowing which are prose and which are data, and turned `->get( 'wordpress.version' )` — a dot path
+into the site profile — into `'WordPress.version'`. Every lookup then returned its default, every
+compatibility gate went indeterminate, and the import refused to run. That the *failure mode* was a
+refusal rather than a bad migration is [§8](#8-compatibility-the-destination-handshake) working as
+designed: indeterminate blocks. The profile key is now `wp`, which the sniff has no opinion about.
+The general hazard is the same one [§11.2](#112-why-static-analysis-will-lie-to-you-here) describes
+about symbol graphs, from a different tool: this codebase keys on strings, so anything that edits
+strings automatically can change behaviour.
+
+**The manifest could not say where a part's files came from.** Part names were derived from the
+zip's file name, so `plugins.002.zip` became a part called `plugins.002`, and nothing recorded the
+source-relative prefix — which makes it impossible to place files correctly when the destination
+keeps `wp-content` somewhere else. Both are now carried explicitly.
+
+#### Not done
+
+The **in-place-with-backup fallback** for hosts where `RENAME TABLE` is unavailable is specified in
+[§9.3](#93-atomic-swap) and is not built. Preflight probes for it and reports it, so such a host is
+told it cannot proceed rather than being allowed to start and failing at the swap. The probe has
+also not met a host that actually refuses.
+
+The **import-window token** and the **temporary mu-plugin** ([§9.6](#96-the-rest-of-the-survival-kit))
+remain Phase 4b, as planned: neither exists under CLI, where there is no cookie session to lose and
+no plugin loader to survive.
+
+`SearchReplace` walks every row of every table. That is what every tool in this category does, but
+it has only been measured against a small database, and keyset pagination falls back to
+`LIMIT/OFFSET` on tables with a composite primary key or none.
+
+The collation map is exercised for the case that matters — MariaDB's `utf8mb4_uca1400_ai_ci`, which
+no MySQL server knows, is rewritten to `utf8mb4_unicode_ci`, and a collation the destination already
+supports is correctly left alone. The **lossy** `utf8mb4` → `utf8` branch is not exercised, because
+it needs a server old enough to lack `utf8mb4`. The code records the downgrade and the importer
+reports it; nobody has watched it happen.
+
+Views are captured during the load and recreated against their final names after the swap, but the
+fixture has no views, so that path has been read and not run.
 
 ### Phase 4b — Import in the UI · **L**
 
@@ -1360,11 +1470,32 @@ the analysis. This must change before the importer is written, not after.
    lossy `utf8mb4` → `utf8` downgrade warns loudly rather than proceeding quietly. Assert a
    stale profile is rejected and that checkpoint 3 still runs when checkpoint 2 passed.
 8. **Contract tests.** Snapshot the manifest schema, the site-profile schema, and (from v3)
-   `--format=json`; a change must fail CI loudly.
+   `--format=json`; a change must fail CI loudly. Phase 4a supplied the argument for this: renaming
+   one key inside the site profile broke every compatibility gate, and nothing caught it until a
+   package built before the change was fed to a destination built after it.
 9. **Cypress** should drive at least one **unstubbed** path end to end.
 
 CI: replace the wp.org/SVN workflows with lint + PHPUnit + round-trip. The round-trip job is
 slow — run it on PRs to `main` rather than every push.
+
+### 12.1 What exists as of Phase 4a
+
+Items **2**, **4**, **5** (rollback half), **6** and part of **1** are covered by a shell harness
+that provisions two real WordPress installs against one MySQL server — source at `source.test`
+with prefix `wp_`, destination at `dest.test` with prefix `dst_` — and runs 44 assertions over the
+result. The destination is seeded with the "deliberately nasty account overlap" item 6 asks for,
+all four cases at once. Fault injection covers a package that fails verification, a package with
+valid checksums and invalid SQL, and six hostile archive paths including one that writes through a
+pre-existing symlink; each asserts the live site is untouched afterwards. The same import is also
+driven **one step per process** — thirteen separate PHP invocations — because a loop inside one
+process proves the loop works, not that resuming does.
+
+It is a shell script, not PHPUnit, and it is not in CI. That is the gap: the harness proves the
+behaviour today but nothing stops it regressing tomorrow. Converting it is Phase 7's first job,
+and it is now a translation rather than a design problem.
+
+Still uncovered: item **3** entirely (no constrained-host simulation), the in-place fallback in
+item **5**, and item **7**'s gates beyond the ones the fixture happens to exercise.
 
 ---
 
@@ -1372,10 +1503,10 @@ slow — run it on PRs to `main` rather than every push.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **Database-swap survival** ([§9](#9-surviving-the-database-swap)) | Import stalls half-done, site left broken | Atomic swap collapses the inconsistent window to an instant; file-based checkpoint + token auth + mu-plugin cover the rest. Spike before phase 4a is estimated |
+| **Database-swap survival** ([§9](#9-surviving-the-database-swap)) | Import stalls half-done, site left broken | **Held in 4a.** Atomic swap collapses the inconsistent window to an instant; three deliberate failures — including a PHP fatal mid-transform — each left the destination untouched. Token auth and the mu-plugin are 4b, and only matter in a browser |
 | **`RENAME TABLE` unavailable or restricted** | Falls back to in-place import, reopening a real inconsistent window | Preflight probes with a scratch table rather than inferring from grants; pre-import SQL backup in the fallback path; UI states which mode is in effect before the user commits |
 | **2x database size needed for the swap** | Import refused on tight-quota hosts | Counted in the preflight free-space check alongside the file-side estimate |
-| **Users merge writes rows the schema will not police** ([§9.4](#94-users-merge-not-replace)) | Duplicate logins insert silently; `get_user_by()` then returns an arbitrary row | `user_login`/`user_email` uniqueness verified explicitly on the staged table before the swap; a duplicate fails the import rather than warning |
+| **Users merge writes rows the schema will not police** ([§9.4](#94-users-merge-not-replace)) | Duplicate logins insert silently; `get_user_by()` then returns an arbitrary row | **Built in 4a.** `user_login`, `user_email` and `user_nicename` uniqueness verified explicitly on the staged table before the swap; a duplicate fails the import rather than warning. A shared username with different emails is a collision, not a match ([D14](#14-open-decisions-for-review)) |
 | **Destination arrives incompatible after the package is built** | Wasted export, upload, and the user's afternoon | Live paired profile checked before packaging ([§8.2](#82-pairing-the-source-asks-the-destination-directly)), re-runnable after a fix, and re-checked authoritatively before the first write |
 | **Outbound HTTP blocked, or destination not publicly reachable** | Pairing fetch fails | Documented fallbacks ship in v1: paste the profile blob, or skip the check and mark the package unverified. Never a dead end |
 | **Profile endpoint becomes a version-disclosure oracle** | Every install of this plugin advertises its WP/PHP/DB versions to scanners | `404` (not `401`) when unauthenticated, single-use rate-limited codes, scope limited to reading the profile, `sslverify` always on |
@@ -1383,9 +1514,9 @@ slow — run it on PRs to `main` rather than every push.
 | **Import is entirely new and large** | Phase 4 slips | Split into 4a (core, headless) and 4b (UI). Round-trip green is 4a's exit criterion, so correctness is proven before any import screen is built |
 | **`Core/` quietly grows transport assumptions** | v3 stops being cheap; the CLI turns into a rewrite | A lint rule blocks `WP_CLI`/`WP_REST`/superglobals under `Core/`, *and* the phase 2 CLI harness gives the core a real second consumer from day one — the part a lint rule cannot enforce |
 | **Chunked upload on hostile hosts** | v1 unusable for its target user | Drop-in-folder escape hatch ships in v1; constraint simulation in CI |
-| **Path traversal on import** | Arbitrary file write from a malicious package | Untrusted input from day one; dedicated tests; never `extractTo()` blindly |
+| **Path traversal on import** | Arbitrary file write from a malicious package | **Held in 4a**, against six crafted entries. Never `extractTo()`. Note that the name check alone was not enough: a *pre-existing symlinked directory* turns an innocent-looking path into a write outside the site, so the deepest existing ancestor is resolved with `realpath()` and has to still be under the root |
 | **Disk exhaustion mid-run** | Corrupt package or half-restored site | Preflight free-space check on both sides; refuse early |
-| **`DatabaseBase` is a stale AIO fork** | Inherited unknown bugs; upstream fixes never arrive | Diff against current upstream once; record the fork point in `docs/` |
+| **`DatabaseBase` is a stale AIO fork** | Inherited unknown bugs; upstream fixes never arrive | Diff against current upstream once; record the fork point in `docs/`. The first inherited bug surfaced in 4a: `replace_serialized_values()` had been fatal on PHP 7+ for years, invisibly, because nothing called it (**3.15**) |
 | **Transfer key exposure (v2)** | Whole-site disclosure | Scoped, expiring, single-use, rate-limited, `random_bytes()`; dedicated security review in phase 5 |
 | **No upgrade path from 1.0.x** | Existing installs orphaned | Accepted — renamed and unpublished. State it rather than half-supporting it |
 
@@ -1439,19 +1570,43 @@ after which they are dropped automatically. Preflight's free-space check must ac
 second copy persisting for that window.
 
 **D9 — Users merge: conflict rules.** The merge itself is settled
-([D7](#14-open-decisions-for-review), [§9.4](#94-users-merge-not-replace)); two sub-choices
-inside it are judgement calls, and both are currently set to a recommended default rather than a
-confirmed one.
+([D7](#14-open-decisions-for-review), [§9.4](#94-users-merge-not-replace)). **Both sub-choices
+resolved 2026-08-24, as recommended, and both are now under test in the round trip.**
 
-- **Whose password wins on a matched account?** Recommend the **destination's** — it is the
-  credential the person used minutes earlier to start the migration, and a source password set
-  up years ago by an agency may be unknown to them. *Alternative:* source, for a cleaner "the
-  site moved wholesale" story, at the cost of a likely password-reset round trip.
-- **Whose role wins on a matched account?** Recommend the **source's**, since the content and
-  the role definitions both come from there — with a hard override that the acting user is
-  always `administrator`, so nobody can demote themselves out of finishing the import.
-  *Alternative:* take the higher of the two roles, which is friendlier but has no well-defined
-  ordering once custom roles are involved.
+- **Whose password wins on a matched account?** The **destination's** — it is the credential the
+  person used minutes earlier to start the migration, and a source password set up years ago by
+  an agency may be unknown to them. *Rejected:* source, for a cleaner "the site moved wholesale"
+  story, at the cost of a likely password-reset round trip.
+- **Whose role wins on a matched account?** The **source's**, since the content and the role
+  definitions both come from there — with a hard override that the acting user is always
+  `administrator`, so nobody can demote themselves out of finishing the import. *Rejected:*
+  taking the higher of the two roles, which is friendlier but has no well-defined ordering once
+  custom roles are involved.
+
+**D14 — Does a shared username mean the same person?** **Resolved 2026-08-24: no. The email
+address is the identity, and a shared username with different emails is a collision, not a
+match.** [§9.4](#94-users-merge-not-replace) was ambiguous on this and the two halves of it
+disagreed: the matching rule said "by `user_email` first, then `user_login`", while outcome (c)
+gave `admin` on both sides with different emails as the archetypal *collision* to keep both of
+and report. Implementing the matching rule literally collapses them, and that is the wrong way to
+be wrong. `admin` exists on nearly every WordPress site and belongs to a different person on each
+one; merging two of them destroys one person's email address and grafts their password onto the
+other's identity, with no way back. Keeping two accounts is something a human resolves in a
+minute. So the destination's account is carried over with a suffixed login (`admin-2`), keeps its
+own password, and the rename is reported prominently. Login matching survives as
+`nfd_sm_match_users_by_login`, off by default, for the narrow case where someone changed their
+email on one of the two sites.
+
+**D15 — Where does import state live?** **Resolved 2026-08-24: in the destination's own storage
+directory, never in the package.** The export checkpoint lives in the package because the export
+is what builds it. The import's does not, for two reasons found by testing: a package may sit on
+read-only or shared storage, and state written inside one *travels with it* — copy a package that
+carries a finished import's checkpoint and the copy reads as already-imported, which the importer
+honours by doing nothing and reporting success. One file per site rather than one per package,
+because an import replaces the whole site: two at once is not a thing to support, it is a thing to
+refuse. The package a run belongs to is recorded inside so the refusal can name it, and it is
+recorded only once precheck has passed, so a package rejected before anything was written does not
+lock the site out of trying another.
 
 **D13 — Cleanup alongside the rename?** **Resolved 2026-08-23: no — adjacent, never combined.**
 Deletion is Phase 0, rename is Phase 1, and they stay separate commits because a rename is
@@ -1525,4 +1680,5 @@ Every finding in `code-analysis.md`, mapped to the phase that resolves it.
 | 3.12 `set_time_limit()` in a getter | 1 | Deleted |
 | 3.13 dead import scaffolding | 4a | `replace_table_collations()` and the `is_*_query()` predicates wired up by `DatabaseImporter`; collation map extended to MariaDB `uca1400` and the lossy `utf8mb4`→`utf8` step made an explicit warned choice ([§8.5](#85-collation-specifically)) |
 | 3.14 no LICENSE; stripped GPL attribution | 0 | `LICENSE` added, ServMask attribution and fork point recorded in `CREDITS` and in each derived file's header |
+| 3.15 `replace_serialized_values()` fatal on PHP 7+ | 4a | `is_string()` guard, and `is_serialized()` tested before `unserialize()` rather than after |
 | 4.1–4.8 refactors | 2, 3, 8 | As described above |

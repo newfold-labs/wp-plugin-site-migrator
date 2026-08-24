@@ -22,6 +22,12 @@ and nothing outside it is consulted at import time.
   checkpoint.json            transient: present only mid-run, deleted on success
 ```
 
+Nothing is ever written into a package by the **import** side. Import state lives in the
+destination's own storage directory (`uploads/nfd-site-migrator/import/`), for two reasons: a
+package may sit on read-only or shared storage, and state written inside one travels with it.
+Copying a package that carried a finished import's checkpoint makes the copy look already-imported
+— which the importer honours by doing nothing and reporting success.
+
 ## Design constraints
 
 Three properties drive every decision below.
@@ -93,13 +99,23 @@ suffix. Volumes keep individual files small enough to upload and to resume.
     "db_version": 57155,
     "php_version": "8.1.27",
     "table_prefix": "wp_",
+    "abspath": "/srv/www",
     "content_dir": "/srv/www/wp-content",
     "is_multisite": false,
-    "locale": "en_US"
+    "locale": "en_US",
+    "server": "Apache/2.4.57"
   },
+  "wp_config": {
+    "readable": true,
+    "prefix": "wp_",
+    "carry": [ { "name": "WP_MEMORY_LIMIT", "value": "'256M'", "note": "…" } ],
+    "redacted": [ "AUTH_KEY", "SOME_PLUGIN_LICENSE" ]
+  },
+  "profile": { "…": "the full SiteProfile the preflight gates compare against" },
   "database": { "file": "database.sql", "bytes": 431…, "sha256": "…" },
   "parts": [
-    { "name": "plugins", "file": "parts/plugins.zip", "bytes": 195…, "sha256": "…", "files": 4210 }
+    { "name": "plugins", "prefix": "wp-content/plugins",
+      "file": "parts/plugins.zip", "bytes": 195…, "sha256": "…", "files": 4210 }
   ],
   "large": [
     { "path": "wp-content/uploads/2024/03/film.mp4", "bytes": 398…, "sha256": "…" }
@@ -107,6 +123,29 @@ suffix. Volumes keep individual files small enough to upload and to resume.
   "totals": { "bytes": 4021…, "files": 18422 }
 }
 ```
+
+Four fields exist purely so the import half is not left guessing.
+
+**`source.abspath`** cannot be derived from `content_dir`: the two are related by convention, and
+`WP_CONTENT_DIR` is precisely the constant people move. Import rewrites absolute paths out of the
+database and needs both.
+
+**`parts[].prefix`** records where a part's files sat relative to the source's WordPress root, so
+the destination can map them onto wherever *it* keeps that kind of file. Extracting entries
+straight into `ABSPATH` only works for two installs laid out identically. The part's `name` is
+carried alongside it because a volume file name — `plugins.002.zip` — no longer identifies which
+part it belongs to.
+
+**`profile`** is the source's full `SiteProfile` — what the pre-write compatibility check compares
+against. It carries its own `schema_version`, separate from the package's, and a destination that
+does not read that version refuses the package outright rather than reading it as best it can:
+a shape change with the version left alone is worse than no version at all, because every lookup
+then silently returns its default and the gates report "indeterminate" instead of the real reason.
+
+**`wp_config`** is the read-only result of tokenising the source's `wp-config.php`. Credentials,
+salts, paths and the table prefix are dropped outright; anything whose name looks like a secret is
+recorded as a name with no value; the small remainder is offered to the user as a block of text to
+paste. Nothing is ever written to the destination's own file. See §9.5 of the implementation plan.
 
 Checksums are SHA-256 over the file as written. The manifest is written **last**, once every
 part has been finalised, so a manifest's presence means the package is complete. An interrupted

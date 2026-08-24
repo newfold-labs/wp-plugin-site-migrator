@@ -128,7 +128,7 @@ export const Start = () => {
 				<dl className="nfd-sm-facts">
 					<div>
 						<dt>{ __( 'WordPress', 'nfd-site-migrator' ) }</dt>
-						<dd>{ profile.wordpress?.version }</dd>
+						<dd>{ profile.wp?.version }</dd>
 					</div>
 					<div>
 						<dt>{ __( 'PHP', 'nfd-site-migrator' ) }</dt>
@@ -140,7 +140,7 @@ export const Start = () => {
 					</div>
 					<div>
 						<dt>{ __( 'Table prefix', 'nfd-site-migrator' ) }</dt>
-						<dd>{ profile.wordpress?.prefix }</dd>
+						<dd>{ profile.wp?.prefix }</dd>
 					</div>
 				</dl>
 			) }

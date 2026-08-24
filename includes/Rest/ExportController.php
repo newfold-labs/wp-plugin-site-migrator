@@ -142,9 +142,9 @@ class ExportController extends Controller {
 
 		return \rest_ensure_response(
 			array(
-				'exists'     => \is_dir( $dir ),
+				'exists'      => \is_dir( $dir ),
 				'in_progress' => $exporter->is_resumable(),
-				'complete'   => $reader->is_complete(),
+				'complete'    => $reader->is_complete(),
 			)
 		);
 	}
@@ -295,7 +295,7 @@ class ExportController extends Controller {
 	 * @return void
 	 */
 	protected function stream( $path, $range ) {
-		$size    = (int) \filesize( $path );
+		$size     = (int) \filesize( $path );
 		$resolved = self::resolve_range( $size, $range );
 
 		if ( 416 === $resolved['status'] ) {

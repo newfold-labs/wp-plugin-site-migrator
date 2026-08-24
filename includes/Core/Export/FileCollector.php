@@ -434,11 +434,18 @@ class FileCollector {
 		if ( $added > 0 ) {
 			$relative = $this->package->part_relative( $spec->name(), (int) $state['volume'] );
 
+			// Keyed by volume path, but carrying the part it belongs to. Import needs the
+			// part name and the source prefix to decide where the files land; deriving them
+			// from the file name loses both, since `plugins.002.zip` is still the plugins part.
 			if ( ! isset( $state['parts'][ $relative ] ) ) {
-				$state['parts'][ $relative ] = 0;
+				$state['parts'][ $relative ] = array(
+					'name'   => $spec->name(),
+					'prefix' => $spec->prefix(),
+					'files'  => 0,
+				);
 			}
 
-			$state['parts'][ $relative ] += $added;
+			$state['parts'][ $relative ]['files'] += $added;
 		}
 
 		if ( $state['volume_bytes'] >= $this->volume_limit ) {

@@ -41,18 +41,25 @@ class DatabaseExporter {
 		$mysql->set_tables( $this->tables() );
 		$mysql->set_table_where_query( \nfd_sm_table_prefix() . 'options', $this->options_exclusion() );
 
+		$budget = null;
+
 		if ( $deadline > 0 ) {
 			$seconds = \max( 1, (int) \ceil( $deadline - \microtime( true ) ) );
 
-			\add_filter(
-				'nfd_sm_completed_timeout',
-				function () use ( $seconds ) {
-					return $seconds;
-				}
-			);
+			$budget = function () use ( $seconds ) {
+				return $seconds;
+			};
+
+			\add_filter( 'nfd_sm_completed_timeout', $budget );
 		}
 
 		$complete = $mysql->export( $target, $query_offset, $table_index, $table_offset, $table_rows );
+
+		// Taken off again: a CLI run calls step() repeatedly in one process, and a filter added
+		// per call accumulates a closure per step, each holding a deadline that has passed.
+		if ( null !== $budget ) {
+			\remove_filter( 'nfd_sm_completed_timeout', $budget );
+		}
 
 		$offsets['query_offset'] = $query_offset;
 		$offsets['table_index']  = $table_index;

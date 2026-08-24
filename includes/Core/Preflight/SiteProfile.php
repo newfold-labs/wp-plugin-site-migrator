@@ -19,7 +19,9 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Preflight;
  */
 class SiteProfile {
 
-	const SCHEMA  = 1;
+	// Bumped to 2 when the `wordpress` key became `wp`. A shape change with the version left
+	// alone is worse than no version at all: readers accept the blob and every lookup misses.
+	const SCHEMA  = 2;
 	const MAX_AGE = 604800;
 
 	/**
@@ -56,7 +58,7 @@ class SiteProfile {
 				'minted_at'      => \time(),
 				'profile_id'     => \wp_generate_password( 16, false ),
 				'site_url'       => \get_site_url(),
-				'wordpress'      => array(
+				'wp'             => array(
 					'version'      => isset( $wp_version ) ? $wp_version : '',
 					'db_version'   => isset( $wp_db_version ) ? (int) $wp_db_version : 0,
 					'is_multisite' => \is_multisite(),
@@ -66,15 +68,15 @@ class SiteProfile {
 					'content_std'  => \rtrim( $content_dir, '/\\' ) === \rtrim( ABSPATH, '/\\' ) . '/wp-content',
 				),
 				'php'            => array(
-					'version'           => PHP_VERSION,
-					'extensions'        => self::extensions(),
-					'memory_limit'      => \ini_get( 'memory_limit' ),
-					'max_execution'     => (int) \ini_get( 'max_execution_time' ),
-					'upload_max'        => self::bytes( \ini_get( 'upload_max_filesize' ) ),
-					'post_max'          => self::bytes( \ini_get( 'post_max_size' ) ),
-					'disabled'          => \array_filter( \array_map( 'trim', \explode( ',', (string) \ini_get( 'disable_functions' ) ) ) ),
-					'open_basedir'      => (string) \ini_get( 'open_basedir' ),
-					'zip'               => \class_exists( 'ZipArchive' ),
+					'version'       => PHP_VERSION,
+					'extensions'    => self::extensions(),
+					'memory_limit'  => \ini_get( 'memory_limit' ),
+					'max_execution' => (int) \ini_get( 'max_execution_time' ),
+					'upload_max'    => self::bytes( \ini_get( 'upload_max_filesize' ) ),
+					'post_max'      => self::bytes( \ini_get( 'post_max_size' ) ),
+					'disabled'      => \array_filter( \array_map( 'trim', \explode( ',', (string) \ini_get( 'disable_functions' ) ) ) ),
+					'open_basedir'  => (string) \ini_get( 'open_basedir' ),
+					'zip'           => \class_exists( 'ZipArchive' ),
 				),
 				'database'       => self::database_facts(),
 				'host'           => array(

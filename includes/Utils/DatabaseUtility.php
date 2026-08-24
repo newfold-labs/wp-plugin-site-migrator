@@ -44,9 +44,21 @@ class DatabaseUtility {
 	public static function replace_serialized_values( $from = array(), $to = array(), $data = '', $serialized = false ) {
 		try {
 			// Some unserialized data cannot be re-serialized eg. SimpleXMLElements
-			// phpcs:ignore
-			$unserialized = unserialize( $data );
-			if ( is_serialized( $data ) && ( false !== $unserialized ) ) {
+			//
+			// The recursion below hands this function arrays, objects and integers, and from
+			// PHP 8.0 unserialize() throws a TypeError rather than warning when it is given
+			// one. A TypeError is an Error, not an Exception, so the catch at the bottom of
+			// this method does not stop it — the whole import dies on the first serialized
+			// option it meets. Hence the is_string() guard, and the is_serialized() test
+			// ahead of the call rather than after it.
+			$unserialized = false;
+
+			if ( is_string( $data ) && is_serialized( $data ) ) {
+				// phpcs:ignore
+				$unserialized = unserialize( $data );
+			}
+
+			if ( false !== $unserialized ) {
 				$data = self::replace_serialized_values( $from, $to, $unserialized, true );
 			} elseif ( is_array( $data ) ) {
 				$tmp = array();

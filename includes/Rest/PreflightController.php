@@ -140,7 +140,7 @@ class PreflightController extends Controller {
 				'via'         => $via,
 				'destination' => array(
 					'site_url'   => $destination->get( 'site_url', '' ),
-					'wp_version' => $destination->get( 'wordpress.version', '' ),
+					'wp_version' => $destination->get( 'wp.version', '' ),
 					'php'        => $destination->get( 'php.version', '' ),
 					'free_bytes' => $destination->get( 'host.free_bytes', null ),
 					'minted_at'  => $destination->get( 'minted_at', 0 ),

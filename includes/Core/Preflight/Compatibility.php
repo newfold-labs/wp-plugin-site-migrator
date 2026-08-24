@@ -73,8 +73,8 @@ class Compatibility {
 	 * @return void
 	 */
 	protected function check_wordpress( Report $report ) {
-		$src = (string) $this->source->get( 'wordpress.version', '' );
-		$dst = (string) $this->destination->get( 'wordpress.version', '' );
+		$src = (string) $this->source->get( 'wp.version', '' );
+		$dst = (string) $this->destination->get( 'wp.version', '' );
 
 		if ( '' === $src || '' === $dst ) {
 			$report->indeterminate( 'wp_version', 'WordPress version', 'One of the sites did not report its version.' );
@@ -92,8 +92,8 @@ class Compatibility {
 			$report->pass( 'wp_version', \sprintf( 'WordPress %s to %s.', $src, $dst ) );
 		}
 
-		$src_db = (int) $this->source->get( 'wordpress.db_version', 0 );
-		$dst_db = (int) $this->destination->get( 'wordpress.db_version', 0 );
+		$src_db = (int) $this->source->get( 'wp.db_version', 0 );
+		$dst_db = (int) $this->destination->get( 'wp.db_version', 0 );
 
 		if ( $src_db > 0 && $dst_db > 0 && $dst_db < $src_db ) {
 			$report->block(
@@ -118,8 +118,8 @@ class Compatibility {
 	 * @return void
 	 */
 	protected function check_multisite( Report $report ) {
-		$src = (bool) $this->source->get( 'wordpress.is_multisite', false );
-		$dst = (bool) $this->destination->get( 'wordpress.is_multisite', false );
+		$src = (bool) $this->source->get( 'wp.is_multisite', false );
+		$dst = (bool) $this->destination->get( 'wp.is_multisite', false );
 
 		if ( $src !== $dst ) {
 			$report->block(
@@ -397,8 +397,8 @@ class Compatibility {
 	 * @return void
 	 */
 	protected function check_environment( Report $report ) {
-		$src_prefix = (string) $this->source->get( 'wordpress.prefix', '' );
-		$dst_prefix = (string) $this->destination->get( 'wordpress.prefix', '' );
+		$src_prefix = (string) $this->source->get( 'wp.prefix', '' );
+		$dst_prefix = (string) $this->destination->get( 'wp.prefix', '' );
 
 		if ( '' !== $src_prefix && '' !== $dst_prefix && $src_prefix !== $dst_prefix ) {
 			$report->warn(
@@ -419,7 +419,7 @@ class Compatibility {
 			);
 		}
 
-		if ( ! (bool) $this->destination->get( 'wordpress.content_std', true ) ) {
+		if ( ! (bool) $this->destination->get( 'wp.content_std', true ) ) {
 			$report->warn( 'content_dir', 'The destination keeps wp-content in a non-standard place.' );
 		}
 	}

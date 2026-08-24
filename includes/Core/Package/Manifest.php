@@ -7,6 +7,9 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Package;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Export\ConfigScanner;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
+
 /**
  * The index of a package.
  *
@@ -57,10 +60,20 @@ class Manifest {
 					'db_version'   => isset( $wp_db_version ) ? (int) $wp_db_version : 0,
 					'php_version'  => PHP_VERSION,
 					'table_prefix' => isset( $wpdb ) ? $wpdb->prefix : '',
-					'content_dir'  => \defined( 'WP_CONTENT_DIR' ) ? WP_CONTENT_DIR : '',
+					// Import rewrites absolute paths out of the database, and cannot derive the
+					// source's root from its content directory: the two are only related by
+					// convention, and WP_CONTENT_DIR is exactly the constant people move.
+					'abspath'      => \rtrim( ABSPATH, '/\\' ),
+					'content_dir'  => \defined( 'WP_CONTENT_DIR' ) ? \rtrim( WP_CONTENT_DIR, '/\\' ) : '',
 					'is_multisite' => \is_multisite(),
 					'locale'       => \get_locale(),
+					'server'       => isset( $_SERVER['SERVER_SOFTWARE'] ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_SOFTWARE'] ) ) : '',
 				),
+				'wp_config'      => ConfigScanner::scan(),
+				// The authoritative compatibility check runs on the destination immediately before
+				// the first write, against facts gathered here rather than whatever the pairing
+				// handshake saw days earlier.
+				'profile'        => SiteProfile::gather( true )->to_array(),
 				'database'       => array(),
 				'parts'          => array(),
 				'large'          => array(),

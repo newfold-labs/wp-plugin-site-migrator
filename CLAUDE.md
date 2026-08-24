@@ -9,15 +9,18 @@ installed on **both** sites: the source exports its content into a package, the 
 imports it. PHP backend under `includes/` (PSR-4 `NewfoldLabs\WP\SiteMigrator\` via Composer)
 plus a React SPA under `src/` rendered on a single wp-admin page.
 
-**The plugin is mid-rework and does not currently perform a migration.** It began life as the
-Bluehost Site Migrator, which packaged a site and handed it to a hosting backend; that backend
-integration has been removed and the export/import halves are being rebuilt. Read
+**The plugin is mid-rework.** It began life as the Bluehost Site Migrator, which packaged a site
+and handed it to a hosting backend; that backend integration has been removed and the
+export/import halves have been rebuilt. A full migration works today **from WP-CLI**; the
+browser can drive an export but not yet an import. Read
 `docs/implementation-plan.md` before making changes — it is the authority on what is being
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: phases 0 (deletion) and 1 (rename) are done. What survives is the compatibility
-check, the database dumper, the file archivers, and the manifest.
+Current state: **phases 0–4a are done.** Export, preflight, the export UI, and the whole import
+core all work; the round trip runs end to end from the CLI. What is not built is the import
+**UI** (phase 4b) — chunked upload, the import screens, and the two survival-kit pieces that only
+exist in a browser (the import-window token and the temporary mu-plugin).
 
 ## Commands
 
@@ -62,6 +65,14 @@ Settled in decision D1 of the implementation plan. Everything is consistent; kee
 appears inside string literals (REST controller registration, and formerly task executors);
 a symbol-aware rename misses those and the failure is a runtime fatal, not a compile error.
 
+**`composer fix` rewrites string literals, so read its diff.** Newfold's ruleset includes the
+"spell WordPress correctly" sniff, and phpcbf applies it inside strings without knowing which of
+them are prose and which are data. It once turned `->get( 'wordpress.version' )` — a dot path into
+the site profile — into `'WordPress.version'`, so every lookup returned its default and every
+compatibility gate went indeterminate, which the Report correctly treats as blocking. The profile
+key is now `wp` so there is nothing left for it to catch, but the general hazard stands: an
+auto-fixer that edits strings can change behaviour, and this codebase keys a lot on strings.
+
 ## Versioning
 
 The plugin header in `nfd-site-migrator.php` is the source of truth. `package.json` carries the
@@ -73,9 +84,19 @@ same number for npm's benefit, but nothing breaks if they drift: **build output 
 ## Architecture
 
 **Bootstrap** (`nfd-site-migrator.php`): Composer autoload, `constants.php`, then `functions.php`
-(procedural helpers, all prefixed `nfd_sm_`, required explicitly). Instantiates `WP_Admin` and
-`RestApi\RestApi`, primes `Utils\Options::fetch()`, registers `MigrationChecks\Checker::register()`,
+(procedural helpers, all prefixed `nfd_sm_`, required explicitly). Instantiates `WP_Admin`,
+registers `Rest\Routes::register()` and `Cli\Commands::register()`, primes `Utils\Options::fetch()`,
 and persists options on `shutdown`. One deactivation hook (`nfd_sm_purge_all`); no activation hooks.
+
+**The execution contract.** Everything in `Core/` that does bulk work exposes
+`step( $budget )`: do as much as fits in `$budget` seconds, write a checkpoint, return. A budget
+of `0` means no limit, which is how the CLI runs it. The browser loops on the REST endpoint; the
+CLI loops in `run()`. This replaced wp-cron, so the request that reports progress is the request
+doing the work.
+
+**`Core/` must stay transport-agnostic**: no `WP_CLI`, no `WP_REST_Request`, no superglobals, no
+output. Two real consumers exist — `Rest/` and `Cli/` — so that stays true rather than merely
+intended.
 
 **Options facade** (`Utils\Options`): all plugin state lives in the single `nfd_site_migrator`
 wp_option as an array, read once at bootstrap and written once on shutdown via `maybe_persist()`.
@@ -84,32 +105,57 @@ flags are separate standalone options declared in `constants.php` and listed in
 `NFD_SM_OPTIONS_LIST`; `nfd_sm_purge_all()` deletes those plus the storage directory and the
 can-migrate transient on deactivation.
 
-**Compatibility check** (`MigrationChecks\Checker`): a filter chain on `nfd_site_migrator_can_migrate`.
-Each check contributes a boolean and records a diagnostic in `Checker::$results`. Four local checks
-remain — disk-space functions, content-directory writability, multisite. This is scheduled to be
-replaced in phase 3 by `Preflight\Checker` returning a structured `Report` that fails closed.
+**Preflight** (`Core/Preflight/`): `Checker` runs the local gates; `SiteProfile::gather()` collects
+a site's facts; `Pairing` lets the source fetch the destination's profile live over HTTP, using a
+single-use code the user pastes once; `Compatibility` compares two profiles and returns a `Report`.
+The `Report` has four statuses, and **`indeterminate` maps to blocking** — a check that could not
+run is not a check that passed. There are three checkpoints: at pairing, before packaging, and
+again on the destination immediately before the first write, against live facts rather than
+whatever the handshake saw days earlier.
 
-**Manifest** (`Manifest/`): collects site facts into an array cached under the `manifest` option key.
-Currently has **no callers** — its caller was the removed hosting-backend scan. It is kept
-deliberately (plan §11.1) as the site-facts source for the phase 3 preflight report.
+**Package** (`Core/Package/`): `PackageWriter` owns the directory layout and nothing else should
+build paths inside a package by hand. `Manifest` is written last, so its presence is what makes a
+package complete. `PackageReader::verify()` checks sizes and SHA-256 against it. `Checkpoint` is
+on disk, never in an option, because the import replaces the database underneath itself — and it
+is written *after* the state it describes is flushed, so a resume can repeat work but never skip
+it. Format is specified in `docs/package-format.md`; parts are standard zip, readable with `unzip`.
 
-**Packaging** (`Packager/`): six static archivers, each resumable — `prepare()` builds a CSV list
-file, `execute()` walks it tracking byte offsets stashed in Options under `<type>_task_params`, and
-bails after ~10s so the next invocation resumes. Nothing currently drives them: the wp-cron task
-queue that did was removed in phase 0. Phase 2 collapses all six into one `FileCollector`.
+**Export** (`Core/Export/`): `Exporter` steps through the database dump and then the file parts.
+`PartSpecs` is the one place that knows WordPress's directory layout, and derives every prefix from
+where a directory actually *is* rather than assuming `wp-content/<name>`. `FileCollector` replaced
+six near-identical archivers: everything that differed between them is data on a `PartSpec`.
+`ConfigScanner` reads the source's `wp-config.php` with `token_get_all()` — read-only, never
+`include`, never a regex.
 
-Archives are written by `Archiver\Compressor extends Archiver`, a custom incremental format with a
-fixed header block — not `ZipArchive`. Files land in `wp-content/uploads/nfd-site-migrator/`
-(`nfd_sm_storage_path()`). Phase 2 replaces this with standard zip.
+**Import** (`Core/Import/`): `Importer` runs eight stages — precheck, files, database, transform,
+users, validate, swap, fixups. **The order is the design.** Files land before the database; the
+database loads into `nfdimp_`-prefixed staging tables the live site never reads; and every
+remaining way to fail is placed before the swap. The swap itself is one multi-table `RENAME`, which
+MySQL executes atomically, moving the live tables to `nfdold_` for rollback. Until that statement
+runs, the destination is untouched and the user can simply retry.
 
-**REST API** (`includes/RestApi/`, namespace `nfd-site-migrator/v1`): controllers are registered by
-listing the class name in `RestApi::register_routes()`. Every route requires `manage_options`.
-Only `migration-check` remains (POST run checks, GET `/compatible`, GET `/step`).
+`PathMap` maps a package's recorded paths onto this install's layout and is the security boundary
+for untrusted archive input. `UserMerger` is the one table that merges rather than replaces
+(plan §9.4). `Swap` also handles rollback and the retention window. `Fixups` repairs what the swap
+leaves inconsistent — including re-adding this plugin to `active_plugins`, which the source's list
+correctly does not contain.
 
-**Frontend** (`src/`): mounts into `#nfd-sm-app`. `components/Migration.js` fetches `/step` and picks
-the screen. Calls go through `utils/api.js` wrapped in `utils/apiCall.js`, which converts thrown
-errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
-The transfer screens were removed with their endpoints; phases 3 and 4b rebuild the UI.
+Import state lives in `uploads/nfd-site-migrator/import/`, **not in the package** (plan D15).
+
+**REST API** (`includes/Rest/`, namespace `nfd-site-migrator/v1`): controllers extend
+`Rest\Controller` and are listed in `Rest\Routes::register_routes()`. Every route requires
+`manage_options` except `/pairing/profile`, which is public by necessity and returns **404, not
+401**, for a missing or wrong code — a 401 would make it an oracle for "a WordPress site with this
+plugin lives here".
+
+**CLI** (`includes/Cli/`): `wp site-migrator export|verify|import|rollback|cancel|confirm`. A
+harness, not the v3 product — but a real second consumer of `Core/` from the day `Core/` existed,
+and it is what makes the round-trip test a shell script.
+
+**Frontend** (`src/`): mounts into `#nfd-sm-app`. `routes.js` picks the screen; `utils/useExport.js`
+drives the step loop. Calls go through `utils/api.js` wrapped in `utils/apiCall.js`, which converts
+thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
+The import screens are phase 4b.
 
 Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` compiles
 `assets/styles/app.css` into `src/styles/nfd-site-migrator.css`, which the JS entry imports.

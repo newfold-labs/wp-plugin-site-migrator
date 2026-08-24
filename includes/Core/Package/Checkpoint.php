@@ -20,7 +20,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Package;
  */
 class Checkpoint {
 
-	const SCHEMA = 1;
+	const SCHEMA = 2;
 	const NAME   = 'checkpoint.json';
 
 	const STAGE_DATABASE = 'database';
@@ -48,8 +48,8 @@ class Checkpoint {
 	 * @param string $dir Package directory.
 	 */
 	public function __construct( $dir ) {
-		$this->path  = \rtrim( $dir, '/\\' ) . DIRECTORY_SEPARATOR . self::NAME;
-		$this->state = self::defaults();
+		$this->path  = \rtrim( $dir, '/\\' ) . DIRECTORY_SEPARATOR . static::NAME;
+		$this->state = static::defaults();
 	}
 
 	/**
@@ -98,7 +98,7 @@ class Checkpoint {
 	 */
 	public function load() {
 		if ( ! $this->exists() ) {
-			$this->state = self::defaults();
+			$this->state = static::defaults();
 
 			return $this->state;
 		}
@@ -106,13 +106,13 @@ class Checkpoint {
 		$raw     = \file_get_contents( $this->path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		$decoded = \json_decode( $raw, true );
 
-		if ( ! \is_array( $decoded ) || ! isset( $decoded['schema'] ) || self::SCHEMA !== (int) $decoded['schema'] ) {
-			$this->state = self::defaults();
+		if ( ! \is_array( $decoded ) || ! isset( $decoded['schema'] ) || static::SCHEMA !== (int) $decoded['schema'] ) {
+			$this->state = static::defaults();
 
 			return $this->state;
 		}
 
-		$this->state = \array_merge( self::defaults(), $decoded );
+		$this->state = \array_merge( static::defaults(), $decoded );
 
 		return $this->state;
 	}
@@ -129,7 +129,7 @@ class Checkpoint {
 	 */
 	public function save( array $state ) {
 		$this->state           = $state;
-		$this->state['schema'] = self::SCHEMA;
+		$this->state['schema'] = static::SCHEMA;
 
 		$temp = $this->path . '.tmp';
 

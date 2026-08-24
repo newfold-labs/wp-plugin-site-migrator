@@ -113,6 +113,20 @@ abstract class DatabaseBase {
 	protected $avada_fusion_builder = false;
 
 	/**
+	 * Collation rewrites this server needs, built once per instance
+	 *
+	 * @var array|null
+	 */
+	protected $collation_map = null;
+
+	/**
+	 * Collation rewrites actually applied, for the import report
+	 *
+	 * @var array
+	 */
+	protected $collations_replaced = array();
+
+	/**
 	 * Constructor
 	 *
 	 * @param object $wpdb WPDB instance
@@ -813,6 +827,303 @@ abstract class DatabaseBase {
 	}
 
 	/**
+	 * Load a dump produced by export() into tables under a staging prefix
+	 *
+	 * Nothing here writes to a live table. Every table identifier in the stream is rewritten
+	 * from the source prefix to the staging prefix, so the destination site keeps serving from
+	 * its own tables until the swap renames them in one instant.
+	 *
+	 * Resumable through $state['query_offset'], which only ever advances past a statement that
+	 * has been executed and committed.
+	 *
+	 * @param  string $file_name File name
+	 * @param  array  $state     Import state, modified in place
+	 * @return boolean           True when the whole dump has been loaded
+	 *
+	 * @throws \Exception If a statement fails or the dump ends mid-transaction.
+	 */
+	public function import( $file_name, array &$state ) {
+		$file_handler = nfd_sm_open( $file_name, 'r' );
+
+		// Start time
+		$start = microtime( true );
+
+		// Flag to hold if the whole file has been read
+		$completed = true;
+
+		// Each step runs on a fresh MySQL session, so the SET statements the dump writes into
+		// its own header only ever apply to whichever step happened to read them. A resumed
+		// import starts past the header and would meet `DEFAULT '0000-00-00 00:00:00'` under
+		// strict mode. Set the session up here instead, every time.
+		$this->prepare_import_session();
+
+		$max_packet = (int) $this->get_max_allowed_packet();
+
+		// Rows are committed in batches by the dump. Breaking for time inside one of those
+		// batches would roll the batch back while the offset had already moved past it, which
+		// loses rows silently, so a break is only ever taken between transactions.
+		$in_transaction = false;
+
+		if ( fseek( $file_handler, (int) $state['query_offset'] ) !== -1 ) {
+
+			$query = '';
+
+			// The read stays in the condition. Hoisting it above the loop body means the next
+			// line has already been consumed by the time a statement is executed, which moves
+			// ftell() one line past it — and ftell() is the resume offset, so a resumed import
+			// would skip a line of SQL.
+			// phpcs:ignore Generic.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+			while ( ( $line = fgets( $file_handler ) ) !== false ) {
+
+				$query .= $line;
+
+				if ( ! $this->is_complete_statement( $query ) ) {
+					continue;
+				}
+
+				$statement = trim( $query );
+				$query     = '';
+
+				if ( '' === $statement ) {
+					continue;
+				}
+
+				if ( $max_packet > 0 && strlen( $statement ) > $max_packet ) {
+					throw new \Exception(
+						sprintf(
+							'A single row of the source database is %d bytes, which is larger than this '
+							. "server's max_allowed_packet of %d bytes. Raise max_allowed_packet on the "
+							. 'destination and run the import again.',
+							// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception messages, not output.
+							strlen( $statement ),
+							$max_packet
+							// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
+						)
+					);
+				}
+
+				if ( $this->is_start_transaction_query( $statement ) ) {
+					$this->import_query( $statement );
+					$in_transaction = true;
+					continue;
+				}
+
+				if ( $this->is_commit_query( $statement ) ) {
+					$this->import_query( $statement );
+					$in_transaction        = false;
+					$state['query_offset'] = ftell( $file_handler );
+				} else {
+					$this->import_statement( $statement, $state );
+
+					if ( ! $in_transaction ) {
+						$state['query_offset'] = ftell( $file_handler );
+					}
+				}
+
+				// Time elapsed. An atomic statement, or a table declared atomic, carries on
+				// regardless: stopping in the middle of one leaves work that cannot be resumed.
+				if ( $in_transaction || $this->is_atomic_query( $statement ) ) {
+					continue;
+				}
+
+				$timeout = apply_filters( 'nfd_sm_completed_timeout', 10 );
+
+				if ( $timeout && ( microtime( true ) - $start ) > $timeout ) {
+					$completed = false;
+					break;
+				}
+			}
+		}
+
+		fclose( $file_handler );
+
+		if ( $completed && $in_transaction ) {
+			throw new \Exception( 'The database dump ends in the middle of a transaction, so it is incomplete.' );
+		}
+
+		return $completed;
+	}
+
+	/**
+	 * Prepare the session for loading a dump
+	 *
+	 * @return void
+	 */
+	protected function prepare_import_session() {
+		// WordPress schemas are full of `DEFAULT '0000-00-00 00:00:00'`, which strict mode
+		// rejects outright, and tables arrive in alphabetical rather than dependency order.
+		$this->query( "SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO,ALLOW_INVALID_DATES'" );
+		$this->query( 'SET SESSION foreign_key_checks = 0' );
+		$this->query( 'SET SESSION unique_checks = 0' );
+	}
+
+	/**
+	 * Run one statement, treating any error as fatal
+	 *
+	 * query() is deliberately forgiving because an export can survive a missing row. An import
+	 * cannot: a CREATE TABLE that quietly failed produces a half-populated database that looks
+	 * finished. Every failure has to stop the run.
+	 *
+	 * @param  string $input SQL statement
+	 * @return void
+	 *
+	 * @throws \Exception If the statement fails.
+	 */
+	protected function import_query( $input ) {
+		$this->query( $input );
+
+		if ( $this->errno() ) {
+			throw new \Exception(
+				sprintf(
+					'Database error %d while importing: %s (statement began: %s)',
+					// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception messages, not output.
+					$this->errno(),
+					$this->error(),
+					substr( $input, 0, 200 )
+					// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
+				)
+			);
+		}
+	}
+
+	/**
+	 * Route one statement from the dump
+	 *
+	 * Table identifiers are rewritten only where the grammar puts them, never by searching the
+	 * whole statement. A post whose content quotes `wp_posts` in a code block would otherwise
+	 * have its own text rewritten along with the identifier.
+	 *
+	 * @param  string $statement SQL statement
+	 * @param  array  $state     Import state, modified in place
+	 * @return void
+	 */
+	protected function import_statement( $statement, array &$state ) {
+		// Session settings are re-applied per step by prepare_import_session(). Running the
+		// dump's own copies would restore strict mode from a user variable that a resumed
+		// step never set, which evaluates to NULL and fails.
+		if ( stripos( $statement, 'SET ' ) === 0 ) {
+			return;
+		}
+
+		// A view body names the tables it selects from by their live identifiers, which do not
+		// exist under those names until the swap. Capture the definition and create it after.
+		if ( preg_match( '/^DROP\s+VIEW\s+IF\s+EXISTS\s+`([^`]+)`/i', $statement ) ) {
+			return;
+		}
+
+		if ( preg_match( '/^CREATE\s+VIEW\s+`([^`]+)`/i', $statement, $matches ) ) {
+			$state['views'][ $matches[1] ] = $statement;
+
+			return;
+		}
+
+		if ( preg_match( '/^DROP\s+TABLE\s+IF\s+EXISTS\s+`([^`]+)`/i', $statement, $matches ) ) {
+			$staged = $this->stage_table_name( $matches[1], $state );
+
+			$this->import_query( $this->replace_table_name( $statement, $matches[1], $staged ) );
+
+			return;
+		}
+
+		if ( $this->is_create_table_query( $statement ) && preg_match( '/^CREATE\s+TABLE\s+`([^`]+)`/i', $statement, $matches ) ) {
+			$staged = $this->stage_table_name( $matches[1], $state );
+
+			$sql = $this->replace_table_name( $statement, $matches[1], $staged );
+			$sql = $this->replace_table_collations( $sql );
+
+			$this->import_query( $sql );
+
+			$state['tables'][ $matches[1] ] = $staged;
+
+			return;
+		}
+
+		if ( preg_match( '/^INSERT\s+INTO\s+`([^`]+)`/i', $statement, $matches ) ) {
+			if ( $this->is_skippable_row( $statement, $matches[1], $state ) ) {
+				return;
+			}
+
+			$staged = $this->stage_table_name( $matches[1], $state );
+
+			$this->import_query( $this->replace_table_name( $statement, $matches[1], $staged ) );
+
+			++$state['statements'];
+
+			return;
+		}
+
+		$this->import_query( $statement );
+	}
+
+	/**
+	 * The staging name for a table named in the dump
+	 *
+	 * @param  string $table_name Table name as the source wrote it
+	 * @param  array  $state      Import state
+	 * @return string
+	 */
+	protected function stage_table_name( $table_name, array $state ) {
+		$source = isset( $state['source_prefix'] ) ? $state['source_prefix'] : '';
+		$stage  = isset( $state['stage_prefix'] ) ? $state['stage_prefix'] : '';
+
+		if ( '' !== $source && strpos( $table_name, $source ) === 0 ) {
+			return $stage . substr( $table_name, strlen( $source ) );
+		}
+
+		return $stage . $table_name;
+	}
+
+	/**
+	 * Whether a row is cache rather than content, and can be dropped on the way in
+	 *
+	 * Restricted to the tables that actually hold cache rows. Applied to every INSERT it would
+	 * also drop a post whose body happens to contain the string `'_transient_`.
+	 *
+	 * @param  string $statement  SQL statement
+	 * @param  string $table_name Table the row belongs to
+	 * @param  array  $state      Import state
+	 * @return boolean
+	 */
+	protected function is_skippable_row( $statement, $table_name, array $state ) {
+		$source = isset( $state['source_prefix'] ) ? $state['source_prefix'] : '';
+
+		$cache_tables = array(
+			$source . 'options',
+			$source . 'sitemeta',
+			$source . 'woocommerce_sessions',
+		);
+
+		if ( ! in_array( strtolower( $table_name ), $cache_tables, true ) ) {
+			return false;
+		}
+
+		return $this->is_cache_query( $statement );
+	}
+
+	/**
+	 * Whether an accumulated buffer holds a whole statement
+	 *
+	 * Values are escaped on the way out, so a real newline never survives inside a quoted
+	 * string and a line ending in a semicolon is a statement boundary. The quote count is
+	 * checked anyway: getting this wrong truncates SQL silently, which is the one failure mode
+	 * an importer must never have.
+	 *
+	 * @param  string $buffer Accumulated lines
+	 * @return boolean
+	 */
+	protected function is_complete_statement( $buffer ) {
+		$trimmed = rtrim( $buffer );
+
+		if ( '' === $trimmed || substr( $trimmed, -1 ) !== ';' ) {
+			return false;
+		}
+
+		$stripped = str_replace( array( '\\\\', "\\'" ), '', $trimmed );
+
+		return 0 === substr_count( $stripped, "'" ) % 2;
+	}
+
+	/**
 	 * Get MySQL version
 	 *
 	 * @return string
@@ -1169,26 +1480,127 @@ abstract class DatabaseBase {
 	 * @return string
 	 */
 	protected function replace_table_collations( $input ) {
-		static $search  = array();
-		static $replace = array();
+		if ( null === $this->collation_map ) {
+			$this->collation_map = $this->build_collation_map();
+		}
 
-		// Replace table collations
-		if ( empty( $search ) || empty( $replace ) ) {
-			if ( ! $this->wpdb->has_cap( 'utf8mb4_520' ) ) {
-				if ( ! $this->wpdb->has_cap( 'utf8mb4' ) ) {
-					$search  = array( 'utf8mb4_0900_ai_ci', 'utf8mb4_unicode_520_ci', 'utf8mb4' );
-					$replace = array( 'utf8_unicode_ci', 'utf8_unicode_ci', 'utf8' );
-				} else {
-					$search  = array( 'utf8mb4_0900_ai_ci', 'utf8mb4_unicode_520_ci' );
-					$replace = array( 'utf8mb4_unicode_ci', 'utf8mb4_unicode_ci' );
+		if ( empty( $this->collation_map ) ) {
+			return $input;
+		}
+
+		$output = str_replace( array_keys( $this->collation_map ), array_values( $this->collation_map ), $input );
+
+		if ( $output !== $input ) {
+			foreach ( $this->collation_map as $from => $to ) {
+				if ( strpos( $input, $from ) !== false ) {
+					$this->collations_replaced[ $from ] = $to;
 				}
-			} else {
-				$search  = array( 'utf8mb4_0900_ai_ci' );
-				$replace = array( 'utf8mb4_unicode_520_ci' );
 			}
 		}
 
-		return str_replace( $search, $replace, $input );
+		return $output;
+	}
+
+	/**
+	 * Build the collation rewrite map for this server
+	 *
+	 * The cache is per instance rather than a static inside the method: two instances can be
+	 * pointed at two different servers, and a process-wide cache hands the second one the
+	 * first one's answer.
+	 *
+	 * @return array Map of collation or charset found in the dump, to what this server accepts.
+	 */
+	protected function build_collation_map() {
+		$map = array();
+
+		// MariaDB 10.10+ writes collations that no MySQL server understands, and neither do
+		// older MariaDB releases. They are absent from MySQL's SHOW COLLATION entirely.
+		$uca1400 = $this->get_supported_collations( 'uca1400' );
+
+		if ( empty( $uca1400 ) ) {
+			$map['utf8mb4_uca1400_ai_ci']       = 'utf8mb4_unicode_ci';
+			$map['utf8mb4_uca1400_as_cs']       = 'utf8mb4_unicode_ci';
+			$map['utf8mb3_uca1400_ai_ci']       = 'utf8_unicode_ci';
+			$map['utf8mb4_uca1400_nopad_ai_ci'] = 'utf8mb4_unicode_ci';
+		}
+
+		if ( ! $this->wpdb->has_cap( 'utf8mb4' ) ) {
+			// The only genuinely lossy rewrite in this map: four-byte characters, which is to
+			// say emoji and most of CJK extension B, do not survive the narrower charset. The
+			// importer reports it rather than performing it quietly.
+			$map['utf8mb4_0900_ai_ci']     = 'utf8_unicode_ci';
+			$map['utf8mb4_unicode_520_ci'] = 'utf8_unicode_ci';
+			$map['utf8mb4_unicode_ci']     = 'utf8_unicode_ci';
+			$map['utf8mb4_general_ci']     = 'utf8_general_ci';
+			$map['utf8mb4']                = 'utf8';
+
+			return $map;
+		}
+
+		if ( ! $this->wpdb->has_cap( 'utf8mb4_520' ) ) {
+			$map['utf8mb4_0900_ai_ci']     = 'utf8mb4_unicode_ci';
+			$map['utf8mb4_unicode_520_ci'] = 'utf8mb4_unicode_ci';
+
+			return $map;
+		}
+
+		// MySQL 8's default collation is unknown to 5.7 and to every MariaDB.
+		if ( ! $this->get_collation( 'utf8mb4_0900_ai_ci' ) ) {
+			$map['utf8mb4_0900_ai_ci'] = 'utf8mb4_unicode_520_ci';
+		}
+
+		return $map;
+	}
+
+	/**
+	 * Collations this server knows whose name contains the given fragment
+	 *
+	 * @param  string $fragment Substring to look for.
+	 * @return array
+	 */
+	protected function get_supported_collations( $fragment ) {
+		$found  = array();
+		$result = $this->query( sprintf( "SHOW COLLATION LIKE '%%%s%%'", $this->escape( $fragment ) ) );
+
+		if ( $result ) {
+			$row = $this->fetch_assoc( $result );
+
+			while ( $row ) {
+				if ( isset( $row['Collation'] ) ) {
+					$found[] = $row['Collation'];
+				}
+
+				$row = $this->fetch_assoc( $result );
+			}
+
+			$this->free_result( $result );
+		}
+
+		return $found;
+	}
+
+	/**
+	 * Which collations were rewritten, and to what
+	 *
+	 * @return array
+	 */
+	public function get_collations_replaced() {
+		return $this->collations_replaced;
+	}
+
+	/**
+	 * Whether any rewrite performed so far loses characters
+	 *
+	 * @return boolean
+	 */
+	public function has_lossy_collation_change() {
+		foreach ( $this->collations_replaced as $from => $to ) {
+			if ( strpos( $from, 'utf8mb4' ) === 0 && strpos( $to, 'utf8mb4' ) !== 0 ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

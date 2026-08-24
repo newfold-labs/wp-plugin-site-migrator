@@ -33,7 +33,7 @@ class Pairing {
 	 * @return string The code to show the user.
 	 */
 	public static function issue() {
-		$raw = \strtoupper( \bin2hex( \random_bytes( 6 ) ) );
+		$raw  = \strtoupper( \bin2hex( \random_bytes( 6 ) ) );
 		$code = \substr( $raw, 0, 4 ) . '-' . \substr( $raw, 4, 4 ) . '-' . \substr( $raw, 8, 4 );
 
 		\NewfoldLabs\WP\SiteMigrator\Utils\Options::set(
@@ -154,7 +154,7 @@ class Pairing {
 		$response = \wp_remote_get(
 			$endpoint,
 			array(
-				'timeout' => 20,
+				'timeout'   => 20,
 				// Always verify. Tying this to the local site's own scheme, as the previous
 				// code did, means an HTTP site silently accepts any certificate (finding 2.5).
 				'sslverify' => true,
@@ -167,7 +167,7 @@ class Pairing {
 
 		if ( \is_wp_error( $response ) ) {
 			return array(
-				'error'      => 'Could not reach the destination: ' . $response->get_error_message(),
+				'error'       => 'Could not reach the destination: ' . $response->get_error_message(),
 				'unreachable' => true,
 			);
 		}
