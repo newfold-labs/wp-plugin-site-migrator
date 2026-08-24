@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
+import { Loading } from '../../Loading';
 import { api, updateNonce } from '../../../utils/api';
 import { DESTINATION_STEPS } from '../../../steps';
 
@@ -122,6 +123,17 @@ export const Done = () => {
 		>
 			{ error && (
 				<div className="nfd-sm-note nfd-sm-note--stop">{ error }</div>
+			) }
+
+			{ ! state && ! error && (
+				<div className="nfd-sm-card">
+					<Loading>
+						{ __(
+							'Reading what the import did…',
+							'nfd-site-migrator'
+						) }
+					</Loading>
+				</div>
 			) }
 
 			{ state && (

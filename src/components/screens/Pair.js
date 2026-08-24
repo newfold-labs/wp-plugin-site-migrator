@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
+import { Loading } from '../Loading';
 import { api } from '../../utils/api';
 import { ago } from '../../utils/time';
 import { SOURCE_STEPS } from '../../steps';
@@ -175,9 +176,12 @@ export const Pair = ( { onResult } ) => {
 
 			{ ! checked && (
 				<div className="nfd-sm-card">
-					<p className="nfd-sm-hint">
-						{ __( 'Checking…', 'nfd-site-migrator' ) }
-					</p>
+					<Loading>
+						{ __(
+							'Looking for a destination you have already paired with…',
+							'nfd-site-migrator'
+						) }
+					</Loading>
 				</div>
 			) }
 

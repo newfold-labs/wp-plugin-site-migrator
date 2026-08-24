@@ -1,3 +1,4 @@
+import { __ } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { Navigate, useNavigate, useRoutes } from 'react-router-dom';
 import { Start } from './components/screens/Start';
@@ -10,6 +11,8 @@ import { Choose } from './components/screens/import/Choose';
 import { Review } from './components/screens/import/Review';
 import { Running } from './components/screens/import/Running';
 import { Done } from './components/screens/import/Done';
+import { Layout } from './components/Layout';
+import { Loading } from './components/Loading';
 import { api } from './utils/api';
 
 /**
@@ -51,7 +54,21 @@ const Resume = () => {
 		} );
 	}, [ navigate ] );
 
-	return null;
+	// Two requests decide this, and until they answer the page has nothing on it at all. It is
+	// the first thing anybody sees on every load, so it says so rather than showing a blank
+	// admin page that looks like the plugin failed to start.
+	return (
+		<Layout title={ __( 'Site Migrator', 'nfd-site-migrator' ) }>
+			<div className="nfd-sm-card">
+				<Loading>
+					{ __(
+						'Picking up where you left off…',
+						'nfd-site-migrator'
+					) }
+				</Loading>
+			</div>
+		</Layout>
+	);
 };
 
 /**

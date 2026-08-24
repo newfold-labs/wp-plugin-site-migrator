@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useRef, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
+import { Loading } from '../../Loading';
 import { api } from '../../../utils/api';
 import {
 	expectedFiles,
@@ -199,6 +200,17 @@ export const Choose = () => {
 		>
 			{ error && (
 				<div className="nfd-sm-note nfd-sm-note--stop">{ error }</div>
+			) }
+
+			{ ! sources && ! error && (
+				<div className="nfd-sm-card">
+					<Loading>
+						{ __(
+							'Looking for a package already on this server…',
+							'nfd-site-migrator'
+						) }
+					</Loading>
+				</div>
 			) }
 
 			{ sources?.discovered?.length > 0 && (

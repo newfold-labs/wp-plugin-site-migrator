@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '../../Layout';
+import { Loading } from '../../Loading';
 import { api, importToken } from '../../../utils/api';
 import { DESTINATION_STEPS } from '../../../steps';
 
@@ -92,8 +93,17 @@ export const Review = () => {
 				steps={ DESTINATION_STEPS }
 				step="review"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
-				title={ __( 'Checking the package…', 'nfd-site-migrator' ) }
-			/>
+				title={ __( 'Checking the package', 'nfd-site-migrator' ) }
+			>
+				<div className="nfd-sm-card">
+					<Loading>
+						{ __(
+							'Reading the manifest and comparing it with this site. Nothing is written yet.',
+							'nfd-site-migrator'
+						) }
+					</Loading>
+				</div>
+			</Layout>
 		);
 	}
 

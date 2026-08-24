@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useRef, useState } from '@wordpress/element';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
+import { Loading } from '../Loading';
 import { Gates } from '../Gate';
 import { api } from '../../utils/api';
 import { ago } from '../../utils/time';
@@ -108,9 +109,12 @@ export const Compatibility = ( { result, onResult, request } ) => {
 				title={ __( 'Compatibility', 'nfd-site-migrator' ) }
 			>
 				<div className="nfd-sm-card">
-					<p className="nfd-sm-hint">
-						{ __( 'Checking…', 'nfd-site-migrator' ) }
-					</p>
+					<Loading>
+						{ __(
+							'Comparing this site with the destination…',
+							'nfd-site-migrator'
+						) }
+					</Loading>
 				</div>
 			</Layout>
 		);

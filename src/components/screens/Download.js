@@ -1,6 +1,7 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useRef, useState } from '@wordpress/element';
 import { Layout } from '../Layout';
+import { Loading } from '../Loading';
 import { api } from '../../utils/api';
 import {
 	canSaveToFolder,
@@ -18,14 +19,25 @@ const mb = ( bytes ) => `${ ( bytes / 1048576 ).toFixed( 1 ) } MB`;
  */
 export const Download = () => {
 	const [ data, setData ] = useState( null );
+	const [ check, setCheck ] = useState( null );
 	const [ error, setError ] = useState( '' );
 	const [ progress, setProgress ] = useState( null );
 	const [ busy, setBusy ] = useState( false );
 	const [ done, setDone ] = useState( '' );
 	const stop = useRef( { current: false } );
 
+	// Two requests, because one of them is slow. The list comes from the manifest, which is
+	// already on disk; verification re-reads every byte of the package and on a large site is
+	// most of a minute. Holding the list back for it left the screen blank for as long as the
+	// hashing took, which reads as a broken page rather than a careful one.
 	useEffect( () => {
+		let live = true;
+
 		api.exportManifest().then( ( response ) => {
+			if ( ! live ) {
+				return;
+			}
+
 			if ( response.failed ) {
 				setError( response.error );
 			} else if ( ! response.complete ) {
@@ -37,6 +49,16 @@ export const Download = () => {
 				setData( response );
 			}
 		} );
+
+		api.exportVerify().then( ( response ) => {
+			if ( live && ! response.failed && response.complete ) {
+				setCheck( response );
+			}
+		} );
+
+		return () => {
+			live = false;
+		};
 	}, [] );
 
 	const files = [];
@@ -141,7 +163,15 @@ export const Download = () => {
 				<div className="nfd-sm-note nfd-sm-note--stop">{ error }</div>
 			) }
 
-			{ data && ! data.verified && (
+			{ ! data && ! error && (
+				<div className="nfd-sm-card">
+					<Loading>
+						{ __( 'Reading the package…', 'nfd-site-migrator' ) }
+					</Loading>
+				</div>
+			) }
+
+			{ data && check && ! check.verified && (
 				<div className="nfd-sm-note nfd-sm-note--stop">
 					<p>
 						{ __(
@@ -157,7 +187,23 @@ export const Download = () => {
 				</div>
 			) }
 
-			{ data && data.verified && (
+			{ data && ! check && (
+				<div className="nfd-sm-card">
+					<Loading>
+						{ sprintf(
+							/* translators: 1: file count, 2: total size. */
+							__(
+								'%1$d files, %2$s. Checking them against their checksums…',
+								'nfd-site-migrator'
+							),
+							files.length,
+							mb( data.package.totals?.bytes || 0 )
+						) }
+					</Loading>
+				</div>
+			) }
+
+			{ data && check?.verified && (
 				<div
 					className="nfd-sm-note nfd-sm-note--pass"
 					id="nfd-sm-package-verified"
@@ -178,7 +224,7 @@ export const Download = () => {
 				<div className="nfd-sm-note nfd-sm-note--pass">{ done }</div>
 			) }
 
-			{ files.length > 0 && data?.verified && (
+			{ files.length > 0 && check?.verified && (
 				<div className="nfd-sm-card">
 					<div className="nfd-sm-actions">
 						<button

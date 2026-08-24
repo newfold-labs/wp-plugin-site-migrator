@@ -197,6 +197,7 @@ export const api = {
 			data: { paused },
 		} ),
 	exportManifest: () => call( { path: `${ BASE }/export/manifest` } ),
+	exportVerify: () => call( { path: `${ BASE }/export/verify` } ),
 	exportCancel: () =>
 		call( { path: `${ BASE }/export/cancel`, method: 'POST' } ),
 

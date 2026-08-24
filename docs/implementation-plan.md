@@ -1647,6 +1647,33 @@ hundreds of megabytes and a loose file can be far more. Elsewhere they are hande
 browser's own downloader in sequence, and the screen says it is reporting downloads *started*
 rather than pretending to know when they finish.
 
+### Phase 4h — Say when something is happening · **XS** — ✅ *done 2026-08-25*
+
+The Download screen showed its heading, its two advice boxes and **nothing between them** for
+twelve to fifteen seconds after a refresh. Not a spinner, not a placeholder — a gap where the
+file list would be, which reads as a broken page rather than a working one.
+
+Two problems, and the boring one was not the interesting one.
+
+**The screens said nothing while they waited.** Several do real work before they have anything
+to render, and each expressed that differently or not at all: a bare grey sentence, an empty
+`<Layout>` with only a title, and — on the redirect that decides which screen you land on, the
+first thing anybody sees on every page load — `return null`, a blank admin page. `Loading` is
+now one component, a spinner and a sentence saying what is being waited for, used in all nine
+places: the resume redirect, this-site checks, pairing lookup, compatibility, package reading,
+checksum verification, drop-in folder scan, package preview, and the import report.
+
+**And the Download screen was waiting on the wrong thing.** `/export/manifest` verified the
+package before answering — re-hashing every byte, which on a 2GB package is most of a minute —
+while the file list it was holding back was already sitting in `manifest.json`. Verification now
+has its own route and runs alongside: the list appears as soon as the manifest is read, with
+the checksum check reporting underneath it when it lands. Measured with the two calls throttled
+to 1.2s and 4s: list at 3.8s, verdict at 5.8s, where before there was nothing at all until 5.8s.
+
+The Download-all button still waits for the verdict. Downloading a package already known to be
+broken is time nobody gets back, and the list being visible is what the user actually wanted in
+the meantime.
+
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
 The Migrate Guru-like experience. Removes manual file handling entirely.

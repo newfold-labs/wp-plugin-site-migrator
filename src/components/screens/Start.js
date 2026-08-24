@@ -2,6 +2,7 @@ import { __ } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
+import { Loading } from '../Loading';
 import { Gates } from '../Gate';
 import { api } from '../../utils/api';
 import { SOURCE_STEPS } from '../../steps';
@@ -60,9 +61,11 @@ export const Start = () => {
 			) }
 
 			{ loading && (
-				<p className="nfd-sm-muted">
-					{ __( 'Checking this site…', 'nfd-site-migrator' ) }
-				</p>
+				<div className="nfd-sm-card">
+					<Loading>
+						{ __( 'Checking this site…', 'nfd-site-migrator' ) }
+					</Loading>
+				</div>
 			) }
 
 			{ ! loading && blocked && (

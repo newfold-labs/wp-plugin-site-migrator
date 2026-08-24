@@ -109,6 +109,20 @@
     .nfd-sm-bar i { @apply block h-full w-1/3 rounded-full bg-blue-600 }
     .nfd-sm-bar i.is-working { @apply animate-pulse }
 
+    /* Waiting.
+       A spinner and a sentence, not a bare sentence: the plugin does slow things on purpose —
+       hashing a package, walking a filesystem — and a screen that says nothing while it happens
+       is indistinguishable from one that has failed. */
+    .nfd-sm-loading { @apply flex items-center gap-3 text-[14px] text-slate-500 }
+    .nfd-sm-spinner {
+        @apply h-4 w-4 shrink-0 rounded-full border-2 border-slate-200 border-t-blue-600;
+        animation: nfd-sm-spin 0.7s linear infinite;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .nfd-sm-spinner { animation-duration: 2.4s }
+    }
+
     /* Parts table */
     .nfd-sm-parts { @apply w-full border-collapse bg-white border border-slate-200 rounded-lg mb-4 }
     .nfd-sm-parts th {
@@ -217,4 +231,8 @@
         @apply bg-blue-600 border-blue-600 text-white
     }
     .nfd-sm-journey-step.is-todo .nfd-sm-journey-link { @apply text-slate-400 }
+}
+
+@keyframes nfd-sm-spin {
+    to { transform: rotate(360deg) }
 }

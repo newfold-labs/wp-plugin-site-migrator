@@ -88,6 +88,18 @@ class ExportController extends Controller {
 
 		\register_rest_route(
 			$this->namespace,
+			'/export/verify',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'verify' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
+
+		\register_rest_route(
+			$this->namespace,
 			'/export/cancel',
 			array(
 				array(
@@ -212,6 +224,38 @@ class ExportController extends Controller {
 			);
 		}
 
+		return \rest_ensure_response(
+			array(
+				'complete' => true,
+				'package'  => $reader->inspect(),
+			)
+		);
+	}
+
+	/**
+	 * Re-hash the package and compare it against its own manifest.
+	 *
+	 * Its own route rather than part of `manifest`, because it reads every byte of the package
+	 * — for a large site, tens of seconds — and the file list it was holding up needs none of
+	 * that. Now the list is on screen immediately and this answers alongside it.
+	 *
+	 * Worth doing at all because the checksums were taken when each volume was closed, and
+	 * everything that can happen to a file afterwards happens quietly.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function verify() {
+		$reader = new PackageReader( $this->package_dir() );
+
+		if ( ! $reader->is_complete() ) {
+			return \rest_ensure_response(
+				array(
+					'complete' => false,
+					'error'    => 'No finished package yet.',
+				)
+			);
+		}
+
 		$problems = $reader->verify();
 
 		return \rest_ensure_response(
@@ -219,7 +263,6 @@ class ExportController extends Controller {
 				'complete' => true,
 				'verified' => empty( $problems ),
 				'problems' => $problems,
-				'package'  => $reader->inspect(),
 			)
 		);
 	}
