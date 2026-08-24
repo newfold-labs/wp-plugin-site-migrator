@@ -1431,6 +1431,55 @@ A local SSD is the *friendly* case for the old behaviour. The rewrite amplificat
 I/O, which is the scarcest resource on the shared hosting this plugin exists for, so the
 improvement there should be larger than 3.8×.
 
+#### The second report, and what it actually was
+
+Tried again on the real site and still slow: 113,665 files, 1,801MB, ten minutes and counting.
+That is a different workload — a 16KB average, in `plugins`, not a media library — so the work
+above, which targeted large incompressible files, did nothing for it.
+
+Measuring it took several wrong turns worth recording, because each one looked convincing:
+
+- A benchmark said `ZipArchive::close()` took 51s for 2,500 files. It had been run alongside
+  another export; on an idle machine the same work took 0.6s.
+- A "controlled" comparison of entry-name shapes showed long nested names were *faster*. The long
+  variant was building colliding names, so most entries were being overwritten rather than added,
+  and it was doing a third of the work.
+- A head-to-head inside WordPress showed raw `ZipArchive` taking 348s where `FileCollector` took
+  8.5s for the same 30,050 files — an implausible 41× win for our own code. The two passes were
+  not equivalent: the first read every file from disk, the second read them from the page cache.
+
+That last accident was the answer. Writing a fresh tree and zipping it twice:
+
+| | 8,000 files |
+|---|---|
+| first pass, cold reads | **185.0s** |
+| second pass, warm | **2.0s** |
+
+**Packaging is bound by the first read of each file, and small files are the worst case** — about
+23ms each here. Zip, compression, entry counts and our own loop are all rounding errors beside it.
+At that rate 113,665 files is roughly forty minutes, which is exactly what was being seen.
+
+Two changes follow, and one is not a change to the code:
+
+**Stop paying for stats we already have.** The walk asked the filesystem for each file's size with
+`filesize()` when the iterator had already stat-ed it, and asked `is_readable()` again for every
+file in `read_batch` when the answer arrives free from the open that has to happen anyway. Three
+syscalls per file removed. Warm that is worth about half the walk; cold, where a stat is a disk or
+network round trip, it is worth much more. The readability check is kept for loose files only,
+where recording one in the manifest that was never copied would make the package fail its own
+verification.
+
+**Make the progress bar real.** It was `<i class="is-working">` — a fixed-width pulsing element
+that never advanced. On a ten-minute export that is indistinguishable from a hang, and it is why
+the report was "stuck at 40%" when nothing was stuck. `prepare()` already counted the files and
+bytes it found and threw the answer away; it is now kept, and the screen shows a true fraction,
+the group being worked on, and a time remaining derived from the observed rate.
+
+**What the code cannot fix**: a hundred thousand cold small-file reads on shared hosting. For a
+site this shape the honest advice is to avoid the browser — `wp site-migrator export` over SSH has
+no request boundaries and no HTTP round trips, and the resulting folder can be moved with FTP,
+which the destination already discovers on its own.
+
 One guard added while in there: a volume also closes at 20,000 entries. The size cap alone does
 not bound memory, because `ZipArchive` holds a record per pending entry until close, and a cache
 plugin writing a hundred thousand 1KB files into uploads would exhaust the memory limit long

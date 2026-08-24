@@ -18,6 +18,11 @@ export function useExport() {
 		part: '',
 		files: 0,
 		bytes: 0,
+		partIndex: 0,
+		partCount: 0,
+		plannedFiles: 0,
+		plannedBytes: 0,
+		startedAt: 0,
 		error: '',
 	} );
 
@@ -54,6 +59,11 @@ export function useExport() {
 				part: step.part || '',
 				files: step.files ?? s.files,
 				bytes: step.bytes ?? s.bytes,
+				partIndex: step.part_index ?? s.partIndex,
+				partCount: step.part_count ?? s.partCount,
+				plannedFiles: step.planned_files ?? s.plannedFiles,
+				plannedBytes: step.planned_bytes ?? s.plannedBytes,
+				startedAt: s.startedAt || Date.now(),
 			} ) );
 
 			if ( step.done ) {

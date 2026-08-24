@@ -284,25 +284,32 @@ class FileCollector {
 					return ! \in_array( $relative, $excluded, true );
 				}
 
-				if ( \in_array( $relative, $skip, true ) ) {
-					return false;
-				}
-
-				return $current->isFile() && $current->isReadable();
+				return ! \in_array( $relative, $skip, true );
 			}
 		);
 
 		$iterator = new \RecursiveIteratorIterator( $filter, \RecursiveIteratorIterator::LEAVES_ONLY );
+
+		$prefix = $spec->prefix();
 
 		foreach ( $iterator as $file ) {
 			if ( ! $file->isFile() ) {
 				continue;
 			}
 
-			$entries[] = $this->entry(
-				$file->getPathname(),
-				\nfd_sm_relative_path( $root, $file->getPathname() ),
-				$spec
+			// `getSize()` reuses the stat the iterator already performed; `filesize()` on the
+			// path would be a second one. Whether a file is readable is likewise not asked
+			// here — it is answered by opening it, which has to happen anyway.
+			//
+			// This looks like a micro-optimisation and is not. Packaging is bound by the cost
+			// of touching each file once: on cold or network-backed storage a single small
+			// file costs milliseconds, and a site can have a hundred thousand of them. Every
+			// syscall removed from the per-file path is that count multiplied.
+			$relative = \nfd_sm_relative_path( $root, $file->getPathname() );
+
+			$entries[] = array(
+				'relative' => '' === $prefix ? $relative : $prefix . '/' . $relative,
+				'size'     => (int) $file->getSize(),
 			);
 		}
 
@@ -446,13 +453,16 @@ class FileCollector {
 			$size     = isset( $parts[1] ) ? (int) $parts[1] : 0;
 			$source   = $this->source_path( $spec, $relative );
 
-			if ( ! \is_readable( $source ) ) {
-				// A file that vanished between the walk and now is skipped, not fatal.
-				$offset = \ftell( $handle );
-				continue;
-			}
-
 			if ( $size >= $this->loose_threshold ) {
+				// Checked only here. Loose files are a handful per site, and recording one in
+				// the manifest that was never copied makes the package fail its own
+				// verification. For the many small files the same check is left to the open
+				// that has to happen anyway.
+				if ( ! \is_readable( $source ) ) {
+					$offset = \ftell( $handle );
+					continue;
+				}
+
 				$done = $this->copy_large( $source, $relative, $state, $deadline );
 
 				if ( ! $done ) {

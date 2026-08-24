@@ -211,7 +211,17 @@ class Exporter {
 
 			if ( ! \file_exists( $list ) ) {
 				$this->progress->start( $spec->name() );
-				$collector->prepare( $spec );
+
+				// The walk already counts what it finds. Keeping the answer is what lets the
+				// progress bar be a real fraction rather than an animation: without it the UI
+				// can only say "still going", and on a site where this takes many minutes
+				// that is indistinguishable from "stuck".
+				$totals = $collector->prepare( $spec );
+
+				$state['plan'][ $spec->name() ] = array(
+					'files' => (int) $totals['files'],
+					'bytes' => (int) $totals['bytes'],
+				);
 			}
 
 			$complete = $collector->step( $spec, $state, $deadline );
@@ -308,13 +318,32 @@ class Exporter {
 	 * @return array
 	 */
 	protected function report( array $state, $done ) {
+		$part = isset( $this->specs[ $state['part_index'] ] ) ? $this->specs[ $state['part_index'] ]->name() : '';
+		$plan = isset( $state['plan'] ) ? (array) $state['plan'] : array();
+
+		// Everything the walk has counted so far, plus what is still unwalked expressed as a
+		// count of parts. Deliberately not a single invented percentage: parts are walked as
+		// they are reached, so a total for the whole site does not exist until the last one
+		// starts, and inventing one would mean a bar that jumps backwards.
+		$planned_files = 0;
+		$planned_bytes = 0;
+
+		foreach ( $plan as $counted ) {
+			$planned_files += (int) $counted['files'];
+			$planned_bytes += (int) $counted['bytes'];
+		}
+
 		return array(
-			'done'     => (bool) $done,
-			'stage'    => $state['stage'],
-			'part'     => isset( $this->specs[ $state['part_index'] ] ) ? $this->specs[ $state['part_index'] ]->name() : '',
-			'files'    => (int) $state['files_done'],
-			'bytes'    => (int) $state['bytes_done'],
-			'manifest' => $done ? $this->package->path( Manifest::NAME ) : '',
+			'done'          => (bool) $done,
+			'stage'         => $state['stage'],
+			'part'          => $part,
+			'part_index'    => (int) $state['part_index'],
+			'part_count'    => \count( $this->specs ),
+			'files'         => (int) $state['files_done'],
+			'bytes'         => (int) $state['bytes_done'],
+			'planned_files' => $planned_files,
+			'planned_bytes' => $planned_bytes,
+			'manifest'      => $done ? $this->package->path( Manifest::NAME ) : '',
 		);
 	}
 

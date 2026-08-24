@@ -126,6 +126,14 @@ six near-identical archivers: everything that differed between them is data on a
 `ConfigScanner` reads the source's `wp-config.php` with `token_get_all()` — read-only, never
 `include`, never a regex.
 
+**Packaging is bound by the first read of each file, not by zip or compression.** Measured: 8,000
+small files cost 185s cold and 2.0s warm, about 23ms each. So the per-file path is kept as thin as
+possible — the walk takes the size from the iterator's own stat rather than calling `filesize()`,
+and readability is settled by the open that has to happen anyway rather than by a second
+`is_readable()`. Do not add syscalls to that path; a site can have a hundred thousand files in it.
+For a site of that size the browser is the wrong tool at all, and the CLI plus the drop-in folder
+is the answer.
+
 **A zip volume is opened, filled and closed exactly once, and never reopened.** `ZipArchive::close()`
 rebuilds the whole archive into a temp file rather than appending, so reopening one to add a few
 more files rewrites everything already in it. Flushing every 64 files into a 1GB volume made a

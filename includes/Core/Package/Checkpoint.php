@@ -72,6 +72,7 @@ class Checkpoint {
 			'parts'        => array(),
 			'large'        => array(),
 			'large_meta'   => array(),
+			'plan'         => array(),
 			'database'     => array(
 				'query_offset' => 0,
 				'table_index'  => 0,
