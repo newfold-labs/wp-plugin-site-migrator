@@ -20,16 +20,22 @@ const mb = ( bytes ) => `${ ( bytes / 1048576 ).toFixed( 1 ) } MB`;
 export const Download = () => {
 	const [ data, setData ] = useState( null );
 	const [ check, setCheck ] = useState( null );
+	const [ checking, setChecking ] = useState( false );
 	const [ error, setError ] = useState( '' );
 	const [ progress, setProgress ] = useState( null );
 	const [ busy, setBusy ] = useState( false );
 	const [ done, setDone ] = useState( '' );
 	const stop = useRef( { current: false } );
 
-	// Two requests, because one of them is slow. The list comes from the manifest, which is
-	// already on disk; verification re-reads every byte of the package and on a large site is
-	// most of a minute. Holding the list back for it left the screen blank for as long as the
-	// hashing took, which reads as a broken page rather than a careful one.
+	// Only the manifest, which is already on disk. Verification re-reads every byte of the
+	// package — most of a minute on a large one — and is not run unless it is asked for.
+	//
+	// It is not the check that protects anybody. Each volume's checksum is taken as it is
+	// closed and recorded then, so the package was correct when it was written; and the
+	// destination verifies the whole thing again before it writes anything, which is the point
+	// at which being wrong would actually cost something. Re-hashing here answers a narrower
+	// question — has this disk changed its mind since — and that is a question worth a button
+	// rather than a wait on every visit.
 	useEffect( () => {
 		let live = true;
 
@@ -50,16 +56,26 @@ export const Download = () => {
 			}
 		} );
 
-		api.exportVerify().then( ( response ) => {
-			if ( live && ! response.failed && response.complete ) {
-				setCheck( response );
-			}
-		} );
-
 		return () => {
 			live = false;
 		};
 	}, [] );
+
+	const verify = async () => {
+		setChecking( true );
+		setCheck( null );
+
+		const response = await api.exportVerify();
+
+		setChecking( false );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
+		setCheck( response );
+	};
 
 	const files = [];
 
@@ -101,6 +117,11 @@ export const Download = () => {
 	}
 
 	const toFolder = canSaveToFolder();
+
+	// Not verified is not the same as known to be broken. Nothing is checked unless somebody
+	// asks, so the button stays available on an unknown package — but once a check has actually
+	// failed, spending an hour downloading it is not a choice worth offering.
+	const broken = !! check && ! check.verified;
 
 	const downloadAll = async () => {
 		setBusy( true );
@@ -180,30 +201,14 @@ export const Download = () => {
 						) }
 					</p>
 					<ul>
-						{ data.problems.map( ( p ) => (
+						{ ( check.problems || [] ).map( ( p ) => (
 							<li key={ p }>{ p }</li>
 						) ) }
 					</ul>
 				</div>
 			) }
 
-			{ data && ! check && (
-				<div className="nfd-sm-card">
-					<Loading>
-						{ sprintf(
-							/* translators: 1: file count, 2: total size. */
-							__(
-								'%1$d files, %2$s. Checking them against their checksums…',
-								'nfd-site-migrator'
-							),
-							files.length,
-							mb( data.package.totals?.bytes || 0 )
-						) }
-					</Loading>
-				</div>
-			) }
-
-			{ data && check?.verified && (
+			{ data && (
 				<div
 					className="nfd-sm-note nfd-sm-note--pass"
 					id="nfd-sm-package-verified"
@@ -211,7 +216,7 @@ export const Download = () => {
 					{ sprintf(
 						/* translators: 1: file count, 2: total size. */
 						__(
-							'%1$d files, %2$s, all checksums verified.',
+							'%1$d files, %2$s. Every file was checksummed as it was written, and the destination checks them all again before it imports anything.',
 							'nfd-site-migrator'
 						),
 						files.length,
@@ -224,14 +229,14 @@ export const Download = () => {
 				<div className="nfd-sm-note nfd-sm-note--pass">{ done }</div>
 			) }
 
-			{ files.length > 0 && check?.verified && (
+			{ files.length > 0 && (
 				<div className="nfd-sm-card">
 					<div className="nfd-sm-actions">
 						<button
 							type="button"
 							className="nfd-sm-btn nfd-sm-btn--primary"
 							id="nfd-sm-download-all"
-							disabled={ busy }
+							disabled={ busy || broken }
 							onClick={ downloadAll }
 						>
 							{ busy
@@ -346,6 +351,57 @@ export const Download = () => {
 						) ) }
 					</tbody>
 				</table>
+			) }
+
+			{ data && (
+				<div className="nfd-sm-card">
+					{ checking ? (
+						<Loading>
+							{ __(
+								'Reading every byte of the package and comparing it with the manifest…',
+								'nfd-site-migrator'
+							) }
+						</Loading>
+					) : (
+						<>
+							{ check?.verified && (
+								<p
+									className="nfd-sm-eyebrow"
+									id="nfd-sm-verify-result"
+								>
+									{ __(
+										'Checked — every file matches its checksum',
+										'nfd-site-migrator'
+									) }
+								</p>
+							) }
+							<div className="nfd-sm-actions">
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									id="nfd-sm-verify"
+									onClick={ verify }
+								>
+									{ check
+										? __(
+												'Check again',
+												'nfd-site-migrator'
+										  )
+										: __(
+												'Check the package on disk',
+												'nfd-site-migrator'
+										  ) }
+								</button>
+							</div>
+							<p className="nfd-sm-hint">
+								{ __(
+									'Optional. Re-reads every byte here to catch a disk that has quietly changed something since the export. It takes about as long as the export did, and the destination performs the same check before it writes anything.',
+									'nfd-site-migrator'
+								) }
+							</p>
+						</>
+					) }
+				</div>
 			) }
 
 			<div className="nfd-sm-note nfd-sm-note--info">

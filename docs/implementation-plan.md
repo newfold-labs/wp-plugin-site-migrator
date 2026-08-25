@@ -1670,9 +1670,18 @@ has its own route and runs alongside: the list appears as soon as the manifest i
 the checksum check reporting underneath it when it lands. Measured with the two calls throttled
 to 1.2s and 4s: list at 3.8s, verdict at 5.8s, where before there was nothing at all until 5.8s.
 
-The Download-all button still waits for the verdict. Downloading a package already known to be
-broken is time nobody gets back, and the list being visible is what the user actually wanted in
-the meantime.
+Then verification was made **on-demand** and the wait removed altogether. It was never the check
+that protects anybody: each volume's checksum is taken as the volume is closed, so the package
+was correct when written, and the destination re-verifies the whole thing before it writes
+anything — which is the moment being wrong would actually cost something. Re-hashing on the
+source answers a narrower question, *has this disk changed its mind since*, and that is worth a
+button rather than a minute of everyone's time on every visit. The screen now loads with one
+request and says where its confidence comes from instead of manufacturing it again.
+
+The Download-all button is available immediately, and disabled only once a check has **actually
+failed**. Not-verified and known-broken are different states: nothing is checked unless asked,
+so an unverified package is merely unknown, while an hour spent downloading one already proven
+broken is an hour nobody gets back.
 
 ### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
 
