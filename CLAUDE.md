@@ -198,10 +198,38 @@ MySQL executes atomically, moving the live tables to `nfdold_` for rollback. Unt
 runs, the destination is untouched and the user can simply retry.
 
 `PathMap` maps a package's recorded paths onto this install's layout and is the security boundary
-for untrusted archive input. `UserMerger` is the one table that merges rather than replaces
+for untrusted archive input. It also **refuses to write the migrator itself**: the running plugin
+by both the address the site uses and the real one behind a symlink, this plugin under the name it
+ships as (a second copy is two sets of the same classes, a fatal error rather than untidiness),
+and an import loader left in `mu-plugins` by a package built from a site that was mid-import. The
+export already excludes itself, so ordinarily nothing matches — this is the destination declining
+to bet the running importer on a package it did not build. String comparison against a list built
+once, because it runs per entry. `UserMerger` is the one table that merges rather than replaces
 (plan §9.4). `Swap` also handles rollback and the retention window. `Fixups` repairs what the swap
 leaves inconsistent — including re-adding this plugin to `active_plugins`, which the source's list
 correctly does not contain.
+
+**Rollback undoes the database exactly and the files only where it honestly can.** `AddedCode`
+snapshots the places a package installs into — `plugins`, `mu-plugins`, the recognised drop-ins in
+`wp-content`, and every registered theme root, named the way `PartSpecs` names its theme parts —
+at precheck, before the first file is written, and takes the difference once the files stage
+finishes. Rollback deletes exactly that difference. Anything the destination already had and the
+package overwrote stays: its own copy is gone by then, so deleting it would turn an incomplete
+rollback into a destructive one. Two of the slots are not cosmetic — a must-use plugin and a
+drop-in are loaded from disk with no reference to any option, so before this they went on
+*running* after the rollback that was supposed to remove them. The before-snapshot is passed to
+the delete as well as the diff, so "never deletes what this site already had" is checked where the
+deleting happens. Nothing else a package carries is tracked, `uploads` least of all: a media file
+added after the import is indistinguishable from one the package brought, and getting that wrong
+destroys work.
+
+`Upload::discard()` deletes a package from the screen that lists them, which is the only place
+they are visible — they are whole sites, 2.2GB each on the test install. The path is **matched
+against what `discover()` itself reports**, by `realpath()`: an endpoint that deletes the directory
+it is handed is an arbitrary-deletion endpoint, and `manage_options` is not reason enough for one
+to exist. It also refuses a path holding this site's own import state, and the package of a run
+that is not settled. Note `realpath('')` is the *working directory*, not nothing, so an empty
+parameter is refused before it is resolved rather than compared after.
 
 Import state lives in `uploads/nfd-site-migrator/import/`, **not in the package** (plan D15).
 
@@ -219,13 +247,46 @@ and it is what makes the round-trip test a shell script.
 and `utils/useImport.js` drive the step loops. Calls go through `utils/api.js`, which converts
 thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
 
-**Everything the import touches must survive the swap**, and three browser things do not on their
+**Everything the import touches must survive the swap**, and four browser things do not on their
 own. The REST *nonce* dies with the users table, so `ImportController` clears that error for a
 request bearing a valid import token, at priority **200** — core registers its own check at 100.
 The REST *root* dies when the two sites' permalink structures differ, because apiFetch pins
 `/wp-json/…` at page render; every import call goes through `?rest_route=` via
-`restEndpoint()`/`stableCall()`. And the *auth cookie* names the user's login, which the merge may
-change, so `Fixups` re-issues it. Do not "simplify" any of these back to the idiomatic form.
+`restEndpoint()`/`stableCall()`. The *auth cookie* names the user's login, which the merge may
+change, so `Fixups` re-issues it. And the plugin's own *asset URLs* die when its directory is a
+symlink: `plugin_dir_url()` resolves one only through `$wp_plugin_paths`, which `wp-settings.php`
+populates from `active_plugins` and **never for an mu-plugin** — so a plugin loaded by the import
+loader emits `…/wp-content/plugins/Users/you/src/build/app.js`, 404s both assets, and renders a
+blank admin page on the screen where the migration is accepted or undone. Do not "simplify" any of
+these back to the idiomatic form.
+
+**So there is no plugin-URL constant, and there must not be one.** mu-plugins load at
+`wp-settings.php:506` and the active-plugin loop that registers symlinks runs at 583, so anything
+computed while this plugin is being included is computed too early — which is why activating the
+plugin does not repair a page whose URLs were already baked. `nfd_sm_plugin_url()` answers at the
+moment it is asked, and asks `plugins_url()` about the path *under `WP_PLUGIN_DIR`*, which is a
+plain prefix strip needing no mapping at all. `WP_Admin::register_assets()` calls it at
+`admin_enqueue_scripts`. The loader also registers the mapping before requiring the plugin, so
+anything else reaching for `plugin_dir_url()` during an import gets a sane answer.
+
+**The plugin's directory is not its slug.** `nfd_sm_plugin_basename()` answers what `active_plugins`
+has to contain, checked against the filesystem and falling back to a search of the plugins
+directory for the entry that resolves to this one — `plugin_basename()` alone is wrong exactly when
+the plugin is loaded from `mu-plugins`, which is when the import needs it. `Fixups` guessed
+`nfd-site-migrator/nfd-site-migrator.php` instead, which activated nothing on a checkout or a
+symlinked working copy, and `drop_missing_plugins()` then stripped the entry two lines later as a
+plugin whose file is not there. `PartSpecs`'s self-exclusion and `AddedCode`'s ignore list use the
+same helper.
+
+**A finished import stays `stage: done` after it is rolled back or kept**, and until this was
+handled that record was what stopped the next migration: from the same package `step()` reported
+the old run as done and did nothing, from a different one `assert_not_busy()` refused, and
+`Resume` sent every visit back to a decision screen with two buttons that could now only fail.
+So a *settled* run — rolled back, or confirmed — is forgotten by `step()` before it starts, is not
+what `Resume` routes to, and does not decide the Done screen's own click state (which settles from
+the server's `rolled_back` / `confirmed`). A finished run that is still **undecided** stays put:
+its backup tables are the only copy of this site as it was. `Importer::rollback()` and `confirm()`
+say which of the two already happened rather than "nothing to undo".
 
 **Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
 before they can render. The resume redirect used to `return null`: a blank admin page, on the

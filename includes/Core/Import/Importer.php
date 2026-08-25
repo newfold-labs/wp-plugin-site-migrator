@@ -347,6 +347,17 @@ class Importer {
 
 		$state = $this->checkpoint->load();
 
+		// A run that has been rolled back or kept is a record of what happened, not a claim on
+		// the site, and holding on to it is what stops the next import. From the same package
+		// the step below reports the old run as already done and nothing happens at all; from a
+		// different one `assert_not_busy()` refuses. A run that is finished but *undecided* is a
+		// different matter and stays: its backup tables are the only copy of this site as it was.
+		if ( ImportCheckpoint::is_settled( $state ) ) {
+			$this->checkpoint->clear();
+
+			$state = $this->checkpoint->load();
+		}
+
 		if ( ImportCheckpoint::STAGE_DONE === $state['stage'] && $state['package'] === $this->dir ) {
 			return $this->report( $state, true );
 		}
@@ -516,6 +527,10 @@ class Importer {
 		// Recorded only now, on the far side of every check: from here on the run owns the site.
 		$state['package'] = $this->dir;
 
+		// The last moment at which the plugin and theme directories still hold only what this
+		// site installed itself. The next stage writes into them.
+		$state['code_before'] = AddedCode::snapshot();
+
 		$this->progress->finish( ImportCheckpoint::STAGE_PRECHECK );
 
 		$state['stage'] = ImportCheckpoint::STAGE_FILES;
@@ -596,6 +611,10 @@ class Importer {
 	public function confirm() {
 		$state = $this->checkpoint->load();
 
+		if ( ! empty( $state['rolled_back'] ) ) {
+			throw new \RuntimeException( 'This import was undone, so there is nothing to keep.' );
+		}
+
 		if ( empty( $state['live_prefix'] ) ) {
 			throw new \RuntimeException( 'No import has run on this site, so there is nothing to confirm.' );
 		}
@@ -641,6 +660,20 @@ class Importer {
 			);
 
 			return;
+		}
+
+		if ( ! empty( $state['migrator_skipped'] ) ) {
+			$state['notes'][] = \sprintf(
+				'Left %d file(s) in the package alone: they would have overwritten the migrator '
+					. 'itself, which is running this import.',
+				(int) $state['migrator_skipped']
+			);
+		}
+
+		// Taken here rather than at rollback: by then the answer would include anything the
+		// user installed after the import, and rollback would delete that too.
+		if ( ! empty( $state['code_before'] ) ) {
+			$state['code_added'] = AddedCode::added( (array) $state['code_before'] );
 		}
 
 		$this->progress->finish( ImportCheckpoint::STAGE_FILES );
@@ -913,6 +946,14 @@ class Importer {
 	public function rollback() {
 		$state = $this->checkpoint->load();
 
+		// Said separately from the check below, because "already undone" and "never swapped in"
+		// are different situations and only one of them is a mistake. A finished import stays
+		// on `stage: done` after it is rolled back, so anything that routes by that alone lands
+		// back on the decision screen and the second press arrives here.
+		if ( ! empty( $state['rolled_back'] ) ) {
+			throw new \RuntimeException( 'This import has already been undone.' );
+		}
+
 		if ( empty( $state['live_prefix'] ) || empty( $state['swapped'] ) ) {
 			throw new \RuntimeException( 'This import has not been swapped in, so there is nothing to undo.' );
 		}
@@ -925,6 +966,19 @@ class Importer {
 		// source database that nothing can now reach. Rollback means undo, so they go.
 		$dropped = $swap->discard_staged();
 
+		// And so do the plugins and themes the package installed. The database is the
+		// destination's own again, so neither `active_plugins` nor `stylesheet` names any of
+		// them — but the files are still on disk, and a must-use plugin or a drop-in among them
+		// is still being loaded. Removed after the rename rather than before it: until that
+		// statement runs the rollback can still fail, and a failed rollback that had already
+		// deleted files would leave the site on the imported database with pieces of it missing.
+		$removed = AddedCode::remove(
+			isset( $state['code_added'] ) ? (array) $state['code_added'] : array(),
+			isset( $state['code_before'] ) ? (array) $state['code_before'] : array()
+		);
+
+		$state['code_removed'] = $removed;
+
 		$this->release();
 
 		\wp_cache_flush();
@@ -933,6 +987,14 @@ class Importer {
 			'Rolled back: the site\'s own tables are live again, and %d imported table(s) were discarded.',
 			$dropped
 		);
+
+		if ( ! empty( $removed ) ) {
+			$state['notes'][] = \sprintf(
+				'Removed %d plugin(s) and theme(s) the import installed: %s.',
+				\count( $removed ),
+				\implode( ', ', $removed )
+			);
+		}
 
 		$this->checkpoint->save( $state );
 

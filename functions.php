@@ -315,3 +315,104 @@ function nfd_sm_relative_path( $root, $path ) {
 
 	return basename( $path );
 }
+
+/**
+ * Absolute path to this plugin's main file, with symlinks resolved.
+ *
+ * @return string
+ */
+function nfd_sm_plugin_file() {
+	return NFD_SM_PLUGIN_DIR . NFD_SM_PLUGIN_NAME . '.php';
+}
+
+/**
+ * How WordPress addresses this plugin in `active_plugins`: `directory/file.php`.
+ *
+ * Not `NFD_SM_PLUGIN_NAME . '/' . NFD_SM_PLUGIN_NAME . '.php'`, which is a guess that is wrong
+ * whenever the directory is not named after the slug — a checkout under its repository name, a
+ * Composer or Bedrock deployment, or a symlink into a working copy. Writing the guess into
+ * `active_plugins` activates nothing, because there is no file at that path; `Fixups` then
+ * deactivates it again as missing, and the plugin is left loaded only by the import loader, at
+ * which point `plugin_dir_url()` cannot express its own directory as a URL and every asset
+ * 404s. That is a blank admin page on the screen where the user decides whether to keep the
+ * migration.
+ *
+ * `plugin_basename()` answers correctly whenever WordPress has been told about the symlink,
+ * which it is for anything in `active_plugins` — but *not* for a plugin loaded from
+ * `mu-plugins`, which is exactly the situation during an import. So the answer is checked
+ * against the filesystem, and when it does not hold up the plugins directory is searched for
+ * the entry that resolves to this one.
+ *
+ * @return string
+ */
+function nfd_sm_plugin_basename() {
+	static $basename = null;
+
+	if ( null !== $basename ) {
+		return $basename;
+	}
+
+	$file  = nfd_sm_plugin_file();
+	$guess = plugin_basename( $file );
+
+	if ( file_exists( WP_PLUGIN_DIR . '/' . $guess ) ) {
+		$basename = $guess;
+
+		return $basename;
+	}
+
+	$basename = basename( dirname( $file ) ) . '/' . basename( $file );
+	$real     = realpath( dirname( $file ) );
+	$entries  = is_dir( WP_PLUGIN_DIR ) ? scandir( WP_PLUGIN_DIR ) : array();
+
+	foreach ( (array) $entries as $entry ) {
+		if ( '.' === $entry || '..' === $entry || ! is_dir( WP_PLUGIN_DIR . '/' . $entry ) ) {
+			continue;
+		}
+
+		if ( false !== $real && realpath( WP_PLUGIN_DIR . '/' . $entry ) === $real ) {
+			$basename = $entry . '/' . basename( $file );
+
+			break;
+		}
+	}
+
+	return $basename;
+}
+
+/**
+ * URL for a file inside this plugin's directory.
+ *
+ * Worked out when it is asked for, from the path WordPress addresses this plugin by — never
+ * baked into a constant as the plugin loads. `plugin_dir_url()` can only express a symlinked
+ * plugin directory through `$wp_plugin_paths`, which `wp-settings.php` fills in as it loads the
+ * *active* plugins; anything that includes this plugin earlier than that — the import's own
+ * mu-plugin loader, a drop-in, `wp --require` — computes its URLs before that mapping exists
+ * and gets the plugin's absolute filesystem path glued onto the plugins URL, so every asset
+ * 404s and the admin page renders empty.
+ *
+ * Handing `plugins_url()` the path under `WP_PLUGIN_DIR` sidesteps the mapping altogether: it
+ * is then a plain prefix strip, correct whoever loaded the plugin and whenever they did it.
+ *
+ * @param string $path Path relative to the plugin directory.
+ *
+ * @return string
+ */
+function nfd_sm_plugin_url( $path = '' ) {
+	return plugins_url(
+		ltrim( (string) $path, '/' ),
+		rtrim( WP_PLUGIN_DIR, '/\\' ) . '/' . nfd_sm_plugin_basename()
+	);
+}
+
+/**
+ * This plugin's directory name inside the plugins directory.
+ *
+ * @return string
+ */
+function nfd_sm_plugin_dirname() {
+	$basename = nfd_sm_plugin_basename();
+	$slash    = strpos( $basename, '/' );
+
+	return false === $slash ? $basename : substr( $basename, 0, $slash );
+}

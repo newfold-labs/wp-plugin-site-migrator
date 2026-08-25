@@ -3,12 +3,16 @@
 define( 'NFD_SM_VERSION', '0.1.0' );
 define( 'NFD_SM_PLUGIN_NAME', 'nfd-site-migrator' );
 define( 'NFD_SM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'NFD_SM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 // Build output is unversioned on purpose: a versioned path meant the plugin header,
 // package.json and the built directory could drift and silently stop enqueueing.
 // Cache busting comes from the content hash in nfd-site-migrator.asset.php.
 define( 'NFD_SM_PLUGIN_BUILD_DIR', plugin_dir_path( __FILE__ ) . 'build' );
-define( 'NFD_SM_PLUGIN_BUILD_URL', plugin_dir_url( __FILE__ ) . 'build' );
+
+// There is deliberately no URL constant to match. A URL for this plugin's own directory cannot
+// be computed while it is loading: `plugin_dir_url()` resolves a symlinked plugin directory
+// only through a mapping wp-settings.php registers later, and when the import's mu-plugin
+// loader is what included us, that mapping never arrives at all. Use `nfd_sm_plugin_url()`,
+// which answers at the moment it is asked.
 
 if ( ! defined( 'NFD_SM_MAX_TRANSACTION_QUERIES' ) ) {
 	define( 'NFD_SM_MAX_TRANSACTION_QUERIES', 1000 );

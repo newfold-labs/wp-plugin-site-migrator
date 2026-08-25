@@ -216,6 +216,12 @@ export const api = {
 		uploadVerify: () =>
 			stableCall( 'import/upload/verify', { method: 'POST' } ),
 
+		discard: ( dir ) =>
+			stableCall( 'import/discard', {
+				method: 'POST',
+				data: { dir },
+			} ),
+
 		preview: ( dir ) =>
 			stableCall( 'import/preview', {
 				method: 'POST',

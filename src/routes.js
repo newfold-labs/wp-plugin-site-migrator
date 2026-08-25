@@ -30,7 +30,16 @@ const Resume = () => {
 		// An import in flight outranks anything on the export side: this site may already have
 		// been replaced, and dropping the user on the export screen would hide that.
 		api.import.state().then( ( imported ) => {
-			if ( ! imported.failed && imported.complete ) {
+			// A finished import that has been kept or undone is over: the decision screen has
+			// nothing left to ask, and landing there on every visit is what makes starting
+			// again feel impossible. It is still reachable, and still renders correctly, for
+			// anyone who follows a link to it.
+			const undecided =
+				imported.complete &&
+				! imported.rolled_back &&
+				! imported.confirmed;
+
+			if ( ! imported.failed && undecided ) {
 				navigate( '/import/done', { replace: true } );
 				return;
 			}

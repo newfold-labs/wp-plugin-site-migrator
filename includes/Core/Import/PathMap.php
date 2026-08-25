@@ -31,12 +31,21 @@ class PathMap {
 	protected $roots = array();
 
 	/**
+	 * Absolute paths this import must never write to, normalised.
+	 *
+	 * @var array
+	 */
+	protected $protected = array();
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
 		foreach ( PartSpecs::all() as $spec ) {
 			$this->roots[ $spec->name() ] = $spec->root();
 		}
+
+		$this->protected = $this->protected_paths();
 	}
 
 	/**
@@ -74,6 +83,74 @@ class PathMap {
 	 */
 	public function roots() {
 		return $this->roots;
+	}
+
+	/**
+	 * Whether a path is one this import must refuse to write.
+	 *
+	 * The export excludes the migrator from its own package, so in the ordinary case nothing
+	 * ever matches. This is the destination refusing to depend on that: the package is
+	 * untrusted input, it may have been built by an older version, and what it would overwrite
+	 * here is the code that is running the import. The failure is not a broken plugin
+	 * afterwards — it is the importer's own files changing underneath it, mid-request.
+	 *
+	 * Three things are refused, and the first two are not the same path. A working copy is
+	 * often symlinked into the plugins directory, so the running plugin has an address inside
+	 * the site and a real one outside it, and a package can name either. The third is this
+	 * plugin under the name it is distributed as, which would install a *second* copy beside
+	 * the running one — two sets of the same classes and functions, which is a fatal error on
+	 * the next request rather than a tidiness problem.
+	 *
+	 * String comparison only. This runs for every entry in the package, and the per-file cost
+	 * of the restore is the thing that decides whether a large site finishes.
+	 *
+	 * @param string $path Absolute, normalised destination path.
+	 *
+	 * @return bool
+	 */
+	public function is_protected( $path ) {
+		foreach ( $this->protected as $prefix ) {
+			if ( $path === $prefix || 0 === \strpos( $path, $prefix . '/' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build the refusal list.
+	 *
+	 * @return array
+	 */
+	protected function protected_paths() {
+		$plugins = \rtrim( (string) \nfd_sm_plugins_dir(), '/\\' );
+		$paths   = array(
+			// The running plugin as the site addresses it, and as the filesystem does.
+			$plugins . '/' . \nfd_sm_plugin_dirname(),
+			\rtrim( \NFD_SM_PLUGIN_DIR, '/\\' ),
+			// A second copy, under the name this plugin ships as.
+			$plugins . '/' . NFD_SM_PLUGIN_NAME,
+		);
+
+		if ( \defined( 'WPMU_PLUGIN_DIR' ) ) {
+			// A package built from a site that was itself mid-import carries that site's import
+			// loader. Restored here it would keep loading a plugin from the *source's* path,
+			// for good, and on two machines laid out alike that path resolves.
+			$paths[] = \rtrim( \WPMU_PLUGIN_DIR, '/\\' ) . '/' . Loader::NAME;
+		}
+
+		$out = array();
+
+		foreach ( $paths as $path ) {
+			$path = self::normalise( $path );
+
+			if ( '' !== $path && ! \in_array( $path, $out, true ) ) {
+				$out[] = $path;
+			}
+		}
+
+		return $out;
 	}
 
 	/**

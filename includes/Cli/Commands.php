@@ -282,11 +282,15 @@ class Commands {
 		$importer = new Importer( '' );
 
 		try {
-			$importer->rollback();
+			$state = $importer->rollback();
 		} catch ( \Exception $e ) {
 			\WP_CLI::error( $e->getMessage() );
 
 			return;
+		}
+
+		foreach ( (array) $state['notes'] as $note ) {
+			\WP_CLI::log( $note );
 		}
 
 		\WP_CLI::success( 'Rolled back.' );

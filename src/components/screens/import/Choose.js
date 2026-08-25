@@ -43,6 +43,12 @@ export const Choose = () => {
 	const [ busy, setBusy ] = useState( false );
 	const [ error, setError ] = useState( '' );
 
+	// The path whose delete has been asked for but not yet confirmed, and the one being
+	// deleted. Two steps rather than a browser confirm dialog: this removes a whole site from
+	// the disk, and the sentence explaining that has nowhere to go in a native prompt.
+	const [ confirming, setConfirming ] = useState( '' );
+	const [ discarding, setDiscarding ] = useState( '' );
+
 	// Directory selection is not a React property, and the two attributes that enable it differ
 	// by browser. Set on the node itself so neither is dropped on the way through JSX.
 	useEffect( () => {
@@ -70,6 +76,31 @@ export const Choose = () => {
 			flag.current = true;
 		};
 	}, [] );
+
+	/**
+	 * Delete a package that is already on this server.
+	 *
+	 * @param {string} path Absolute package directory.
+	 */
+	const discard = async ( path ) => {
+		setDiscarding( path );
+		setError( '' );
+
+		const response = await api.import.discard( path );
+
+		setDiscarding( '' );
+		setConfirming( '' );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
+		setSources( ( current ) => ( {
+			...current,
+			discovered: response.discovered,
+		} ) );
+	};
 
 	/**
 	 * Work out what was selected, and whether it is a whole package.
@@ -240,20 +271,92 @@ export const Choose = () => {
 													10
 											  ) }`
 											: '' }
+										{ found.source &&
+										found.source === sources.site_url
+											? ` · ${ __(
+													'made by this site',
+													'nfd-site-migrator'
+											  ) }`
+											: '' }
 									</span>
 									<div className="nfd-sm-mono nfd-sm-hint">
 										{ found.path }
 									</div>
+									{ confirming === found.path && (
+										<p className="nfd-sm-hint">
+											{ sprintf(
+												/* translators: %s: package size, e.g. "2.2 GB". */
+												__(
+													'Delete this package and free %s? It holds a whole site, and nothing here can bring it back.',
+													'nfd-site-migrator'
+												),
+												size( found.bytes )
+											) }
+										</p>
+									) }
 								</div>
-								<button
-									type="button"
-									className="nfd-sm-btn"
-									onClick={ () =>
-										openDiscovered( found.path )
-									}
-								>
-									{ __( 'Use this', 'nfd-site-migrator' ) }
-								</button>
+								{ confirming === found.path ? (
+									<div className="nfd-sm-actions">
+										<button
+											type="button"
+											className="nfd-sm-btn"
+											disabled={ '' !== discarding }
+											onClick={ () =>
+												setConfirming( '' )
+											}
+										>
+											{ __(
+												'Keep it',
+												'nfd-site-migrator'
+											) }
+										</button>
+										<button
+											type="button"
+											className="nfd-sm-btn nfd-sm-btn--danger"
+											disabled={ '' !== discarding }
+											onClick={ () =>
+												discard( found.path )
+											}
+										>
+											{ discarding === found.path
+												? __(
+														'Deleting…',
+														'nfd-site-migrator'
+												  )
+												: __(
+														'Delete it',
+														'nfd-site-migrator'
+												  ) }
+										</button>
+									</div>
+								) : (
+									<div className="nfd-sm-actions">
+										<button
+											type="button"
+											className="nfd-sm-btn"
+											onClick={ () =>
+												setConfirming( found.path )
+											}
+										>
+											{ __(
+												'Delete',
+												'nfd-site-migrator'
+											) }
+										</button>
+										<button
+											type="button"
+											className="nfd-sm-btn"
+											onClick={ () =>
+												openDiscovered( found.path )
+											}
+										>
+											{ __(
+												'Use this',
+												'nfd-site-migrator'
+											) }
+										</button>
+									</div>
+								) }
 							</li>
 						) ) }
 					</ul>

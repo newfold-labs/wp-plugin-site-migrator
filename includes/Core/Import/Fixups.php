@@ -102,7 +102,11 @@ class Fixups {
 	 * @return void
 	 */
 	protected function keep_migrator_active() {
-		$slug   = NFD_SM_PLUGIN_NAME . '/' . NFD_SM_PLUGIN_NAME . '.php';
+		// The real directory name, not one derived from the slug: they differ for a checkout, a
+		// Composer deployment, or a symlinked working copy, and an entry naming a file that is
+		// not there activates nothing — `drop_missing_plugins()` then strips it right back out
+		// on the next line but one.
+		$slug   = \nfd_sm_plugin_basename();
 		$active = (array) \get_option( 'active_plugins', array() );
 
 		if ( \in_array( $slug, $active, true ) ) {

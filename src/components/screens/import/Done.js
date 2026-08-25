@@ -1,4 +1,4 @@
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
@@ -21,6 +21,8 @@ export const Done = () => {
 	const [ busy, setBusy ] = useState( '' );
 	const [ error, setError ] = useState( '' );
 	const [ outcome, setOutcome ] = useState( '' );
+	const [ undone, setUndone ] = useState( [] );
+	const [ undoneRemoved, setUndoneRemoved ] = useState( 0 );
 
 	const refresh = () =>
 		api.import.state().then( ( s ) => {
@@ -49,6 +51,8 @@ export const Done = () => {
 			return;
 		}
 
+		setUndone( response.notes || [] );
+		setUndoneRemoved( ( response.removed || [] ).length );
 		setOutcome( 'rolled-back' );
 		refresh();
 	};
@@ -70,12 +74,61 @@ export const Done = () => {
 		refresh();
 	};
 
+	// "3 plugins and 1 theme", built from whichever halves are non-zero, because undoing
+	// deletes them and that is worth saying before the decision rather than after it.
+	const added = state?.added || {};
+	const addedCount = ( added.plugins || 0 ) + ( added.themes || 0 );
+	const addedParts = [];
+
+	if ( added.plugins > 0 ) {
+		addedParts.push(
+			sprintf(
+				/* translators: %d: number of plugins. */
+				_n(
+					'%d plugin',
+					'%d plugins',
+					added.plugins,
+					'nfd-site-migrator'
+				),
+				added.plugins
+			)
+		);
+	}
+
+	if ( added.themes > 0 ) {
+		addedParts.push(
+			sprintf(
+				/* translators: %d: number of themes. */
+				_n(
+					'%d theme',
+					'%d themes',
+					added.themes,
+					'nfd-site-migrator'
+				),
+				added.themes
+			)
+		);
+	}
+
+	// After a refresh the rollback's own response is gone, but the notes it wrote are in the
+	// state it saved.
+	const undoneNotes = undone.length > 0 ? undone : state?.notes || [];
+
+	// What the server says already happened outranks nothing having happened in this tab. A
+	// finished import stays on `stage: done` after it is rolled back or kept, so a refresh
+	// lands back here — and without this the screen offers two buttons that can now only fail.
+	const settled =
+		outcome ||
+		( state?.rolled_back && 'rolled-back' ) ||
+		( state?.confirmed && 'kept' ) ||
+		'';
+
 	const users = state?.users || {};
 	const renamed = users.renamed || [];
 	const demoted = users.demoted || [];
 	const logins = users.login_changes || [];
 
-	if ( 'rolled-back' === outcome ) {
+	if ( 'rolled-back' === settled ) {
 		return (
 			<Layout
 				steps={ DESTINATION_STEPS }
@@ -87,11 +140,31 @@ export const Done = () => {
 					'This site is serving its own content again',
 					'nfd-site-migrator'
 				) }
-				intro={ __(
-					'The import has been undone. Your posts, settings and accounts are exactly as they were.',
-					'nfd-site-migrator'
-				) }
+				intro={
+					undoneRemoved > 0 || addedCount > 0
+						? __(
+								'The import has been undone. Your posts, settings and accounts are exactly as they were, and the plugins and themes the package installed have been removed.',
+								'nfd-site-migrator'
+						  )
+						: __(
+								'The import has been undone. Your posts, settings and accounts are exactly as they were.',
+								'nfd-site-migrator'
+						  )
+				}
 			>
+				{ undoneNotes.length > 0 && (
+					<details className="nfd-sm-details">
+						<summary>
+							{ __( 'What happened', 'nfd-site-migrator' ) }
+						</summary>
+						<ul className="nfd-sm-list">
+							{ undoneNotes.map( ( n ) => (
+								<li key={ n }>{ n }</li>
+							) ) }
+						</ul>
+					</details>
+				) }
+
 				<div className="nfd-sm-actions">
 					<button
 						type="button"
@@ -262,64 +335,85 @@ export const Done = () => {
 				</details>
 			) }
 
-			{ 'kept' === outcome ? (
-				<div className="nfd-sm-note nfd-sm-note--pass">
-					{ __(
-						'Kept. The previous site’s tables have been removed and the migration is finished.',
-						'nfd-site-migrator'
-					) }
-				</div>
-			) : (
-				<div className="nfd-sm-card nfd-sm-card--commit">
-					<p className="nfd-sm-eyebrow">
-						{ __( 'One last decision', 'nfd-site-migrator' ) }
-					</p>
-					<p>
+			{ state &&
+				( 'kept' === settled ? (
+					<div className="nfd-sm-note nfd-sm-note--pass">
 						{ __(
-							'Check the site works — the front page, a few posts, your images, and signing in. Then keep it, or put the old one back.',
+							'Kept. The previous site’s tables have been removed and the migration is finished.',
 							'nfd-site-migrator'
 						) }
-					</p>
-					<div className="nfd-sm-actions">
-						<a
-							className="nfd-sm-btn"
-							href={ state?.site_url || '/' }
-							target="_blank"
-							rel="noreferrer"
-						>
-							{ __( 'View the site', 'nfd-site-migrator' ) }
-						</a>
-						<button
-							type="button"
-							className="nfd-sm-btn nfd-sm-btn--primary"
-							id="nfd-sm-keep"
-							disabled={ '' !== busy }
-							onClick={ keep }
-						>
-							{ 'confirm' === busy
-								? __( 'Finishing…', 'nfd-site-migrator' )
-								: __( 'Keep it', 'nfd-site-migrator' ) }
-						</button>
-						<button
-							type="button"
-							className="nfd-sm-btn nfd-sm-btn--danger"
-							id="nfd-sm-undo"
-							disabled={ '' !== busy }
-							onClick={ undo }
-						>
-							{ 'rollback' === busy
-								? __( 'Putting it back…', 'nfd-site-migrator' )
-								: __( 'Undo the import', 'nfd-site-migrator' ) }
-						</button>
 					</div>
-					<p className="nfd-sm-hint">
-						{ __(
-							'Keeping it removes the old tables and frees the space. After that the import cannot be undone.',
-							'nfd-site-migrator'
+				) : (
+					<div className="nfd-sm-card nfd-sm-card--commit">
+						<p className="nfd-sm-eyebrow">
+							{ __( 'One last decision', 'nfd-site-migrator' ) }
+						</p>
+						<p>
+							{ __(
+								'Check the site works — the front page, a few posts, your images, and signing in. Then keep it, or put the old one back.',
+								'nfd-site-migrator'
+							) }
+						</p>
+						<div className="nfd-sm-actions">
+							<a
+								className="nfd-sm-btn"
+								href={ state?.site_url || '/' }
+								target="_blank"
+								rel="noreferrer"
+							>
+								{ __( 'View the site', 'nfd-site-migrator' ) }
+							</a>
+							<button
+								type="button"
+								className="nfd-sm-btn nfd-sm-btn--primary"
+								id="nfd-sm-keep"
+								disabled={ '' !== busy }
+								onClick={ keep }
+							>
+								{ 'confirm' === busy
+									? __( 'Finishing…', 'nfd-site-migrator' )
+									: __( 'Keep it', 'nfd-site-migrator' ) }
+							</button>
+							<button
+								type="button"
+								className="nfd-sm-btn nfd-sm-btn--danger"
+								id="nfd-sm-undo"
+								disabled={ '' !== busy }
+								onClick={ undo }
+							>
+								{ 'rollback' === busy
+									? __(
+											'Putting it back…',
+											'nfd-site-migrator'
+									  )
+									: __(
+											'Undo the import',
+											'nfd-site-migrator'
+									  ) }
+							</button>
+						</div>
+						{ addedParts.length > 0 && (
+							<p className="nfd-sm-hint">
+								{ sprintf(
+									/* translators: %s: a list such as "3 plugins and 1 theme". */
+									__(
+										'Undoing also removes the %s the package installed here. Anything this site already had is left alone.',
+										'nfd-site-migrator'
+									),
+									addedParts.join(
+										__( ' and ', 'nfd-site-migrator' )
+									)
+								) }
+							</p>
 						) }
-					</p>
-				</div>
-			) }
+						<p className="nfd-sm-hint">
+							{ __(
+								'Keeping it removes the old tables and frees the space. After that the import cannot be undone.',
+								'nfd-site-migrator'
+							) }
+						</p>
+					</div>
+				) ) }
 		</Layout>
 	);
 };

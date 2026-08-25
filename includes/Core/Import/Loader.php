@@ -45,7 +45,12 @@ class Loader {
 			return false;
 		}
 
-		$plugin = \NFD_SM_PLUGIN_DIR . NFD_SM_PLUGIN_NAME . '.php';
+		$plugin = \nfd_sm_plugin_file();
+
+		// The same file as WordPress addresses it, which differs from the line above whenever
+		// the plugin directory is a symlink. Recorded now, while the plugin is loaded the
+		// ordinary way and `plugin_basename()` can still be trusted.
+		$linked = \rtrim( \WP_PLUGIN_DIR, '/\\' ) . '/' . \nfd_sm_plugin_basename();
 
 		$body = "<?php\n"
 			. "/**\n"
@@ -56,8 +61,17 @@ class Loader {
 			. "// The import replaces active_plugins with the source site's list, which does not\n"
 			. "// include the migrator. Without this file the importer stops being loaded at the\n"
 			. "// exact moment it still has work to do.\n"
-			. '$nfd_sm_plugin = ' . \var_export( $plugin, true ) . ";\n\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+			. '$nfd_sm_plugin = ' . \var_export( $plugin, true ) . ";\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+			. '$nfd_sm_linked = ' . \var_export( $linked, true ) . ";\n\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions
 			. "if ( file_exists( \$nfd_sm_plugin ) && ! function_exists( 'nfd_sm_storage_path' ) ) {\n"
+			. "\t// WordPress registers a plugin's symlink only for entries in active_plugins, and\n"
+			. "\t// this one is not in it while the import runs. Without the mapping, the plugin's\n"
+			. "\t// own directory cannot be expressed as a URL and every asset 404s -- a blank admin\n"
+			. "\t// page on the screen where the migration is accepted or undone. Registered before\n"
+			. "\t// the require, because constants.php computes the asset URLs as it loads.\n"
+			. "\tif ( function_exists( 'wp_register_plugin_realpath' ) ) {\n"
+			. "\t\twp_register_plugin_realpath( \$nfd_sm_linked );\n"
+			. "\t}\n\n"
 			. "\trequire_once \$nfd_sm_plugin;\n"
 			. "}\n";
 

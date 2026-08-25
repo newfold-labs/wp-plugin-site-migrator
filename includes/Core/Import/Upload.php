@@ -264,6 +264,79 @@ class Upload {
 	}
 
 	/**
+	 * Delete a package this site is offering as a source.
+	 *
+	 * A package is a whole site on disk — the two on the test install were 2.2GB each — and
+	 * until now the only way to reclaim that was a shell. The screen that lists them is the
+	 * place to remove them from, because it is the only place they are visible.
+	 *
+	 * The path is not taken on trust. It is matched, by `realpath()`, against what `discover()`
+	 * itself reports: an endpoint that deletes whatever directory it is handed is an
+	 * arbitrary-deletion endpoint, and `manage_options` is not a good enough reason for that to
+	 * exist. Everything else here is a refusal to delete something still being relied on.
+	 *
+	 * @param string $path Absolute package directory.
+	 *
+	 * @return int Bytes the package recorded for itself.
+	 *
+	 * @throws \RuntimeException If the path is not a package this site offers, or is in use.
+	 */
+	public static function discard( $path ) {
+		$path = \rtrim( (string) $path, '/\\' );
+
+		// `realpath('')` is the working directory, not nothing. Under PHP-FPM that can be the
+		// WordPress root, which `discover()` does look at — so an empty parameter must be
+		// refused before it is resolved, not compared after.
+		if ( '' === $path ) {
+			throw new \RuntimeException( 'No package was named, so nothing was deleted.' );
+		}
+
+		$real  = \realpath( $path );
+		$bytes = -1;
+
+		foreach ( self::discover() as $found ) {
+			if ( false !== $real && \realpath( $found['path'] ) === $real ) {
+				$bytes = (int) $found['bytes'];
+
+				break;
+			}
+		}
+
+		if ( $bytes < 0 ) {
+			throw new \RuntimeException(
+				'That is not a package this site is offering, so nothing was deleted.'
+			);
+		}
+
+		// `discover()` looks at each root itself as well as its children, so a package could in
+		// principle be found at a path that also holds this site's own import state. Deleting it
+		// would take the checkpoint with it, and with the checkpoint goes the ability to roll
+		// back at all.
+		$state_dir = \realpath( ImportCheckpoint::state_dir() );
+
+		if ( false !== $state_dir && ( $state_dir === $real || 0 === \strpos( $state_dir, $real . '/' ) ) ) {
+			throw new \RuntimeException(
+				'That directory holds this site\'s own import state, so it was left alone.'
+			);
+		}
+
+		$checkpoint = new ImportCheckpoint();
+		$state      = $checkpoint->load();
+		$recorded   = \rtrim( (string) $state['package'], '/\\' );
+		$in_use     = '' === $recorded ? false : \realpath( $recorded );
+
+		if ( false !== $in_use && $in_use === $real && ! ImportCheckpoint::is_settled( $state ) ) {
+			throw new \RuntimeException(
+				'This is the package the current import is using. Finish it, undo it, or cancel it first.'
+			);
+		}
+
+		\nfd_sm_delete_directory( $real );
+
+		return $bytes;
+	}
+
+	/**
 	 * Directories one level under a root that might hold a package.
 	 *
 	 * @param string $root Absolute directory.

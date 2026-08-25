@@ -7,6 +7,7 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Rest;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Import\AddedCode;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportToken;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Loader;
@@ -44,6 +45,7 @@ class ImportController extends Controller {
 
 		$routes = array(
 			'/import/sources'       => array( \WP_REST_Server::READABLE, 'sources', $admin ),
+			'/import/discard'       => array( \WP_REST_Server::CREATABLE, 'discard', $admin ),
 			'/import/upload/state'  => array( \WP_REST_Server::CREATABLE, 'upload_state', $admin ),
 			'/import/upload/chunk'  => array( \WP_REST_Server::CREATABLE, 'upload_chunk', $admin ),
 			'/import/upload/verify' => array( \WP_REST_Server::CREATABLE, 'upload_verify', $admin ),
@@ -150,6 +152,35 @@ class ImportController extends Controller {
 			array(
 				'uploaded'   => Upload::dir(),
 				'chunk_size' => Upload::chunk_size(),
+				'discovered' => Upload::discover(),
+				// So the screen can say which of these this site made itself. One of them
+				// usually is, and deleting your own export is a different act from deleting a
+				// copy of somebody else's site.
+				'site_url'   => \get_site_url(),
+			)
+		);
+	}
+
+	/**
+	 * Delete a package that is on this server.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function discard( $request ) {
+		try {
+			$bytes = Upload::discard( (string) $request->get_param( 'dir' ) );
+		} catch ( \Exception $e ) {
+			return new \WP_Error( 'nfd_sm_discard_failed', $e->getMessage(), array( 'status' => 400 ) );
+		}
+
+		return \rest_ensure_response(
+			array(
+				'ok'         => true,
+				'bytes'      => $bytes,
+				// The list as it is now, so the screen does not have to ask again and cannot
+				// draw a package that is no longer there.
 				'discovered' => Upload::discover(),
 			)
 		);
@@ -349,8 +380,10 @@ class ImportController extends Controller {
 				'complete'    => 'done' === $state['stage'],
 				'swapped'     => ! empty( $state['swapped'] ),
 				'rolled_back' => ! empty( $state['rolled_back'] ),
+				'confirmed'   => ! empty( $state['confirmed_at'] ),
 				'files'       => (int) $state['files_done'],
 				'rows'        => (int) $state['statements'],
+				'added'       => AddedCode::counts( isset( $state['code_added'] ) ? (array) $state['code_added'] : array() ),
 				'notes'       => (array) $state['notes'],
 				'manual'      => (array) $state['manual'],
 				'users'       => (array) $state['users'],
@@ -382,8 +415,9 @@ class ImportController extends Controller {
 
 		return \rest_ensure_response(
 			array(
-				'ok'    => true,
-				'notes' => (array) $state['notes'],
+				'ok'      => true,
+				'notes'   => (array) $state['notes'],
+				'removed' => isset( $state['code_removed'] ) ? (array) $state['code_removed'] : array(),
 			)
 		);
 	}

@@ -97,8 +97,9 @@ class PartSpecs {
 		if ( '' !== $plugins ) {
 			$spec = new PartSpec( 'plugins', $plugins, self::prefix_for( $plugins ) );
 			// The migrator excludes itself: a package that restores this plugin would overwrite
-			// the running importer mid-import.
-			$spec->exclude_dirs( array( NFD_SM_PLUGIN_NAME ) );
+			// the running importer mid-import. By the directory it is actually in, which is not
+			// the slug for a checkout or a symlinked working copy.
+			$spec->exclude_dirs( array( \nfd_sm_plugin_dirname() ) );
 			$specs[]   = $spec;
 			$covered[] = $plugins;
 		}
@@ -307,5 +308,14 @@ class PartSpecs {
 	 */
 	public static function root_allowlist() {
 		return self::$root_allowlist;
+	}
+
+	/**
+	 * The drop-in filenames WordPress recognises in wp-content.
+	 *
+	 * @return array
+	 */
+	public static function dropins() {
+		return self::$dropins;
 	}
 }

@@ -188,6 +188,13 @@ class FileRestorer {
 			return;
 		}
 
+		// Not `refused`: nothing is wrong with the package, and the user is told separately.
+		if ( $this->map->is_protected( $path ) ) {
+			++$state['migrator_skipped'];
+
+			return;
+		}
+
 		if ( ! $this->prepare_parent( $target['root'], $path ) ) {
 			$this->refused[] = $name;
 
@@ -257,6 +264,14 @@ class FileRestorer {
 
 			if ( '' === $path || ! \is_readable( $source ) ) {
 				$this->refused[] = isset( $entry['path'] ) ? $entry['path'] : '(unnamed)';
+				++$state['large_index'];
+				$state['large_offset'] = 0;
+
+				continue;
+			}
+
+			if ( $this->map->is_protected( $path ) ) {
+				++$state['migrator_skipped'];
 				++$state['large_index'];
 				$state['large_offset'] = 0;
 

@@ -49,7 +49,7 @@ final class WP_Admin {
 
 			\wp_register_script(
 				self::$slug,
-				NFD_SM_PLUGIN_BUILD_URL . '/nfd-site-migrator.js',
+				\nfd_sm_plugin_url( 'build/nfd-site-migrator.js' ),
 				array_merge( $asset['dependencies'], array() ),
 				$asset['version'],
 				true
@@ -57,7 +57,7 @@ final class WP_Admin {
 
 			\wp_register_style(
 				self::$slug,
-				NFD_SM_PLUGIN_BUILD_URL . '/nfd-site-migrator.css',
+				\nfd_sm_plugin_url( 'build/nfd-site-migrator.css' ),
 				array(),
 				$asset['version']
 			);

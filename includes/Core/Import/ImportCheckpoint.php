@@ -95,55 +95,86 @@ class ImportCheckpoint extends Checkpoint {
 	}
 
 	/**
+	 * Whether a finished run has had its one remaining decision made.
+	 *
+	 * A run that is done but undecided still owns the site: its backup tables are the only copy
+	 * of what was here before, and the package it came from is the only way to try again. A
+	 * settled one is a record of what happened, and nothing should be held back for it.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return bool
+	 */
+	public static function is_settled( array $state ) {
+		if ( ! isset( $state['stage'] ) || self::STAGE_DONE !== $state['stage'] ) {
+			return false;
+		}
+
+		return ! empty( $state['rolled_back'] ) || ! empty( $state['confirmed_at'] );
+	}
+
+	/**
 	 * A fresh state.
 	 *
 	 * @return array
 	 */
 	public static function defaults() {
 		return array(
-			'schema'        => self::SCHEMA,
-			'stage'         => self::STAGE_PRECHECK,
-			'started_at'    => \gmdate( 'c' ),
+			'schema'           => self::SCHEMA,
+			'stage'            => self::STAGE_PRECHECK,
+			'started_at'       => \gmdate( 'c' ),
 
 			// Which package this run belongs to, so a second one cannot resume into it.
-			'package'       => '',
+			'package'          => '',
 
 			// Prefixes are decided once, at precheck, and then never recomputed: the live
 			// prefix changes meaning the moment the swap runs.
-			'live_prefix'   => '',
-			'stage_prefix'  => '',
-			'backup_prefix' => '',
-			'source_prefix' => '',
+			'live_prefix'      => '',
+			'stage_prefix'     => '',
+			'backup_prefix'    => '',
+			'source_prefix'    => '',
 
 			// File restore.
-			'part_index'    => 0,
-			'entry_index'   => 0,
-			'large_index'   => 0,
-			'large_offset'  => 0,
-			'files_done'    => 0,
-			'bytes_done'    => 0,
+			'part_index'       => 0,
+			'entry_index'      => 0,
+			'large_index'      => 0,
+			'large_offset'     => 0,
+			'files_done'       => 0,
+			'bytes_done'       => 0,
+
+			// Entries refused because they would have overwritten the running migrator.
+			'migrator_skipped' => 0,
+
+			// What was installed in the plugin and theme directories before the first file was
+			// written, and what the package turned out to add. An empty `code_before` means the
+			// snapshot was never taken — a run that began before this was recorded — and the
+			// difference must not be computed against it, because everything installed would
+			// look like an addition.
+			'code_before'      => array(),
+			'code_added'       => array(),
+			'code_removed'     => array(),
 
 			// Database load.
-			'query_offset'  => 0,
-			'statements'    => 0,
-			'tables'        => array(),
-			'views'         => array(),
+			'query_offset'     => 0,
+			'statements'       => 0,
+			'tables'           => array(),
+			'views'            => array(),
 
 			// Search and replace.
-			'sr_table'      => 0,
-			'sr_offset'     => 0,
-			'sr_changed'    => 0,
+			'sr_table'         => 0,
+			'sr_offset'        => 0,
+			'sr_changed'       => 0,
 
 			// What happened, for the completion report.
-			'notes'         => array(),
-			'refused'       => array(),
-			'manual'        => array(),
-			'compatibility' => array(),
-			'live_views'    => array(),
-			'users'         => array(),
-			'swapped'       => false,
-			'rolled_back'   => false,
-			'error'         => '',
+			'notes'            => array(),
+			'refused'          => array(),
+			'manual'           => array(),
+			'compatibility'    => array(),
+			'live_views'       => array(),
+			'users'            => array(),
+			'swapped'          => false,
+			'rolled_back'      => false,
+			'error'            => '',
 		);
 	}
 }
