@@ -16,36 +16,40 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–4b are done.** A full migration works end to end, from the CLI and
-through wp-admin. What is left is phase 5 (direct site-to-site transfer), phase 6 (WP-CLI as a
-supported surface), phase 7 (tests and CI — the verification harness is shell scripts, not
-PHPUnit) and phase 8 (hardening and distribution).
+Current state: **phases 0–4 are done** (4a–4h). A full migration works end to end, both from
+the CLI and through wp-admin: pair, compare, package, download, upload, preview, import, roll
+back. What is left is phase 5 (direct site-to-site transfer), phase 6 (WP-CLI as a supported
+surface), phase 7 (tests and CI) and phase 8 (hardening and distribution).
+
+**Calibrate your confidence from how 4c–4h were found.** Every one of them came from somebody
+using the plugin on a real site, not from review — including two data-integrity bugs (3.18, the
+export packaging its own package; 3.19, a 129.8MB `.git` directory) that review had walked past
+for days. The happy path is solid and well covered by the round-trip suite. The unknowns are
+listed under *Known gaps* at the end of this file, and the way to close them is phase 7, not
+more 4x sub-phases.
 
 ## Commands
 
 ```bash
-# JS/CSS
-yarn build            # generate:css + wp-scripts build -> build/
-yarn start            # same, in watch mode
-yarn generate:css     # assets/styles/app.css -> src/styles/nfd-site-migrator.css (runs before webpack)
-yarn lint:js
-yarn format
-
 # PHP
 composer lint         # phpcs (Newfold standard)
-composer fix          # phpcbf
+composer fix          # phpcbf — read its diff, see below
 
-# Local WordPress (http://localhost:10004, admin/password)
-npx wp-env start
-npx wp-env stop
-
-# E2E (requires wp-env running with the plugin built)
-yarn test
-yarn cypress open
+# JS/CSS
+npm run generate:css                              # assets/styles/app.css -> src/styles/
+npx wp-scripts build ./src/nfd-site-migrator.js   # -> build/
+npx wp-scripts lint-js src                        # --fix to autofix
 ```
 
-`build/` and `src/styles/nfd-site-migrator.css` are **generated and not tracked**. Run
-`yarn build` after cloning or the admin page renders an empty div.
+**`package.json` hard-codes `yarn` inside its own `build` and `start` scripts**, so on a machine
+without yarn `npm run build` dies at the first step instead of falling back. Run the two halves
+directly, as above, or install yarn.
+
+`build/` and `src/styles/nfd-site-migrator.css` are **generated and not tracked**. Build after
+cloning or the admin page renders an empty div.
+
+`.wp-env.json` exists but wp-env is not provisioned here; the working local setup is two
+WordPress installs driven by the CLI (see *Tests*).
 
 ## Naming
 
@@ -76,9 +80,8 @@ auto-fixer that edits strings can change behaviour, and this codebase keys a lot
 
 The plugin header in `nfd-site-migrator.php` is the source of truth. `package.json` carries the
 same number for npm's benefit, but nothing breaks if they drift: **build output is unversioned**
-(`build/`, not `build/<version>/`) and cache busting comes from the content hash in
-`nfd-site-migrator.asset.php`. This replaced a four-place scheme where a mismatch made
-`WP_Admin::register_assets()` silently skip enqueueing.
+and cache busting comes from the content hash in `nfd-site-migrator.asset.php`. The old
+four-place scheme made `WP_Admin::register_assets()` silently skip enqueueing on a mismatch.
 
 ## Architecture
 
@@ -150,14 +153,21 @@ dropped silently. Following one copies content from outside the site into the pa
 **Neither is anything the site does not need to run.** `PartSpecs::$excluded_names` refuses
 `.git`, `.svn`, `.hg`, `.bzr`, `CVS` and `node_modules` **wherever they appear** — matched on the
 directory's own name, because a `.git` nine levels down inside a vendored dependency is still a
-`.git`, and one was found at 129.8MB (findings 3.18–3.19). Core's `upgrade` directories go too.
-All of it is listed in the manifest's `skipped_paths`, and the list is filterable via
-`nfd_sm_excluded_names`.
+`.git`, and one was found at 129.8MB (3.19). Core's `upgrade` directories go too. All of it is
+listed in the manifest's `skipped_paths`; filter `nfd_sm_excluded_names` to change it.
 
 **The storage directory is excluded from every part that contains it**, computed from where it
-actually is. It lives inside uploads, and without this the export packages the package: a 1GB
-site produced 2.2GB containing a copy of itself. The old exclusion named `content-other`, which
-can never see it, because `content-other` already excludes all of `uploads`.
+actually is. Without this the export packages the package — a 1GB site produced 2.2GB containing
+a copy of itself (3.18). The old exclusion named `content-other`, which can never see it, since
+`content-other` already excludes all of `uploads`.
+
+**The checkpoint is readable without advancing it.** `Exporter::snapshot()` returns the same
+shape a step returns, plus `running` from the lock. A reloaded tab draws the run it is joining
+before asking for more work — without it the screen shows zeroes until the first step returns,
+which on a large site is half a minute of a page that looks like it lost the export. Pausing is
+recorded server-side (`NFD_SM_PAUSED_OPTION`) so a refresh does not silently resume a run
+somebody deliberately stopped; reopening a *closed tab* still auto-resumes, which is the promise
+the screen makes.
 
 **Pause abandons the in-flight request rather than waiting for it.** A step cannot be interrupted
 once it is inside `ZipArchive::close()`, so waiting was the two minutes that made the button look
@@ -166,20 +176,19 @@ advances after a successful close — and `Exporter`'s run lock stops a quick Re
 second step on the same archive. Do not "fix" this by making Pause wait.
 
 **Packaging is bound by the first read of each file, not by zip or compression.** Measured: 8,000
-small files cost 185s cold and 2.0s warm, about 23ms each. So the per-file path is kept as thin as
-possible — the walk takes the size from the iterator's own stat rather than calling `filesize()`,
-and readability is settled by the open that has to happen anyway rather than by a second
-`is_readable()`. Do not add syscalls to that path; a site can have a hundred thousand files in it.
-For a site of that size the browser is the wrong tool at all, and the CLI plus the drop-in folder
-is the answer.
+small files cost 185s cold, 2.0s warm — ~23ms each. So the per-file path stays thin: the walk
+takes size from the iterator's own stat, and readability is settled by the open that has to
+happen anyway. Do not add syscalls there; a site can hold a hundred thousand files, and for one
+that size the browser is the wrong tool at all — CLI plus the drop-in folder is the answer.
 
 **A zip volume is opened, filled and closed exactly once, and never reopened.** `ZipArchive::close()`
-rebuilds the whole archive into a temp file rather than appending, so reopening one to add a few
-more files rewrites everything already in it. Flushing every 64 files into a 1GB volume made a
-1.5GB export cost hundreds of gigabytes of writing. The volume limit (128MB) is what bounds a
-single close, and therefore what keeps a step inside a shared host's budget. Sizes and checksums
-are taken at close for the same reason — hashing the whole package in `finalize` is one step that
-cannot be split. Already-compressed extensions are stored rather than deflated.
+rebuilds the whole archive into a temp file rather than appending, so reopening one rewrites
+everything already in it — flushing every 64 files into a 1GB volume made a 1.5GB export cost
+hundreds of gigabytes of writing. The 128MB volume limit bounds a single close, which is what
+keeps a step inside a shared host's budget; volume size adapts on observed **files per second**,
+not bytes, because the cost is per file. Sizes and checksums are taken at close for the same
+reason — hashing the whole package in `finalize` is one step that cannot be split.
+Already-compressed extensions are stored rather than deflated.
 
 **Import** (`Core/Import/`): `Importer` runs eight stages — precheck, files, database, transform,
 users, validate, swap, fixups. **The order is the design.** Files land before the database; the
@@ -210,14 +219,30 @@ and it is what makes the round-trip test a shell script.
 and `utils/useImport.js` drive the step loops. Calls go through `utils/api.js`, which converts
 thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
 
-**Everything the import touches must survive the swap**, and three things in a browser do not
-survive it on their own. The REST *nonce* dies with the users table, so `ImportController` clears
-that specific error for a request bearing a valid import token (at priority **200** — core's own
-check is registered at 100). The REST *root* dies if the two sites' permalink structures differ,
-because apiFetch pins `/wp-json/…` at page render, so every import call goes through the
-`?rest_route=` form via `restEndpoint()`/`stableCall()`. And the *auth cookie* names the user's
-login, which the merge is allowed to change, so `Fixups` re-issues it. Do not "simplify" any of
-these back to the idiomatic form.
+**Everything the import touches must survive the swap**, and three browser things do not on their
+own. The REST *nonce* dies with the users table, so `ImportController` clears that error for a
+request bearing a valid import token, at priority **200** — core registers its own check at 100.
+The REST *root* dies when the two sites' permalink structures differ, because apiFetch pins
+`/wp-json/…` at page render; every import call goes through `?rest_route=` via
+`restEndpoint()`/`stableCall()`. And the *auth cookie* names the user's login, which the merge may
+change, so `Fixups` re-issues it. Do not "simplify" any of these back to the idiomatic form.
+
+**Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
+before they can render. The resume redirect used to `return null`: a blank admin page, on the
+first thing anybody sees.
+
+**Nothing on the Download screen blocks on hashing.** `/export/manifest` returns the file list
+already on disk; `/export/verify` re-reads every byte and runs **only when asked**. It was never
+the check that protects anybody — checksums are taken as each volume closes and the destination
+re-verifies before it writes — so it is a button, not a minute per visit. Download-all stays
+enabled until a check has *actually failed*: unverified means unknown, not broken.
+
+**Download-all is a browser loop, never a server-side zip.** The package is already compressed,
+so re-zipping it costs the whole site's size in disk and time for a file that is no smaller and
+cannot be resumed. `utils/download.js` streams each file into a folder the user picks (File
+System Access API, subdirectories preserved, so the folder goes straight to the destination's
+picker), falling back to sequential browser downloads that report what they *started* rather than
+pretending to know when they finish.
 
 Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` compiles
 `assets/styles/app.css` into `src/styles/nfd-site-migrator.css`, which the JS entry imports.
@@ -225,14 +250,14 @@ Component styles are `@apply` classes scoped under `.nfd-sm`.
 
 ## Dead code: two kinds, opposite fates
 
-Read plan §11.1 before deleting anything that looks unused.
+Read plan §11.1 before deleting anything that looks unused. Code can be *abandoned* (delete it)
+or *orphaned* — dead only because the import half was stripped when these files were forked from
+All-in-One WP Migration.
 
-- **Abandoned** — delete. Unused encryption parameters on `Compressor::add_file()`, path helpers
-  duplicated between `Archiver` and `functions.php`, the computed `$progress` variable.
-- **Orphaned — keep every line.** `DatabaseBase`'s `is_*_query()` predicates, `is_atomic_query()`,
-  `replace_table_collations()`, `repair_table()`, and `DatabaseUtility::replace_serialized_values()`
-  are dead because the import half was stripped when the file was forked from All-in-One WP
-  Migration. Phase 4a revives all of it. Deleting it would throw away the most valuable code here.
+Phase 4a proved the distinction was worth keeping: `DatabaseUtility::replace_serialized_values()`
+looked as dead as the rest and is now the core of `Core/Import/SearchReplace.php`. Still dormant
+and still worth keeping: `is_atomic_query()`, `replace_table_collations()`, `repair_table()`,
+`DatabaseBase`'s `is_*_query()` predicates.
 
 Do not drive deletions from an IDE's "unused symbol" report — dispatch happens through string
 literals that no symbol graph follows.
@@ -254,11 +279,28 @@ GPL-2.0-or-later, with the licence text in `LICENSE`. `Database/`, `Archiver/`, 
 `Utils/DatabaseUtility.php` derive from All-in-One WP Migration (ServMask, Inc.) and carry
 attribution headers; `CREDITS.md` records the details. Preserve both when editing those files.
 
-## Cypress notes
+## Tests
 
-Specs stub the REST layer with `cy.intercept` against URL-encoded `rest_route` paths, e.g.
-`` `**${ encodeURIComponent( '/nfd-site-migrator/v1/migration-check/step' ) }**` ``, backed by
-fixtures in `cypress/fixtures/`. `cy.login()` is cookie-aware and skips the form when already
-authenticated. Only `checkCompatibility.cy.js` remains — the others covered deleted screens. The
-plan replaces this whole approach (§12): these specs stub the entire backend and cannot catch a
-single defect in the analysis.
+`.github/workflows/` runs lint and Cypress. **The round-trip suite is not in the repo** — it is
+shell scripts driving two local WordPress installs, and rebuilding it is phase 7's job. Until
+then, "verified" in a commit message means somebody ran it by hand.
+
+The one surviving Cypress spec (`checkCompatibility.cy.js`) stubs the REST layer with
+`cy.intercept` against URL-encoded `rest_route` paths, backed by `cypress/fixtures/`. `cy.login()`
+skips the form when already authenticated. The others covered deleted screens. Plan §12 replaces
+this approach entirely: these specs stub the whole backend and cannot catch a single defect in
+the analysis.
+
+## Known gaps
+
+Carried forward deliberately. None of these are covered by the round-trip suite.
+
+- No test against a host with a genuinely small `upload_max_filesize`; the chunk size is taken
+  from the server but has only ever been exercised against a generous one.
+- A multi-gigabyte upload through the browser has never been watched end to end.
+- No in-place fallback for a host without `RENAME TABLE` (plan §9.3). Preflight probes for it and
+  reports it, so such a host is refused rather than half-migrated.
+- The lossy `utf8mb4` → `utf8` branch is coded and never exercised.
+- View recreation has been read and not run — the fixture has no views.
+- Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
+  exist yet.
