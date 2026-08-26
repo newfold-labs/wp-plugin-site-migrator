@@ -26,6 +26,8 @@ export function useExport() {
 		bytes: 0,
 		partIndex: 0,
 		partCount: 0,
+		parts: [],
+		written: [],
 		plannedFiles: 0,
 		plannedBytes: 0,
 		startedAt: 0,
@@ -54,6 +56,8 @@ export function useExport() {
 		bytes: report.bytes ?? s.bytes,
 		partIndex: report.part_index ?? s.partIndex,
 		partCount: report.part_count ?? s.partCount,
+		parts: report.parts ?? s.parts,
+		written: report.written ?? s.written,
 		plannedFiles: report.planned_files ?? s.plannedFiles,
 		plannedBytes: report.planned_bytes ?? s.plannedBytes,
 	} );

@@ -462,6 +462,13 @@ class Exporter {
 			'part'          => $part,
 			'part_index'    => (int) $state['part_index'],
 			'part_count'    => \count( $this->specs ),
+			// The parts in the order they will be walked, so the screen can show what is done
+			// and what is still queued rather than only what is happening now.
+			'parts'         => $this->part_names(),
+			// And the last few volumes actually written, which is the only honest form an
+			// activity log can take here: these are files on disk, with the sizes recorded as
+			// each one closed.
+			'written'       => $this->recent( $state ),
 			'files'         => (int) $state['files_done'],
 			'bytes'         => (int) $state['bytes_done'],
 			'planned_files' => $planned_files,
@@ -470,6 +477,45 @@ class Exporter {
 			'skipped_paths' => \count( (array) ( isset( $state['skipped_paths'] ) ? $state['skipped_paths'] : array() ) ),
 			'manifest'      => $done ? $this->package->path( Manifest::NAME ) : '',
 		);
+	}
+
+	/**
+	 * Every part's name, in walk order.
+	 *
+	 * @return array
+	 */
+	protected function part_names() {
+		$names = array();
+
+		foreach ( $this->specs as $spec ) {
+			$names[] = $spec->name();
+		}
+
+		return $names;
+	}
+
+	/**
+	 * The volumes most recently written.
+	 *
+	 * Bounded hard: a 2.2GB site produced 117 of them, and this travels on every step of a run
+	 * the browser polls continuously.
+	 *
+	 * @param array $state Run state.
+	 *
+	 * @return array Each entry `file` and `bytes`.
+	 */
+	protected function recent( array $state ) {
+		$parts  = isset( $state['parts'] ) ? (array) $state['parts'] : array();
+		$recent = array();
+
+		foreach ( \array_slice( $parts, -4, 4, true ) as $relative => $part ) {
+			$recent[] = array(
+				'file'  => (string) $relative,
+				'bytes' => isset( $part['bytes'] ) ? (int) $part['bytes'] : 0,
+			);
+		}
+
+		return $recent;
 	}
 
 	/**

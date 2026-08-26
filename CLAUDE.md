@@ -309,6 +309,21 @@ Styling is Tailwind, but not through PostCSS in webpack: `yarn generate:css` com
 `assets/styles/app.css` into `src/styles/nfd-site-migrator.css`, which the JS entry imports.
 Component styles are `@apply` classes scoped under `.nfd-sm`.
 
+**The look comes from the export-flow design handoff**, and it lives in two files only:
+`tailwind.config.js` holds the tokens by name — `ink`, `canvas`, `hair`, `edge`, `pass`, `warn` —
+so `@apply` reads the way the handoff does and a token that moves moves once; `app.css` holds
+every component rule. The screens describe structure and were barely touched by the restyle. Two
+things are worth knowing before editing either. **`.nfd-sm-note` is a grid, not a flex row**: a
+note is often a sentence *plus* a list (the refused paths), and every child belongs in the second
+column beside the badge rather than next to its siblings. And **the panel is one card with three
+bands** — safety strip, stepper, body — which is why `.nfd-sm-shell` clips its children and
+`.nfd-sm-body` carries the padding.
+
+**The fonts are not bundled.** The handoff asks for Public Sans and JetBrains Mono, self-hosted
+rather than hot-linked, for WP.org compliance. Both stacks are declared and both currently fall
+through to what wp-admin already has, so the layout is right and the faces are not. Dropping the
+files in and adding the `@font-face` rules is all that is left.
+
 ## Dead code: two kinds, opposite fates
 
 Read plan §11.1 before deleting anything that looks unused. Code can be *abandoned* (delete it)
@@ -365,3 +380,9 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - View recreation has been read and not run — the fixture has no views.
 - Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
   exist yet.
+
+## Git Commits
+- Keep commit messages under one line, ~50 chars max
+- Format: `<type>: <change>` (e.g., `fix: auth token validation`)
+- No bullet points, no explanations, no Generated with Claude Code trailer
+- Never describe implementation details or trial-and-error

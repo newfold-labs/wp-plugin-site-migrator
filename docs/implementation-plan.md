@@ -23,6 +23,12 @@ WP-CLI comes after both. If stage 1 was meant to be "install the plugin on both 
 transfer directly," say so — it collapses v1 and v2 and changes [§10](#10-phased-delivery)
 significantly.
 
+## Git Commits
+- Keep commit messages under one line, ~50 chars max
+- Format: `<type>: <change>` (e.g., `fix: auth token validation`)
+- No bullet points, no explanations, no Generated with Claude Code trailer
+- Never describe implementation details or trial-and-error
+
 ---
 
 ## Contents

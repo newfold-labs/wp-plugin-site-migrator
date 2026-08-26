@@ -157,24 +157,34 @@ export const Compatibility = ( { result, onResult, request } ) => {
 			step="compatibility"
 			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Compatibility', 'nfd-site-migrator' ) }
+			// The verdict belongs beside the heading rather than in a banner under it: it is
+			// one word about the whole screen, and the list below is the evidence for it.
+			badge={
+				<span
+					className={ `nfd-sm-verdict nfd-sm-verdict--${
+						blocked ? 'block' : 'pass'
+					}` }
+				>
+					{ blocked
+						? __( 'Cannot migrate yet', 'nfd-site-migrator' )
+						: __( 'Ready to migrate', 'nfd-site-migrator' ) }
+				</span>
+			}
 			intro={ introFor( result, canReread ) }
 		>
-			<div
-				className={ `nfd-sm-note nfd-sm-note--${
-					blocked ? 'stop' : 'pass'
-				}` }
-			>
-				{ blocked
-					? __(
-							'This migration cannot go ahead yet.',
-							'nfd-site-migrator'
-					  )
-					: __( 'Ready to migrate.', 'nfd-site-migrator' ) }
-			</div>
-
-			<Gates report={ report } showPass={ true } />
+			<Gates report={ report } showPass={ true } summary={ true } />
 
 			<div className="nfd-sm-actions">
+				<button
+					type="button"
+					className="nfd-sm-btn nfd-sm-btn--primary"
+					id="nfd-sm-build-package"
+					disabled={ blocked }
+					onClick={ () => navigate( '/export' ) }
+				>
+					{ __( 'Build the package', 'nfd-site-migrator' ) }
+				</button>
+
 				<button
 					type="button"
 					className="nfd-sm-btn"
@@ -184,16 +194,6 @@ export const Compatibility = ( { result, onResult, request } ) => {
 					{ busy
 						? __( 'Checking…', 'nfd-site-migrator' )
 						: __( 'Check again', 'nfd-site-migrator' ) }
-				</button>
-
-				<button
-					type="button"
-					className="nfd-sm-btn nfd-sm-btn--primary"
-					id="nfd-sm-build-package"
-					disabled={ blocked }
-					onClick={ () => navigate( '/export' ) }
-				>
-					{ __( 'Build the package', 'nfd-site-migrator' ) }
 				</button>
 			</div>
 		</Layout>

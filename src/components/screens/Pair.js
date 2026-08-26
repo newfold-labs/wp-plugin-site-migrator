@@ -185,62 +185,116 @@ export const Pair = ( { onResult } ) => {
 				</div>
 			) }
 
-			{ checked && ! manual && (
-				<div className="nfd-sm-card nfd-sm-form">
-					<label htmlFor="nfd-sm-dest-url">
-						{ __( 'Destination address', 'nfd-site-migrator' ) }
-					</label>
-					<input
-						id="nfd-sm-dest-url"
-						type="url"
-						className="nfd-sm-input"
-						placeholder="https://newsite.example.com"
-						value={ url }
-						onChange={ ( e ) => setUrl( e.target.value ) }
-					/>
+			{ checked && (
+				<div className="nfd-sm-split">
+					{ ! manual && (
+						<div className="nfd-sm-card nfd-sm-form">
+							<label htmlFor="nfd-sm-dest-url">
+								{ __(
+									'Destination address',
+									'nfd-site-migrator'
+								) }
+							</label>
+							<input
+								id="nfd-sm-dest-url"
+								type="url"
+								className="nfd-sm-input"
+								placeholder="https://newsite.example.com"
+								value={ url }
+								onChange={ ( e ) => setUrl( e.target.value ) }
+							/>
 
-					<label htmlFor="nfd-sm-dest-code">
-						{ __( 'Pairing code', 'nfd-site-migrator' ) }
-					</label>
-					<input
-						id="nfd-sm-dest-code"
-						type="text"
-						className="nfd-sm-input"
-						placeholder="A7K2-9F3P-XQ41"
-						value={ code }
-						onChange={ ( e ) => setCode( e.target.value ) }
-					/>
-					<p className="nfd-sm-hint">
-						{ __(
-							'Single use, expires in 15 minutes. It lets this site read the destination’s versions and free space — nothing else.',
-							'nfd-site-migrator'
-						) }
-					</p>
-				</div>
-			) }
+							<label htmlFor="nfd-sm-dest-code">
+								{ __( 'Pairing code', 'nfd-site-migrator' ) }
+							</label>
+							<input
+								id="nfd-sm-dest-code"
+								type="text"
+								className="nfd-sm-input"
+								placeholder="A7K2-9F3P-XQ41"
+								value={ code }
+								onChange={ ( e ) => setCode( e.target.value ) }
+							/>
+							<p className="nfd-sm-hint">
+								{ __(
+									'Single use, expires in 15 minutes. It lets this site read the destination’s versions and free space — nothing else.',
+									'nfd-site-migrator'
+								) }
+							</p>
+						</div>
+					) }
+					{ manual && (
+						<div className="nfd-sm-card nfd-sm-form">
+							<label htmlFor="nfd-sm-profile">
+								{ __(
+									'Paste the destination’s profile',
+									'nfd-site-migrator'
+								) }
+							</label>
+							<textarea
+								id="nfd-sm-profile"
+								className="nfd-sm-input nfd-sm-textarea"
+								rows="5"
+								placeholder="NFDSM1-…"
+								value={ blob }
+								onChange={ ( e ) => setBlob( e.target.value ) }
+							/>
+							<p className="nfd-sm-hint">
+								{ __(
+									'Copy it from the destination’s pairing screen. This works when the destination cannot be reached over the network.',
+									'nfd-site-migrator'
+								) }
+							</p>
+						</div>
+					) }
+					{ /* The ways out, beside the way through rather than under it: both are
+					     answers to "I cannot do what this screen is asking", and somebody in
+					     that position should not have to read past the form to find them. */ }
+					<div className="nfd-sm-aside">
+						<p className="nfd-sm-aside-label">
+							{ __( 'No destination yet?', 'nfd-site-migrator' ) }
+						</p>
+						<div className="nfd-sm-aside-links">
+							<button
+								type="button"
+								className="nfd-sm-link"
+								onClick={ () => {
+									setManual( ! manual );
+									setError( '' );
+								} }
+							>
+								{ manual
+									? __(
+											'Use a pairing code instead →',
+											'nfd-site-migrator'
+									  )
+									: __(
+											'Destination unreachable? Paste a profile instead →',
+											'nfd-site-migrator'
+									  ) }
+							</button>
 
-			{ checked && manual && (
-				<div className="nfd-sm-card nfd-sm-form">
-					<label htmlFor="nfd-sm-profile">
-						{ __(
-							'Paste the destination’s profile',
-							'nfd-site-migrator'
-						) }
-					</label>
-					<textarea
-						id="nfd-sm-profile"
-						className="nfd-sm-input nfd-sm-textarea"
-						rows="5"
-						placeholder="NFDSM1-…"
-						value={ blob }
-						onChange={ ( e ) => setBlob( e.target.value ) }
-					/>
-					<p className="nfd-sm-hint">
-						{ __(
-							'Copy it from the destination’s pairing screen. This works when the destination cannot be reached over the network.',
-							'nfd-site-migrator'
-						) }
-					</p>
+							<button
+								type="button"
+								className="nfd-sm-link"
+								onClick={ () => {
+									onResult( { skipped: true } );
+									navigate( '/export' );
+								} }
+							>
+								{ __(
+									'Export without checking →',
+									'nfd-site-migrator'
+								) }
+							</button>
+						</div>
+						<p className="nfd-sm-hint">
+							{ __(
+								'You can still build a package. Compatibility is checked when the destination imports it.',
+								'nfd-site-migrator'
+							) }
+						</p>
+					</div>
 				</div>
 			) }
 
@@ -259,38 +313,12 @@ export const Pair = ( { onResult } ) => {
 						: __( 'Check compatibility', 'nfd-site-migrator' ) }
 				</button>
 
-				<button
-					type="button"
-					className="nfd-sm-link"
-					onClick={ () => {
-						setManual( ! manual );
-						setError( '' );
-					} }
-				>
-					{ manual
-						? __(
-								'Use a pairing code instead',
-								'nfd-site-migrator'
-						  )
-						: __(
-								'Destination unreachable? Paste a profile instead',
-								'nfd-site-migrator'
-						  ) }
-				</button>
-
-				<button
-					type="button"
-					className="nfd-sm-link"
-					onClick={ () => {
-						onResult( { skipped: true } );
-						navigate( '/export' );
-					} }
-				>
+				<span className="nfd-sm-muted">
 					{ __(
-						'No destination yet — export without checking',
+						'Read-only. Takes a few seconds.',
 						'nfd-site-migrator'
 					) }
-				</button>
+				</span>
 			</div>
 		</Layout>
 	);

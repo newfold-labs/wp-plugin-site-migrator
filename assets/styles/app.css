@@ -4,235 +4,454 @@
 @tailwind utilities;
 @tailwind variants;
 
+/* The export-flow handoff, applied.
+   Everything is scoped under .nfd-sm so none of it reaches the rest of wp-admin, and the class
+   names are unchanged from before the restyle — the screens describe structure, this file
+   decides what it looks like. Tokens live in tailwind.config.js. */
 .nfd-sm {
-    @apply text-slate-800 pb-16 pr-8;
+    @apply font-sans text-body pb-16 pr-8;
 
-    .nfd-sm-shell { @apply max-w-4xl }
-
-    /* The safety line. It answers the only question a user really has during a migration,
-       so it sits above everything and never scrolls out of the reading path. */
-    .nfd-sm-safety {
-        @apply flex flex-col gap-0.5 rounded-lg border px-4 py-3 mb-6 mt-4
+    /* The panel.
+       One card holding three bands: the safety strip, the stepper, and the body. The bands are
+       flush to the edges, which is why the card clips its children and the body carries the
+       padding rather than the card. */
+    .nfd-sm-shell {
+        @apply max-w-[900px] bg-surface border border-black/[.08] rounded-[10px]
+        shadow-card overflow-hidden mt-4
     }
-    .nfd-sm-safety strong { @apply text-sm font-semibold }
-    .nfd-sm-safety span { @apply text-[13px] text-slate-600 }
-    .nfd-sm-safety--safe { @apply bg-emerald-50 border-emerald-200 }
-    .nfd-sm-safety--safe strong { @apply text-emerald-800 }
-    .nfd-sm-safety--committed { @apply bg-blue-50 border-blue-200 }
-    .nfd-sm-safety--committed strong { @apply text-blue-800 }
+    .nfd-sm-body { @apply px-7 pt-[34px] pb-[30px] }
 
-    .nfd-sm-head { @apply mb-5 }
-    .nfd-sm-head h1 { @apply text-2xl font-bold tracking-tight m-0 p-0 text-slate-900 }
-    .nfd-sm-eyebrow { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1 }
-    .nfd-sm-intro { @apply text-[15px] text-slate-600 max-w-3xl mt-1 }
-    .nfd-sm-muted { @apply text-[13px] text-slate-500 }
-    .nfd-sm-footnote { @apply mt-4 }
+    /* The safety strip. It answers the only question a user really has during a migration, so
+       it sits above everything and never scrolls out of the reading path. */
+    .nfd-sm-safety {
+        @apply flex flex-wrap items-center gap-2.5 px-7 py-[11px] border-b m-0
+    }
+    .nfd-sm-safety::before {
+        @apply content-[''] block h-[7px] w-[7px] shrink-0 rounded-full
+    }
+    .nfd-sm-safety strong { @apply text-[13px] font-semibold leading-tight }
+    .nfd-sm-safety span { @apply text-[13px] font-normal leading-tight }
+    .nfd-sm-safety--safe { @apply bg-pass-bg border-pass-edge }
+    .nfd-sm-safety--safe::before { @apply bg-pass }
+    .nfd-sm-safety--safe strong { @apply text-pass-ink }
+    .nfd-sm-safety--safe span { @apply text-pass-body }
+    .nfd-sm-safety--committed { @apply bg-sunk border-edge-warm }
+    .nfd-sm-safety--committed::before { @apply bg-ink }
+    .nfd-sm-safety--committed strong { @apply text-ink }
+    .nfd-sm-safety--committed span { @apply text-body }
+    /* Work in flight: the dot breathes so a screen that is waiting does not look stopped. */
+    .nfd-sm-safety--working::before { animation: nfd-sm-pulse 1.4s ease-in-out infinite }
+
+    /* Header block */
+    .nfd-sm-head { @apply mb-0 }
+    .nfd-sm-head h1 {
+        @apply m-0 p-0 text-[31px] font-bold leading-[1.15] tracking-[-.021em] text-ink
+    }
+    .nfd-sm-headline { @apply flex flex-wrap items-baseline gap-3.5 mt-3 mb-2 }
+    .nfd-sm-eyebrow {
+        @apply font-mono text-[11px] font-medium uppercase tracking-[.09em] text-muted m-0
+        leading-none
+    }
+    .nfd-sm-intro { @apply m-0 text-[15px] leading-[1.55] text-body max-w-[66ch] }
+    .nfd-sm-muted { @apply text-[13px] text-muted }
+    .nfd-sm-footnote { @apply mt-3.5 }
     .nfd-sm-mono { @apply font-mono text-[13px] }
 
+    /* Verdict pill, beside the heading */
+    .nfd-sm-verdict {
+        @apply inline-flex items-center gap-[7px] rounded-full border px-[11px] py-[5px]
+        text-[12px] font-semibold
+    }
+    .nfd-sm-verdict::before { @apply content-[''] block h-1.5 w-1.5 rounded-full }
+    .nfd-sm-verdict--pass { @apply bg-pass-bg border-pass-edge text-pass-ink }
+    .nfd-sm-verdict--pass::before { @apply bg-pass }
+    .nfd-sm-verdict--warn {
+        @apply bg-warn-bg border-warn-edge text-warn-badge-ink
+    }
+    .nfd-sm-verdict--warn::before { @apply bg-warn }
+    .nfd-sm-verdict--block { @apply bg-red-50 border-red-200 text-red-800 }
+    .nfd-sm-verdict--block::before { @apply bg-red-600 }
+
     .nfd-sm-card {
-        @apply bg-white border border-slate-200 rounded-lg p-5 mb-4 shadow-sm
+        @apply bg-surface border border-edge rounded-[10px] p-[22px] mt-5
     }
 
-    /* Notes */
-    .nfd-sm-note { @apply rounded-lg border px-4 py-3 mb-4 text-[14px] }
+    /* Notes and callouts.
+       The warning note is the handoff's callout: a badge that must not stretch, a title, and a
+       quieter line under it. A grid rather than a row, because a note is often several elements
+       — a sentence, then the list of paths that were refused — and every one of them belongs
+       beside the badge rather than next to its siblings. */
+    .nfd-sm-note {
+        @apply grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 rounded-lg border px-4 py-3.5 mt-5
+        text-[13.5px] leading-[1.5]
+    }
+    .nfd-sm-note > * { @apply col-start-2 }
+    .nfd-sm-note::before {
+        @apply col-start-1 row-start-1;
+        @apply font-mono text-[10px] font-semibold uppercase tracking-[.08em] leading-none
+        self-start shrink-0 rounded border px-[7px] py-[5px]
+    }
+    .nfd-sm-note--warn {
+        @apply bg-warn-bg border-warn-edge text-warn-body
+    }
+    .nfd-sm-note--warn::before {
+        @apply content-['HEADS_UP'] bg-warn-badge border-warn-badge-edge text-warn-badge-ink
+    }
     .nfd-sm-note--stop { @apply bg-red-50 border-red-200 text-red-900 }
-    .nfd-sm-note--pass { @apply bg-emerald-50 border-emerald-200 text-emerald-900 }
-    .nfd-sm-note--info { @apply bg-blue-50 border-blue-200 text-blue-900 }
-    .nfd-sm-note--warn { @apply bg-amber-50 border-amber-200 text-amber-900 }
+    .nfd-sm-note--stop::before {
+        @apply content-['STOP'] bg-red-100 border-red-200 text-red-800
+    }
+    .nfd-sm-note--pass { @apply bg-pass-bg border-pass-edge text-pass-body }
+    .nfd-sm-note--pass::before {
+        @apply content-['DONE'] bg-pass-tint border-pass-edge text-pass-ink
+    }
+    .nfd-sm-note--info { @apply bg-sunk border-edge text-body }
+    .nfd-sm-note--info::before {
+        @apply content-['NOTE'] bg-surface border-edge text-muted
+    }
+    .nfd-sm-note p { @apply m-0 }
+    .nfd-sm-note p + p { @apply mt-1.5 }
+    .nfd-sm-note strong { @apply block text-[14px] font-semibold }
 
-    /* Gates */
-    .nfd-sm-gates { @apply list-none m-0 p-0 mb-5 border border-slate-200 rounded-lg overflow-hidden bg-white }
-    .nfd-sm-gate { @apply flex gap-3 items-start px-4 py-3 border-b border-slate-100 m-0 }
+    /* The check list.
+       One bordered box: a header strip saying how many checks there are and how they came out,
+       then a row per check. Anything needing attention keeps its warm background and a left
+       edge; anything fine is a quiet line with a green tick. */
+    .nfd-sm-gates {
+        @apply list-none m-0 mt-[22px] p-0 border border-edge rounded-[10px] overflow-hidden
+        bg-surface
+    }
+    .nfd-sm-gates-head {
+        @apply flex items-center justify-between gap-4 px-5 py-2.5 bg-sunk border-b border-edge-warm
+    }
+    .nfd-sm-gates-count {
+        @apply font-mono text-[10.5px] font-semibold uppercase tracking-[.09em] text-muted
+    }
+    .nfd-sm-gates-tally { @apply text-[12px] font-medium text-muted }
+    .nfd-sm-gate { @apply flex gap-3.5 items-center px-5 py-3 border-b border-[#f2efe9] m-0 }
     .nfd-sm-gate:last-child { @apply border-b-0 }
-    .nfd-sm-gate--block { @apply bg-red-50/60 }
-    .nfd-sm-gate--warn { @apply bg-amber-50/60 }
-    .nfd-sm-gate-label { @apply m-0 text-[14px] text-slate-800 }
-    .nfd-sm-gate-fix { @apply m-0 mt-0.5 text-[13px] text-slate-500 }
+    .nfd-sm-gate--block,
+    .nfd-sm-gate--warn {
+        @apply items-start bg-warn-bg border-b-warn-edge border-l-[3px] border-l-warn px-5 py-[15px]
+    }
+    .nfd-sm-gate--block { @apply bg-red-50 border-b-red-200 border-l-red-600 }
+    .nfd-sm-gate-label { @apply m-0 text-[14px] text-row-ink }
+    .nfd-sm-gate--warn .nfd-sm-gate-label { @apply text-[14px] font-semibold text-warn-title }
+    .nfd-sm-gate--block .nfd-sm-gate-label { @apply text-[14px] font-semibold text-red-900 }
+    .nfd-sm-gate-fix { @apply m-0 mt-0.5 text-[13.5px] leading-[1.5] text-warn-body }
+    .nfd-sm-gate--pass .nfd-sm-gate-fix { @apply text-muted }
+    .nfd-sm-gate--block .nfd-sm-gate-fix { @apply text-red-800 }
 
+    /* The status marker on a check. A tick in a tinted disc when it passed, the handoff's
+       badge when it did not. */
     .nfd-sm-pill {
-        @apply inline-block shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold
-        uppercase tracking-wide border
+        @apply shrink-0 self-start font-mono text-[10px] font-semibold uppercase
+        tracking-[.08em] leading-none rounded border px-[7px] py-[5px]
     }
-    .nfd-sm-pill--pass { @apply bg-emerald-50 text-emerald-700 border-emerald-200 }
-    .nfd-sm-pill--warn { @apply bg-amber-50 text-amber-800 border-amber-200 }
-    .nfd-sm-pill--block { @apply bg-red-50 text-red-700 border-red-200 }
+    .nfd-sm-pill--pass {
+        @apply flex items-center justify-center h-4 w-4 rounded-full border-0 p-0 self-center
+        bg-pass-tint text-pass font-sans text-[10px]
+    }
+    .nfd-sm-pill--warn {
+        @apply bg-warn-badge border-warn-badge-edge text-warn-badge-ink
+    }
+    .nfd-sm-pill--block { @apply bg-red-100 border-red-200 text-red-800 }
 
-    /* Choices */
-    .nfd-sm-choices { @apply grid gap-3 mb-5 md:grid-cols-2 }
+    /* Two ways in */
+    .nfd-sm-choices { @apply grid gap-4 mt-5 md:grid-cols-2 }
     .nfd-sm-choice {
-        @apply text-left bg-white border border-slate-200 rounded-lg p-5 cursor-pointer
-        transition-colors hover:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed
-        disabled:hover:border-slate-200
+        @apply text-left bg-surface border border-edge rounded-[10px] p-[22px] cursor-pointer
+        transition-all duration-200 hover:shadow-lift hover:border-[#c9c2b5]
+        disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none
+        disabled:hover:border-edge
     }
-    .nfd-sm-choice h3 { @apply m-0 text-base font-semibold text-slate-900 }
-    .nfd-sm-choice p { @apply mt-1 mb-2 text-[13px] text-slate-600 }
-    .nfd-sm-arrow { @apply text-[13px] font-semibold text-blue-700 }
+    .nfd-sm-choice h3 { @apply m-0 text-[17px] font-bold leading-[1.3] text-ink }
+    .nfd-sm-choice p { @apply mt-[7px] mb-4 text-[14px] leading-[1.5] text-body }
+    .nfd-sm-arrow {
+        @apply inline-flex items-center gap-[7px] rounded-[7px] px-[15px] py-[9px]
+        text-[13.5px] font-semibold border border-edge-strong text-ink
+    }
+    .nfd-sm-choice:first-child .nfd-sm-arrow { @apply bg-ink border-ink text-white }
 
-    /* Facts */
+    /* Environment facts */
     .nfd-sm-facts {
-        @apply grid gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden m-0
-        grid-cols-2 md:grid-cols-4
+        @apply grid grid-cols-2 gap-0 m-0 mt-[22px] border border-edge rounded-[10px]
+        overflow-hidden bg-surface
     }
-    .nfd-sm-facts > div { @apply bg-white px-4 py-3 }
-    .nfd-sm-facts dt { @apply text-[11px] font-semibold uppercase tracking-wide text-slate-500 }
-    .nfd-sm-facts dd { @apply m-0 font-mono text-[14px] text-slate-800 }
+    .nfd-sm-facts > div {
+        @apply bg-surface px-5 py-[15px] border-b border-r border-hair
+    }
+    .nfd-sm-facts > div:nth-child(2n) { @apply border-r-0 }
+    .nfd-sm-facts > div:nth-last-child(-n+2) { @apply border-b-0 }
+    .nfd-sm-facts dt {
+        @apply font-mono text-[10.5px] font-semibold uppercase tracking-[.09em] text-muted
+        leading-none
+    }
+    .nfd-sm-facts dd { @apply m-0 mt-1.5 font-mono text-[16px] font-medium text-ink leading-none }
 
     /* Forms */
-    .nfd-sm-form { @apply flex flex-col gap-1.5 max-w-xl }
-    .nfd-sm-form label { @apply text-[13px] font-semibold text-slate-700 mt-2 }
+    .nfd-sm-form { @apply flex flex-col gap-0 }
+    .nfd-sm-form label { @apply block text-[13px] font-semibold text-ink mt-[18px] }
+    .nfd-sm-form label:first-child { @apply mt-0 }
     .nfd-sm-input {
-        @apply w-full font-mono text-[14px] rounded-md border border-slate-300 px-3 py-2
-        bg-slate-50 focus:border-blue-500 focus:ring-1 focus:ring-blue-500
+        @apply w-full mt-2 font-mono text-[14px] rounded-[7px] border border-edge-input
+        px-[13px] py-[11px] bg-canvas text-ink shadow-sunken
+        placeholder:text-faint placeholder:font-normal
+        focus:bg-surface focus:border-ink focus:outline-none focus:ring-0
+        focus:shadow-[inset_0_0_0_.5px_#12161b]
     }
-    .nfd-sm-textarea { @apply resize-y }
-    .nfd-sm-hint { @apply text-[12.5px] text-slate-500 mt-1 }
+    .nfd-sm-textarea { @apply resize-y leading-[1.6] }
+    .nfd-sm-hint { @apply text-[13px] leading-[1.5] text-muted mt-3.5 }
+
+    /* The aside beside a form: the ways out, when the main path will not work. */
+    .nfd-sm-aside {
+        @apply bg-sunk border border-edge rounded-[10px] p-5
+    }
+    .nfd-sm-aside-label {
+        @apply font-mono text-[10.5px] font-semibold uppercase tracking-[.09em] text-muted
+        leading-none m-0
+    }
+    .nfd-sm-aside-links { @apply flex flex-col items-start gap-2.5 mt-3.5 }
+    .nfd-sm-split { @apply grid gap-[18px] items-start mt-6 md:grid-cols-[1.15fr_.85fr] }
 
     /* Buttons */
-    .nfd-sm-actions { @apply flex flex-wrap items-center gap-3 mt-4 }
+    .nfd-sm-actions {
+        @apply flex flex-wrap items-center gap-3 mt-5 pt-[18px] border-t border-edge-warm
+    }
+    .nfd-sm-actions--bare { @apply border-t-0 pt-0 }
+    .nfd-sm-card > .nfd-sm-actions:first-child { @apply border-t-0 pt-0 mt-0 }
     .nfd-sm-btn {
-        @apply inline-flex items-center rounded-md border border-slate-300 bg-white
-        px-4 py-2 text-[14px] font-semibold text-slate-700 no-underline cursor-pointer
-        hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed
+        @apply inline-flex items-center gap-2 rounded-[7px] border border-edge-strong
+        bg-transparent px-[18px] py-[11px] text-[14px] font-semibold text-ink no-underline
+        cursor-pointer transition-colors duration-200 hover:bg-[#f4f1eb] hover:text-ink
+        focus-visible:outline-none focus-visible:shadow-ring
+        disabled:opacity-50 disabled:cursor-not-allowed
     }
     .nfd-sm-btn--primary {
-        @apply bg-blue-700 border-blue-700 text-white hover:bg-blue-800 hover:text-white
+        @apply bg-ink border-ink text-white hover:bg-ink-hover hover:border-ink-hover
+        hover:text-white
     }
+    .nfd-sm-btn--danger {
+        @apply bg-red-700 border-red-700 text-white hover:bg-red-800 hover:border-red-800
+        hover:text-white
+    }
+    /* A button by element, a link by role — so it needs telling that text starts on the left. */
     .nfd-sm-link {
-        @apply bg-transparent border-0 p-0 text-[13.5px] text-blue-700 underline
-        cursor-pointer
+        @apply bg-transparent border-0 p-0 text-left text-[13.5px] font-semibold leading-[1.4]
+        text-link no-underline cursor-pointer hover:text-link-hover
     }
 
-    /* Progress */
-    .nfd-sm-stage { @apply m-0 text-[15px] font-semibold text-slate-800 }
-    .nfd-sm-counter { @apply m-0 mt-0.5 mb-3 font-mono text-[13px] text-slate-500 }
-    .nfd-sm-bar { @apply h-1.5 rounded-full bg-slate-200 overflow-hidden }
-    .nfd-sm-bar i { @apply block h-full w-1/3 rounded-full bg-blue-600 }
-    .nfd-sm-bar i.is-working { @apply animate-pulse }
+    /* Building the package */
+    .nfd-sm-progress-head { @apply flex items-baseline justify-between gap-4 }
+    .nfd-sm-stage { @apply m-0 text-[15px] font-semibold text-ink }
+    .nfd-sm-counter { @apply m-0 font-mono text-[13px] font-medium text-body text-right }
+    .nfd-sm-bar,
+    .nfd-sm-progress { @apply h-2 rounded-full bg-hair overflow-hidden mt-3 }
+    .nfd-sm-progress-bar,
+    .nfd-sm-bar i {
+        @apply block h-full rounded-full;
+        background: repeating-linear-gradient(115deg, #12161b 0 12px, #2c343e 12px 24px);
+        background-size: 64px 8px;
+        animation: nfd-sm-shimmer .9s linear infinite;
+        transition: width .2s ease;
+    }
+    /* No plan yet: an indeterminate third of the bar, still moving. */
+    .nfd-sm-bar i { @apply w-1/3 }
+
+    /* Stage tiles: what is done, what is being worked on, what is waiting. */
+    .nfd-sm-tiles { @apply grid gap-2.5 mt-[18px] grid-cols-2 md:grid-cols-4 }
+    .nfd-sm-tile {
+        @apply relative overflow-hidden rounded-[7px] border px-[13px] py-[11px]
+    }
+    .nfd-sm-tile-state {
+        @apply font-mono text-[10px] font-semibold uppercase tracking-[.08em] leading-none
+    }
+    .nfd-sm-tile-name { @apply mt-[5px] text-[13px] font-semibold leading-none }
+    .nfd-sm-tile--done { @apply bg-pass-tile border-pass-tile-edge }
+    .nfd-sm-tile--done .nfd-sm-tile-state { @apply text-pass }
+    .nfd-sm-tile--done .nfd-sm-tile-name { @apply text-ink }
+    .nfd-sm-tile--running { @apply bg-surface border-[1.5px] border-ink }
+    .nfd-sm-tile--running .nfd-sm-tile-state { @apply text-ink }
+    .nfd-sm-tile--running .nfd-sm-tile-name { @apply text-ink }
+    .nfd-sm-tile--running::after {
+        @apply content-[''] absolute inset-0 w-[30%];
+        background: linear-gradient(90deg, transparent, rgba(18, 22, 27, .06), transparent);
+        animation: nfd-sm-sweep 1.8s linear infinite;
+    }
+    .nfd-sm-tile--queued { @apply bg-canvas border-edge-warm }
+    .nfd-sm-tile--queued .nfd-sm-tile-state { @apply text-faint }
+    .nfd-sm-tile--queued .nfd-sm-tile-name { @apply text-faint }
+
+    /* What has actually been written, most recent last. Real lines from the checkpoint, not a
+       fabricated console. */
+    .nfd-sm-log {
+        @apply mt-4 border border-edge rounded-[10px] bg-surface overflow-hidden
+    }
+    .nfd-sm-log-head {
+        @apply px-5 py-2.5 bg-sunk border-b border-edge-warm font-mono text-[10.5px]
+        font-semibold uppercase tracking-[.09em] text-muted
+    }
+    .nfd-sm-log-body {
+        @apply list-none m-0 px-5 py-3.5 font-mono text-[12.5px] leading-[2] text-body
+    }
+    .nfd-sm-log-body li { @apply m-0 truncate }
+    .nfd-sm-log-body li:last-child { @apply text-ink }
+    .nfd-sm-log-body li:last-child em { @apply not-italic text-muted }
 
     /* Waiting.
        A spinner and a sentence, not a bare sentence: the plugin does slow things on purpose —
        hashing a package, walking a filesystem — and a screen that says nothing while it happens
        is indistinguishable from one that has failed. */
-    .nfd-sm-loading { @apply flex items-center gap-3 text-[14px] text-slate-500 }
+    .nfd-sm-loading { @apply flex items-center gap-3 text-[14px] text-muted }
     .nfd-sm-spinner {
-        @apply h-4 w-4 shrink-0 rounded-full border-2 border-slate-200 border-t-blue-600;
+        @apply h-4 w-4 shrink-0 rounded-full border-2 border-hair border-t-ink;
         animation: nfd-sm-spin 0.7s linear infinite;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        .nfd-sm-spinner { animation-duration: 2.4s }
-    }
-
     /* Parts table */
-    .nfd-sm-parts { @apply w-full border-collapse bg-white border border-slate-200 rounded-lg mb-4 }
-    .nfd-sm-parts th {
-        @apply text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500
-        px-4 py-2 border-b border-slate-200
+    .nfd-sm-parts {
+        @apply w-full border-collapse bg-surface border border-edge rounded-[10px] mt-5
+        overflow-hidden
     }
-    .nfd-sm-parts td { @apply px-4 py-2 border-b border-slate-100 text-[13px] align-middle }
+    .nfd-sm-parts th {
+        @apply text-left font-mono text-[10.5px] font-semibold uppercase tracking-[.09em]
+        text-muted px-5 py-2.5 bg-sunk border-b border-edge-warm
+    }
+    .nfd-sm-parts td { @apply px-5 py-2.5 border-b border-hair text-[13px] align-middle }
     .nfd-sm-parts tr:last-child td { @apply border-b-0 }
-    .nfd-sm-num { @apply text-right tabular-nums }
-    .nfd-sm-hash { @apply text-slate-400 }
+    .nfd-sm-num { @apply text-right tabular-nums font-mono whitespace-nowrap }
+    .nfd-sm-hash { @apply text-faint }
 
     /* Pairing code */
     .nfd-sm-paircode {
-        @apply font-mono text-2xl tracking-widest bg-slate-50 border border-slate-200
-        rounded-md px-4 py-3 text-center m-0 mb-3 text-slate-900
+        @apply font-mono text-2xl font-medium tracking-[.14em] bg-canvas border border-edge
+        rounded-[7px] px-4 py-3.5 text-center m-0 mb-3 text-ink
     }
     .nfd-sm-paircode--url { @apply text-base tracking-normal }
 
     /* Import: the stage list.
        Shown in full rather than as a bar, because the useful information is not "how far" but
        "has the switch happened yet". */
-    .nfd-sm-steps { @apply list-none m-0 p-0 mb-5 border border-slate-200 rounded-lg overflow-hidden bg-white }
-    .nfd-sm-step { @apply flex gap-3 items-start px-4 py-2.5 border-b border-slate-100 m-0 text-[14px] }
-    .nfd-sm-step:last-child { @apply border-b-0 }
-    .nfd-sm-step-mark {
-        @apply mt-1.5 h-2 w-2 shrink-0 rounded-full bg-slate-300
+    .nfd-sm-steps {
+        @apply list-none m-0 mt-5 p-0 border border-edge rounded-[10px] overflow-hidden
+        bg-surface
     }
-    .nfd-sm-step-label { @apply text-slate-500 }
-    .nfd-sm-step-note { @apply block text-[12px] text-amber-700 }
-    .nfd-sm-step--done .nfd-sm-step-mark { @apply bg-emerald-500 }
-    .nfd-sm-step--done .nfd-sm-step-label { @apply text-slate-700 }
-    .nfd-sm-step--active { @apply bg-blue-50/60 }
-    .nfd-sm-step--active .nfd-sm-step-mark { @apply bg-blue-600 animate-pulse }
-    .nfd-sm-step--active .nfd-sm-step-label { @apply text-slate-900 font-semibold }
+    .nfd-sm-step {
+        @apply flex gap-3.5 items-start px-5 py-3 border-b border-[#f2efe9] m-0 text-[14px]
+    }
+    .nfd-sm-step:last-child { @apply border-b-0 }
+    .nfd-sm-step-mark { @apply mt-1.5 h-2 w-2 shrink-0 rounded-full bg-rule-todo }
+    .nfd-sm-step-label { @apply text-muted }
+    .nfd-sm-step-note { @apply block text-[12px] text-warn-body }
+    .nfd-sm-step--done .nfd-sm-step-mark { @apply bg-pass }
+    .nfd-sm-step--done .nfd-sm-step-label { @apply text-body }
+    .nfd-sm-step--active { @apply bg-canvas }
+    .nfd-sm-step--active .nfd-sm-step-mark {
+        @apply bg-ink;
+        animation: nfd-sm-pulse 1.4s ease-in-out infinite;
+    }
+    .nfd-sm-step--active .nfd-sm-step-label { @apply text-ink font-semibold }
 
     /* Import: upload */
     .nfd-sm-hidden-input { @apply hidden }
-    .nfd-sm-progress { @apply mt-3 mb-1 }
-    .nfd-sm-progress-bar {
-        @apply h-1.5 rounded-full bg-blue-600 transition-all duration-200
-    }
-    .nfd-sm-progress { @apply rounded-full }
-    .nfd-sm-hint { @apply text-[13px] text-slate-500 mt-2 }
 
     /* Import: lists of accounts, packages, notes */
-    .nfd-sm-list { @apply list-none m-0 p-0 text-[14px] }
+    .nfd-sm-list { @apply list-none m-0 text-[14px] }
     .nfd-sm-list li {
-        @apply flex items-center justify-between gap-4 py-2 border-b border-slate-100 m-0
+        @apply flex flex-wrap items-center justify-between gap-4 py-3 border-b border-hair m-0
     }
     .nfd-sm-list li:last-child { @apply border-b-0 }
 
-    .nfd-sm-facts { @apply grid grid-cols-2 gap-x-6 gap-y-2 m-0 text-[14px] }
-    .nfd-sm-facts dt { @apply text-slate-500 text-[12px] uppercase tracking-wide }
-    .nfd-sm-facts dd { @apply m-0 text-slate-900 }
-
-    .nfd-sm-warn { @apply text-amber-700 }
+    .nfd-sm-warn { @apply text-warn-body }
 
     /* Import: the commit gesture */
     .nfd-sm-card--stop { @apply border-red-200 bg-red-50/50 }
-    .nfd-sm-card--commit { @apply border-slate-300 bg-slate-50 }
-    .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-slate-800 mb-3 cursor-pointer }
+    .nfd-sm-card--commit { @apply border-edge-strong bg-sunk }
+    .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-ink mb-3 cursor-pointer }
     .nfd-sm-check input { @apply mt-1 }
 
     .nfd-sm-block {
-        @apply font-mono text-[12.5px] bg-slate-900 text-slate-100 rounded-md p-3
+        @apply font-mono text-[12.5px] bg-ink text-canvas rounded-[7px] p-3.5
         overflow-x-auto whitespace-pre my-2
     }
 
-    .nfd-sm-details { @apply text-[14px] mb-4 }
-    .nfd-sm-details summary { @apply cursor-pointer text-slate-600 }
+    .nfd-sm-details { @apply text-[14px] mt-5 }
+    .nfd-sm-details summary { @apply cursor-pointer text-muted }
 
-    .nfd-sm-btn--danger {
-        @apply bg-red-700 border-red-700 text-white hover:bg-red-800 hover:border-red-800
-    }
-
-    /* The journey.
-       Completed steps are buttons, not decoration: up to the point of no return every one of
-       them is a decision that can be revisited, and this is where somebody goes to check what
-       they answered. */
+    /* The stepper.
+       A progress band, not a breadcrumb — but completed steps are still buttons, because
+       everything before the point of no return is a decision that can be revisited, and this is
+       where somebody goes to check what they answered. */
     .nfd-sm-journey {
-        @apply flex flex-wrap items-center gap-1 list-none m-0 p-0 mb-6 text-[13px]
+        @apply flex items-center list-none m-0 px-7 py-4 bg-surface border-b border-edge-warm
     }
     .nfd-sm-journey-step { @apply flex items-center m-0 }
     .nfd-sm-journey-step + .nfd-sm-journey-step::before {
-        @apply content-[''] block w-6 h-px bg-slate-300 mx-1
+        @apply content-[''] block flex-1 h-px bg-rule mx-3 min-w-[12px]
     }
+    .nfd-sm-journey-step + .nfd-sm-journey-step { @apply flex-1 }
     .nfd-sm-journey-link {
-        @apply flex items-center gap-2 rounded-full border border-transparent px-2.5 py-1
-        text-slate-500 bg-transparent
+        @apply flex items-center gap-[9px] rounded-full border-0 bg-transparent
+        pl-[7px] pr-[13px] py-1.5 text-[12.5px] font-medium text-muted whitespace-nowrap
     }
     .nfd-sm-journey-num {
         @apply flex items-center justify-center h-5 w-5 shrink-0 rounded-full
-        border border-slate-300 text-[11px] font-semibold leading-none
+        border border-rule-todo font-mono text-[11px] font-medium leading-none text-muted
     }
-    .nfd-sm-journey-step.is-done .nfd-sm-journey-link {
-        @apply text-slate-700 cursor-pointer hover:bg-slate-100 hover:border-slate-200
+    .nfd-sm-journey-step.is-done + .nfd-sm-journey-step::before,
+    .nfd-sm-journey-step.is-current + .nfd-sm-journey-step::before { @apply bg-pass/[.35] }
+    .nfd-sm-journey-step.is-current + .nfd-sm-journey-step::before { @apply bg-rule }
+    .nfd-sm-journey-step.is-done .nfd-sm-journey-link { @apply text-body }
+    button.nfd-sm-journey-link {
+        @apply cursor-pointer hover:text-ink focus-visible:outline-none
+        focus-visible:shadow-ring
     }
-    button.nfd-sm-journey-link { @apply cursor-pointer }
     .nfd-sm-journey-step.is-done .nfd-sm-journey-num {
-        @apply bg-emerald-500 border-emerald-500 text-white
+        @apply bg-pass border-pass text-white
     }
     .nfd-sm-journey-step.is-current .nfd-sm-journey-link {
-        @apply text-slate-900 font-semibold bg-white border-slate-200
+        @apply bg-ink text-white font-semibold
     }
     .nfd-sm-journey-step.is-current .nfd-sm-journey-num {
-        @apply bg-blue-600 border-blue-600 text-white
+        @apply bg-white border-white text-ink font-semibold
     }
-    .nfd-sm-journey-step.is-todo .nfd-sm-journey-link { @apply text-slate-400 }
+    .nfd-sm-journey-step.is-todo .nfd-sm-journey-link { @apply text-muted }
+
+    /* Narrow admin screens: the stepper is the first thing to run out of room. */
+    @media (max-width: 782px) {
+        .nfd-sm-journey { @apply flex-wrap gap-y-2 }
+        .nfd-sm-journey-step + .nfd-sm-journey-step::before { @apply hidden }
+        .nfd-sm-journey-step + .nfd-sm-journey-step { @apply flex-none }
+    }
+}
+
+/* The handoff asks for these to be dropped rather than slowed, and a package that takes twenty
+   minutes should not be twenty minutes of motion for somebody who has asked for none. */
+@media (prefers-reduced-motion: reduce) {
+    .nfd-sm .nfd-sm-spinner { animation-duration: 2.4s }
+    .nfd-sm .nfd-sm-safety::before,
+    .nfd-sm .nfd-sm-step--active .nfd-sm-step-mark,
+    .nfd-sm .nfd-sm-progress-bar,
+    .nfd-sm .nfd-sm-bar i,
+    .nfd-sm .nfd-sm-tile--running::after { animation: none }
+    .nfd-sm .nfd-sm-tile--running::after { @apply hidden }
 }
 
 @keyframes nfd-sm-spin {
     to { transform: rotate(360deg) }
+}
+
+@keyframes nfd-sm-shimmer {
+    from { background-position: 0 0 }
+    to { background-position: 64px 0 }
+}
+
+@keyframes nfd-sm-pulse {
+    0%, 100% { opacity: 1 }
+    50% { opacity: .35 }
+}
+
+@keyframes nfd-sm-sweep {
+    from { transform: translateX(-100%) }
+    to { transform: translateX(320%) }
 }

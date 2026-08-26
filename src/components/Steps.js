@@ -17,6 +17,15 @@ const stateOf = ( i, active ) => {
 };
 
 /**
+ * What goes in a step's circle: its number, or a tick once it is behind you.
+ *
+ * @param {string} state 'done', 'current' or 'todo'.
+ * @param {number} i     Index of the step.
+ * @return {string} The glyph.
+ */
+const mark = ( state, i ) => ( 'done' === state ? '✓' : String( i + 1 ) );
+
+/**
  * Where you are, what is behind you, and what is left.
  *
  * Completed steps are links, because everything before the point of no return is a decision
@@ -64,14 +73,14 @@ export const Steps = ( { steps = [], current = '', locked = false } ) => {
 								onClick={ () => navigate( step.path ) }
 							>
 								<span className="nfd-sm-journey-num">
-									{ i + 1 }
+									{ mark( state, i ) }
 								</span>
 								<span>{ step.label }</span>
 							</button>
 						) : (
 							<span className="nfd-sm-journey-link">
 								<span className="nfd-sm-journey-num">
-									{ i + 1 }
+									{ mark( state, i ) }
 								</span>
 								<span>{ step.label }</span>
 							</span>
