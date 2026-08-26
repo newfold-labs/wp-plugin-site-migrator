@@ -244,6 +244,28 @@ export const Choose = () => {
 				</div>
 			) }
 
+			<div className="nfd-sm-card">
+				<p className="nfd-sm-eyebrow">
+					{ __( 'Fetch it from the source', 'nfd-site-migrator' ) }
+				</p>
+				<p className="nfd-sm-hint">
+					{ __(
+						'If the site you are moving from can be reached over the internet, this site downloads the package straight from it — nothing goes through your computer, and an interrupted transfer picks up where it stopped. Generate a transfer key there first.',
+						'nfd-site-migrator'
+					) }
+				</p>
+				<div className="nfd-sm-actions">
+					<button
+						type="button"
+						className="nfd-sm-btn nfd-sm-btn--primary"
+						id="nfd-sm-go-pull"
+						onClick={ () => navigate( '/import/pull' ) }
+					>
+						{ __( 'Fetch from the source', 'nfd-site-migrator' ) }
+					</button>
+				</div>
+			</div>
+
 			{ sources?.discovered?.length > 0 && (
 				<div className="nfd-sm-card">
 					<p className="nfd-sm-eyebrow">

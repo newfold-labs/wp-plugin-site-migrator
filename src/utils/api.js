@@ -260,6 +260,31 @@ export const api = {
 				method: 'POST',
 				headers: importHeaders(),
 			} ),
+
+		// The destination's half of a direct transfer. The key is sent once, on connect, and
+		// never comes back out: after this the server holds it and no route returns it.
+		pull: {
+			connect: ( url, key ) =>
+				stableCall( 'import/pull/connect', {
+					method: 'POST',
+					data: { url, key },
+				} ),
+
+			step: ( signal ) =>
+				stableCall( 'import/pull/step', { method: 'POST', signal } ),
+
+			state: () => stableCall( 'import/pull/state' ),
+
+			stop: () => stableCall( 'import/pull/stop', { method: 'POST' } ),
+		},
+	},
+
+	// The source's half: mint the key a destination presents, and watch it being used.
+	transfer: {
+		issue: () => call( { path: `${ BASE }/transfer/key`, method: 'POST' } ),
+		revoke: () =>
+			call( { path: `${ BASE }/transfer/key`, method: 'DELETE' } ),
+		status: () => call( { path: `${ BASE }/transfer/status` } ),
 	},
 
 	downloadUrl: ( file ) => restEndpoint( 'export/download', { file } ),

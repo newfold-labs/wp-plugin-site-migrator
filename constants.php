@@ -38,12 +38,27 @@ if ( ! defined( 'NFD_SM_PAUSED_OPTION' ) ) {
 	define( 'NFD_SM_PAUSED_OPTION', 'nfd_site_migrator_paused' );
 }
 
+// The two ends of a direct transfer, standalone for the same reason the pause flag is: both are
+// written by requests that run for minutes — the source records progress while it is streaming a
+// volume out, the destination while it is pulling one in — and the plugin's option array is read
+// once and written back whole on shutdown, so a long request would persist a copy of the world as
+// it was when it started. They also hold a credential apiece, which purge has to be able to find.
+if ( ! defined( 'NFD_SM_TRANSFER_KEY_OPTION' ) ) {
+	define( 'NFD_SM_TRANSFER_KEY_OPTION', 'nfd_site_migrator_transfer_key' );
+}
+
+if ( ! defined( 'NFD_SM_TRANSFER_SOURCE_OPTION' ) ) {
+	define( 'NFD_SM_TRANSFER_SOURCE_OPTION', 'nfd_site_migrator_transfer_source' );
+}
+
 if ( ! defined( 'NFD_SM_OPTIONS_LIST' ) ) {
 	define(
 		'NFD_SM_OPTIONS_LIST',
 		array(
 			NFD_SM_OPTION_NAME,
 			NFD_SM_PAUSED_OPTION,
+			NFD_SM_TRANSFER_KEY_OPTION,
+			NFD_SM_TRANSFER_SOURCE_OPTION,
 		)
 	);
 }

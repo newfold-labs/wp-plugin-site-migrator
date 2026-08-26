@@ -89,6 +89,72 @@ function nfd_sm_storage_path() {
 }
 
 /**
+ * The two shapes another site's REST API can have, best guess first.
+ *
+ * A site with pretty permalinks serves both; a site without them serves only `?rest_route=`, and
+ * answers `/wp-json/…` with a redirect to its home page — HTML, which reads as "the plugin is not
+ * installed there" (finding 3.17). Plain permalinks are the default on a fresh install and common
+ * on exactly the hosts this plugin exists for, so the query form goes first and the path form
+ * stays as a fallback for a host that blocks it.
+ *
+ * Two callers now depend on getting this right — the pairing handshake and the direct transfer —
+ * and the transfer makes hundreds of requests, so it settles on one base and reuses it rather
+ * than rediscovering this per file.
+ *
+ * @param string $site_url Another site's address.
+ *
+ * @return array Base URLs, each ending in the namespace separator.
+ */
+function nfd_sm_rest_bases( $site_url ) {
+	$base = trailingslashit( esc_url_raw( trim( (string) $site_url ) ) );
+
+	if ( '/' === $base ) {
+		return array();
+	}
+
+	return array(
+		$base . '?rest_route=/nfd-site-migrator/v1/',
+		$base . 'wp-json/nfd-site-migrator/v1/',
+	);
+}
+
+/**
+ * Build a URL for a route below one of those bases.
+ *
+ * The separator is the whole point. With the path form, query arguments start with `?`; with the
+ * query form the route is *already* a query argument and a second `?` gets swallowed into the
+ * value of the first, so the route stops resolving.
+ *
+ * @param string $base  A base from nfd_sm_rest_bases().
+ * @param string $route Route below the namespace, e.g. `transfer/file`.
+ * @param array  $args  Query arguments.
+ *
+ * @return string
+ */
+function nfd_sm_rest_url( $base, $route, $args = array() ) {
+	$url = rtrim( (string) $base, '/' ) . '/' . ltrim( (string) $route, '/' );
+
+	if ( empty( $args ) ) {
+		return $url;
+	}
+
+	return $url . ( false === strpos( $url, '?' ) ? '?' : '&' ) . http_build_query( $args );
+}
+
+/**
+ * Where this site keeps the package it exported.
+ *
+ * One place, because two now ask: the browser downloads parts out of it and a paired destination
+ * pulls them straight from it. A second literal `storage . 'package'` somewhere is how the
+ * transfer ends up serving a directory the export never wrote to.
+ *
+ * @return string Absolute path, no trailing separator.
+ */
+function nfd_sm_package_path() {
+	return rtrim( nfd_sm_storage_path(), '/\\' ) . DIRECTORY_SEPARATOR . 'package';
+}
+
+/**
  * Measure a directory, with a time budget and a cache.
  *
  * Walking a large uploads directory is slow — several seconds for a few gigabytes, minutes for

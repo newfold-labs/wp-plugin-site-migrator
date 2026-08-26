@@ -373,6 +373,13 @@
     }
     .nfd-sm-paircode--url { @apply text-base tracking-normal }
 
+    /* A transfer key is 48 characters, four times the pairing code. At the pairing code's size
+       it overflows the card on a narrow admin screen and gets clipped mid-secret, so it steps
+       down and is allowed to wrap — it is copied with the button beside it, not typed. */
+    .nfd-sm-paircode--long {
+        @apply text-[15px] tracking-[.08em] break-all leading-relaxed py-3
+    }
+
     /* Import: the stage list.
        Shown in full rather than as a bar, because the useful information is not "how far" but
        "has the switch happened yet". */

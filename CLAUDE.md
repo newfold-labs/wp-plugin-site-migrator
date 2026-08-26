@@ -16,10 +16,18 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–4 are done** (4a–4h). A full migration works end to end, both from
-the CLI and through wp-admin: pair, compare, package, download, upload, preview, import, roll
-back. What is left is phase 5 (direct site-to-site transfer), phase 6 (WP-CLI as a supported
-surface), phase 7 (tests and CI) and phase 8 (hardening and distribution).
+Current state: **phases 0–5 are done** (4a–4h, then 5). A full migration works end to end, both
+from the CLI and through wp-admin: pair, compare, package, then either hand the package over
+directly or download and upload it, preview, import, roll back. What is left is phase 6 (WP-CLI
+as a supported surface), phase 7 (tests and CI) and phase 8 (hardening and distribution).
+
+**Phase 5 has been exercised against a harness, not against two real sites.** The transfer
+classes were driven over real HTTP — a `php -S` source running this plugin's own `Offer`,
+`TransferKey` and range streaming, against a `Puller` on the other side — covering the round
+trip, resume from a truncated part, a damaged part refetched, a revoked key, an oversized
+response, a mismatched package clearing the staging directory, and the step budget splitting a
+transfer. Two bugs came out of that and are fixed. What has *not* happened is a run between two
+WordPress installs, which is where 4c–4h all came from; treat it accordingly.
 
 **Calibrate your confidence from how 4c–4h were found.** Every one of them came from somebody
 using the plugin on a real site, not from review — including two data-integrity bugs (3.18, the
@@ -233,19 +241,71 @@ parameter is refused before it is resolved rather than compared after.
 
 Import state lives in `uploads/nfd-site-migrator/import/`, **not in the package** (plan D15).
 
+**Transfer** (`Core/Transfer/`): the v2 transport, where the destination fetches the package
+itself instead of a person carrying it. `TransferKey` is the source's credential, `Offer` is what
+a package will hand over, `Source` is the destination's memory of who it is pulling from, and
+`Puller` does the fetching with `step( $budget )` like everything else.
+
+**The plan said `PackageReader` would grow a remote backend. It cannot.** The parts are zip
+archives and `ZipArchive` reads a local file, so an import driven straight off HTTP would mean
+reimplementing zip. It is also unnecessary: the import already needs the package on disk. So the
+pull writes into `Upload::dir()` — the same staging directory a browser upload fills — and
+verification, preview, `Importer`, `PathMap` and rollback are untouched. Only the carrying changed.
+
+**Pull, not push**, so the work happens inside the destination's own request: the site doing the
+writing is the site reporting the progress, which is the same contract as every other step loop
+here. It also means the person authorising the overwrite is standing at the machine being
+overwritten. The credentials mirror each other — a destination mints a **pairing code** so a site
+cannot be *targeted* by a stranger, a source mints a **transfer key** so a site cannot be *read*
+by one — and neither half of a migration can be started from outside.
+
+**The transfer key is long and its hash is fast, which is the opposite of the pairing code.** A
+pairing code is twelve characters because a human reads it aloud, so it is stored under
+`wp_hash_password()`; there is nothing to guess in 48 characters of `random_bytes()`, and the
+check is paid on every one of the hundreds of requests a large pull makes. It expires on
+**idleness**, not on a clock — a fixed fifteen minutes would fail every 20GB migration, the one
+case this exists for — and it **binds to the first caller's address**, so a key that leaks once a
+transfer is under way is already useless. A wrong key gets a 404, not a 401, for the same reason
+`/pairing/profile` does.
+
+**Progress is the bytes on disk, not a number anything keeps.** Sizes come from the manifest the
+source declared; how far along each file is comes from `filesize()`. There is no checkpoint to
+fall out of step with the files, a step never writes a progress record, and a closed tab, a second
+tab and a different machine all see the same transfer. `Source` holds only the connection, and
+drops the key the moment the last byte lands.
+
+**A step must always make one attempt before the budget can stop it**, and it must hand back the
+run lock on the way out. Both of these were bugs. Without the first, a budget already spent by the
+time the walk reaches an incomplete file — which a large package's walk over its finished parts
+can do on its own — returns having fetched nothing, and the caller loops forever against a number
+that never moves. Without the second, every budget-limited step left the lock held and the next
+one refused to work. "As much as fits" has a floor of one.
+
+**Every completed file is hashed as it lands**, rather than verifying the whole package in one
+request at the end as the upload path does. Same total reading, spread across the transfer, and a
+part that arrives wrong is refetched immediately instead of ten gigabytes later. Two refetches per
+file, counted in a file beside the staging directory; after that it says what is altering the
+bytes rather than trying again forever.
+
+**The source serves only what the manifest names**, which is narrower than the download endpoint's
+"anything inside the package directory", and it refuses a response larger than the manifest leaves
+room for. `sslverify` is always on and never tied to this site's own scheme (finding 2.5).
+
 **REST API** (`includes/Rest/`, namespace `nfd-site-migrator/v1`): controllers extend
 `Rest\Controller` and are listed in `Rest\Routes::register_routes()`. Every route requires
 `manage_options` except `/pairing/profile`, which is public by necessity and returns **404, not
 401**, for a missing or wrong code — a 401 would make it an oracle for "a WordPress site with this
 plugin lives here".
 
-**CLI** (`includes/Cli/`): `wp site-migrator export|verify|import|rollback|cancel|confirm`. A
+**CLI** (`includes/Cli/`):
+`wp site-migrator export|verify|offer|pull|import|rollback|cancel|confirm`. A
 harness, not the v3 product — but a real second consumer of `Core/` from the day `Core/` existed,
 and it is what makes the round-trip test a shell script.
 
-**Frontend** (`src/`): mounts into `#nfd-sm-app`. `routes.js` picks the screen; `utils/useExport.js`
-and `utils/useImport.js` drive the step loops. Calls go through `utils/api.js`, which converts
-thrown errors into `{ error, failed: true }` rather than rejecting — callers check `response.failed`.
+**Frontend** (`src/`): mounts into `#nfd-sm-app`. `routes.js` picks the screen; `utils/useExport.js`,
+`utils/useImport.js` and `utils/usePull.js` drive the step loops. Calls go through `utils/api.js`,
+which converts thrown errors into `{ error, failed: true }` rather than rejecting — callers check
+`response.failed`.
 
 **Everything the import touches must survive the swap**, and four browser things do not on their
 own. The REST *nonce* dies with the users table, so `ImportController` clears that error for a
@@ -297,6 +357,17 @@ already on disk; `/export/verify` re-reads every byte and runs **only when asked
 the check that protects anybody — checksums are taken as each volume closes and the destination
 re-verifies before it writes — so it is a button, not a minute per visit. Download-all stays
 enabled until a check has *actually failed*: unverified means unknown, not broken.
+
+**The last source step is *Deliver*, and two screens share it.** `/send` hands the package over
+directly and `/download` is the fallback for a source the destination cannot reach; both render
+with `step="deliver"`, because they are two ways through one step of one journey rather than two
+steps competing for a place in the stepper. Each links to the other. On the destination `/import`
+and `/import/pull` share `step="choose"` the same way.
+
+**A reload during a transfer lands back on it.** `Resume` checks the pull after the import and
+before the export, and only an *unfinished* transfer captures the redirect — once every file is
+here the staged directory shows up in `Upload::discover()` like any other package, because
+`incoming` is a child of the storage path, and `/import` lists it.
 
 **Download-all is a browser loop, never a server-side zip.** The package is already compressed,
 so re-zipping it costs the whole site's size in disk and time for a file that is no smaller and
@@ -385,6 +456,14 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - View recreation has been read and not run — the fixture has no views.
 - Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
   exist yet.
+- The direct transfer has never run between two WordPress installs, only against a harness. In
+  particular: no host with a proxy in front of it, no TLS certificate that a `wp_remote_get` would
+  argue with, and the IP binding has never been tested against a source reached through more than
+  one egress address — which would refuse a legitimate transfer, and whose fix is to issue a new
+  key.
+- Nothing has been transferred through a host that buffers or rewrites `Range` responses, which is
+  the failure the per-file checksum exists to catch and the one most likely to need a real site to
+  find.
 
 ## Git Commits
 - Keep commit messages under one line, ~50 chars max

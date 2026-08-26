@@ -184,12 +184,13 @@ class Pairing {
 	 * @return array Absolute URLs.
 	 */
 	protected static function endpoints( $url ) {
-		$base = \trailingslashit( $url );
+		$endpoints = array();
 
-		return array(
-			$base . '?rest_route=/nfd-site-migrator/v1/pairing/profile',
-			$base . 'wp-json/nfd-site-migrator/v1/pairing/profile',
-		);
+		foreach ( \nfd_sm_rest_bases( $url ) as $base ) {
+			$endpoints[] = \nfd_sm_rest_url( $base, 'pairing/profile' );
+		}
+
+		return $endpoints;
 	}
 
 	/**

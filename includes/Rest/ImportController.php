@@ -13,6 +13,8 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Loader;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Source;
 
 /**
  * The browser drives the import through these, the same way it drives the export.
@@ -50,6 +52,10 @@ class ImportController extends Controller {
 			'/import/upload/chunk'  => array( \WP_REST_Server::CREATABLE, 'upload_chunk', $admin ),
 			'/import/upload/verify' => array( \WP_REST_Server::CREATABLE, 'upload_verify', $admin ),
 			'/import/upload/reset'  => array( \WP_REST_Server::CREATABLE, 'upload_reset', $admin ),
+			'/import/pull/connect'  => array( \WP_REST_Server::CREATABLE, 'pull_connect', $admin ),
+			'/import/pull/step'     => array( \WP_REST_Server::CREATABLE, 'pull_step', $admin ),
+			'/import/pull/state'    => array( \WP_REST_Server::READABLE, 'pull_state', $admin ),
+			'/import/pull/stop'     => array( \WP_REST_Server::CREATABLE, 'pull_stop', $admin ),
 			'/import/preview'       => array( \WP_REST_Server::CREATABLE, 'preview', $admin ),
 			'/import/start'         => array( \WP_REST_Server::CREATABLE, 'start', $admin ),
 			'/import/step'          => array( \WP_REST_Server::CREATABLE, 'step', $run ),
@@ -271,6 +277,107 @@ class ImportController extends Controller {
 		Upload::reset();
 
 		return \rest_ensure_response( array( 'ok' => true ) );
+	}
+
+	/**
+	 * Point this site at a source and read what it is offering.
+	 *
+	 * The key travels in the request body and is never returned by any route afterwards: it is
+	 * a credential for reading another site, and this is the last screen that has any business
+	 * knowing it.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function pull_connect( $request ) {
+		$puller = new Puller();
+		$result = $puller->connect(
+			(string) $request->get_param( 'url' ),
+			(string) $request->get_param( 'key' )
+		);
+
+		if ( isset( $result['error'] ) ) {
+			return new \WP_Error( 'nfd_sm_connect_failed', $result['error'], array( 'status' => 400 ) );
+		}
+
+		return \rest_ensure_response(
+			\array_merge(
+				array(
+					'ok'      => true,
+					// Said out loud rather than done quietly: this is the one place a
+					// connection throws away bytes somebody waited for.
+					'cleared' => (int) $result['cleared'],
+				),
+				$puller->snapshot(),
+				array( 'source' => Source::status() )
+			)
+		);
+	}
+
+	/**
+	 * Fetch the next stretch of the package.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function pull_step( $request ) {
+		unset( $request );
+
+		$puller = new Puller();
+
+		try {
+			$state = $puller->step( self::BUDGET );
+		} catch ( \Exception $e ) {
+			return \rest_ensure_response(
+				\array_merge(
+					$puller->snapshot(),
+					array(
+						'done'  => false,
+						'error' => $e->getMessage(),
+					)
+				)
+			);
+		}
+
+		return \rest_ensure_response( \array_merge( $state, array( 'error' => '' ) ) );
+	}
+
+	/**
+	 * What the transfer is doing, so a reloaded tab can pick it back up.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function pull_state() {
+		$puller = new Puller();
+
+		return \rest_ensure_response(
+			\array_merge(
+				$puller->snapshot(),
+				array(
+					'error'  => '',
+					'source' => Source::status(),
+				)
+			)
+		);
+	}
+
+	/**
+	 * Stop pulling.
+	 *
+	 * What has arrived stays: it is the expensive part, it is still valid, and the same screen
+	 * offers a reset for anyone who wants it gone.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function pull_stop() {
+		$puller = new Puller();
+		$puller->disconnect();
+
+		return \rest_ensure_response(
+			\array_merge( array( 'ok' => true ), $puller->snapshot() )
+		);
 	}
 
 	/**

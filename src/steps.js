@@ -9,13 +9,18 @@
 
 /**
  * Sending a site: everything here is re-runnable, so every completed step can be returned to.
+ *
+ * The last step is *Deliver*, not *Download*, because there are two ways to get the package to
+ * the other site and only one of them involves a download. `/send` hands it over directly and
+ * `/download` is the fallback for a source the destination cannot reach; both are the same step
+ * of the same journey, so they share a place in the stepper rather than competing for one.
  */
 export const SOURCE_STEPS = [
 	{ id: 'start', label: 'This site', path: '/start' },
 	{ id: 'pair', label: 'Destination', path: '/pair' },
 	{ id: 'compatibility', label: 'Compatibility', path: '/compatibility' },
 	{ id: 'export', label: 'Package', path: '/export' },
-	{ id: 'download', label: 'Download', path: '/download' },
+	{ id: 'deliver', label: 'Deliver', path: '/send' },
 ];
 
 /**

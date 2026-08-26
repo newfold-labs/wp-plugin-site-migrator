@@ -1689,16 +1689,64 @@ failed**. Not-verified and known-broken are different states: nothing is checked
 so an unverified package is merely unknown, while an hour spent downloading one already proven
 broken is an hour nobody gets back.
 
-### Phase 5 — Direct site-to-site transfer · **L** *(v2)*
+### Phase 5 — Direct site-to-site transfer · **L** *(v2)* — ✅ *done 2026-08-27*
 
-The Migrate Guru-like experience. Removes manual file handling entirely.
+The Migrate Guru-like experience: the destination fetches the package itself and nobody carries
+anything. The manual path stays, because a source the destination cannot reach over the internet
+is a real situation and the escape hatch is the difference between slow and impossible.
 
-- Source: generate a one-time transfer key (scoped, expiring, single-use, rate-limited,
-  `random_bytes()`).
-- Destination: paste key, pull each part server-to-server over HTTP with `Range` resume.
-- Same `Importer` core; only the byte source changes — `PackageReader` gains a remote backend.
-- Security review is mandatory here: this is the first time the plugin exposes site content to
-  a network caller.
+**One thing in the plan above did not survive contact with the code.** "`PackageReader` gains a
+remote backend" cannot be done: the parts are zip archives and `ZipArchive` reads a local file,
+so an import driven straight off HTTP would mean reimplementing zip. It is also unnecessary — the
+import already needs the package on disk, so putting it there is not a cost the transfer adds. The
+pull writes into `Upload::dir()`, the same staging directory a browser upload fills, and
+verification, the preview, `Importer`, `PathMap` and rollback are the code that already worked.
+Only the carrying changed. `Core/Transfer/` is four classes: `TransferKey`, `Offer`, `Source`,
+`Puller`.
+
+**Pull rather than push**, as planned, and worth saying why. The work happens inside the
+destination's own request, so the site doing the writing is the site reporting the progress — the
+same contract as every other step loop here, and the reason a progress bar cannot lie. It also puts
+the person authorising the overwrite at the machine being overwritten. The two credentials mirror
+each other: a destination mints a **pairing code** so a site cannot be *targeted* by a stranger, a
+source mints a **transfer key** so a site cannot be *read* by one, and neither half of a migration
+can be started from outside.
+
+**The security review the plan demanded, and what came out of it.** The key is 48 characters of
+`random_bytes()`, stored as a SHA-256 and compared with `hash_equals()` — deliberately not
+`wp_hash_password()`, which exists to make *guessable* secrets expensive and would be paid on every
+one of the hundreds of requests a large pull makes. It expires on **idleness** rather than on a
+clock, because a fixed window fails every 20GB migration, which is the case this exists for. It
+**binds to the first caller's address**, so a leaked key is useless once the real transfer starts.
+Failures are rate-limited but never destroy the key, or a stranger could burn a migration they
+cannot otherwise touch. A bad key gets a 404, not a 401, for the same reason `/pairing/profile`
+does. The file route serves only what the **manifest names** — narrower than the download
+endpoint's "anything inside the package directory" — and the puller refuses a response larger than
+the manifest leaves room for. `sslverify` is always on and never tied to the local scheme (2.5).
+The destination holds the key at rest for as long as the transfer needs it, which is unavoidable
+and bounded: it is dropped the moment the last byte lands, no route returns it, and
+`nfd_sm_purge_all()` removes it.
+
+**Progress is measured, not remembered.** Sizes come from the manifest; how far along each file is
+comes from `filesize()`. So there is no checkpoint to fall out of step with the files, a step never
+writes a progress record, and a closed tab, a second tab and a different machine all see the same
+transfer. Every file is hashed as it completes rather than the whole package being verified in one
+unsplittable request at the end — the same total reading, spread out, and a bad part is refetched
+immediately instead of ten gigabytes later.
+
+**Two bugs, both found by the harness rather than by reading.** A step that made no attempt before
+checking its budget could return having fetched nothing — which a large package's walk over its
+already-finished parts can cause on its own, on a host with a tight budget — leaving the caller
+looping forever against a number that never moved. And that same budget exit returned *without
+releasing the run lock*, so the next step refused to work. "As much as fits" has a floor of one,
+and every exit gives the lock back.
+
+Verified over real HTTP against a `php -S` source running this plugin's own `Offer`, `TransferKey`
+and range streaming: round trip, resume from a truncated part, a damaged part refetched and
+re-verified, a revoked key mid-transfer and a clean reconnect, an oversized response refused, a
+mismatched package clearing the staging directory, and a step budget splitting the transfer. Plus
+21 unit checks over key normalisation, binding, rate limiting, revocation and the range arithmetic.
+**Not** yet run between two WordPress installs — which is where every one of 4c–4h came from.
 
 ### Phase 6 — WP-CLI as a supported surface · **S/M** *(v3)*
 

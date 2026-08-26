@@ -9,8 +9,13 @@ namespace NewfoldLabs\WP\SiteMigrator\Cli;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Exporter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Offer;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Source;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\TransferKey;
 
 /**
  * Minimal command surface over the core.
@@ -40,6 +45,8 @@ class Commands {
 		\WP_CLI::add_command( 'site-migrator rollback', array( __CLASS__, 'rollback' ) );
 		\WP_CLI::add_command( 'site-migrator cancel', array( __CLASS__, 'cancel' ) );
 		\WP_CLI::add_command( 'site-migrator confirm', array( __CLASS__, 'confirm' ) );
+		\WP_CLI::add_command( 'site-migrator offer', array( __CLASS__, 'offer' ) );
+		\WP_CLI::add_command( 'site-migrator pull', array( __CLASS__, 'pull' ) );
 	}
 
 	/**
@@ -461,5 +468,198 @@ class Commands {
 				\sprintf( 'user %s held the role %s, which this content does not define; now %s', $demoted['login'], $demoted['was'], $demoted['now'] )
 			);
 		}
+	}
+
+	/**
+	 * Offer this site's package to a destination, and print the key it needs.
+	 *
+	 * The key is printed once, because only its hash is stored — there is no command that could
+	 * read it back. It binds to the first site that uses it and expires after six hours of
+	 * nothing happening.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--status]
+	 * : Report on the outstanding key instead of issuing one.
+	 *
+	 * [--revoke]
+	 * : Withdraw the outstanding key.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp site-migrator offer
+	 *     wp site-migrator offer --status
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	public static function offer( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
+		if ( ! empty( $assoc_args['revoke'] ) ) {
+			TransferKey::revoke();
+			\WP_CLI::success( 'Withdrawn. Nothing can fetch the package now.' );
+
+			return;
+		}
+
+		$status = TransferKey::status();
+
+		if ( ! empty( $assoc_args['status'] ) ) {
+			if ( empty( $status['active'] ) ) {
+				\WP_CLI::log( 'No key is outstanding.' );
+
+				return;
+			}
+
+			\WP_CLI::log(
+				\sprintf(
+					'Active until %s. Claimed by: %s. Sent so far: %s.',
+					\gmdate( 'Y-m-d H:i:s', $status['expires'] ) . ' UTC',
+					'' !== $status['claimed_by'] ? $status['claimed_by'] : 'nobody yet',
+					\size_format( $status['sent'] )
+				)
+			);
+
+			return;
+		}
+
+		$offer = new Offer();
+
+		if ( ! $offer->is_ready() ) {
+			\WP_CLI::error( 'There is no finished package here to send. Run `wp site-migrator export` first.' );
+
+			return;
+		}
+
+		$summary = $offer->summary();
+
+		\WP_CLI::log( \sprintf( 'Address: %s', \get_site_url() ) );
+		\WP_CLI::log( \sprintf( 'Key:     %s', TransferKey::issue() ) );
+		\WP_CLI::success(
+			\sprintf(
+				'%d files, %s, ready to be pulled.',
+				\count( $summary['files'] ),
+				\size_format( $summary['bytes'] )
+			)
+		);
+	}
+
+	/**
+	 * Fetch a package straight from the source it was exported on.
+	 *
+	 * The bytes land in the same staging directory an uploaded package would, so `import` picks
+	 * up from here unchanged. Interrupting this is safe: rerun it and it continues from the byte
+	 * it stopped at.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [<url>]
+	 * : The source site's address. Omit to continue a transfer already connected.
+	 *
+	 * [<key>]
+	 * : The transfer key printed by `wp site-migrator offer` on the source.
+	 *
+	 * [--budget=<seconds>]
+	 * : Stop after this many seconds per step. Defaults to no limit, which is right under
+	 * WP-CLI where max_execution_time is 0.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp site-migrator pull https://old.example.com 2f52f7ce…
+	 *     wp site-migrator pull
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	public static function pull( $args, $assoc_args ) {
+		$puller = new Puller();
+		$budget = isset( $assoc_args['budget'] ) ? (float) $assoc_args['budget'] : 0;
+
+		if ( ! empty( $args[0] ) ) {
+			$result = $puller->connect( $args[0], isset( $args[1] ) ? $args[1] : '' );
+
+			if ( isset( $result['error'] ) ) {
+				\WP_CLI::error( $result['error'] );
+
+				return;
+			}
+
+			if ( $result['cleared'] > 0 ) {
+				\WP_CLI::warning(
+					\sprintf(
+						'Removed %s of a different package that was staged here.',
+						\size_format( $result['cleared'] )
+					)
+				);
+			}
+
+			\WP_CLI::log(
+				\sprintf(
+					'Connected to %s — %d files, %s.',
+					$result['summary']['site_url'],
+					\count( $result['summary']['files'] ),
+					\size_format( $result['summary']['bytes'] )
+				)
+			);
+		} elseif ( empty( Source::load() ) ) {
+			\WP_CLI::error( 'Give me the source\'s address and a transfer key.' );
+
+			return;
+		}
+
+		$started = \microtime( true );
+
+		for ( ; ; ) {
+			try {
+				$state = $puller->step( $budget );
+			} catch ( \Exception $e ) {
+				\WP_CLI::error( $e->getMessage() );
+
+				return;
+			}
+
+			foreach ( $state['notes'] as $note ) {
+				\WP_CLI::warning( $note );
+			}
+
+			\WP_CLI::log(
+				\sprintf(
+					'%d/%d files, %s of %s%s',
+					$state['files_done'],
+					$state['files_total'],
+					\size_format( $state['bytes_done'] ),
+					\size_format( $state['bytes_total'] ),
+					'' !== $state['current'] ? ' — ' . $state['current'] : ''
+				)
+			);
+
+			if ( $state['done'] ) {
+				break;
+			}
+		}
+
+		$reader   = new PackageReader( Upload::dir() );
+		$problems = $reader->verify();
+
+		if ( ! empty( $problems ) ) {
+			foreach ( $problems as $problem ) {
+				\WP_CLI::warning( $problem );
+			}
+
+			\WP_CLI::error( 'The package arrived but does not match its own checksums.' );
+
+			return;
+		}
+
+		\WP_CLI::success(
+			\sprintf(
+				'Fetched %s in %.1fs and every file matches its checksum. Import it with `wp site-migrator import`.',
+				\size_format( $state['bytes_total'] ),
+				\microtime( true ) - $started
+			)
+		);
 	}
 }

@@ -22,6 +22,7 @@ class Routes {
 		'NewfoldLabs\\WP\\SiteMigrator\\Rest\\PairingController',
 		'NewfoldLabs\\WP\\SiteMigrator\\Rest\\ExportController',
 		'NewfoldLabs\\WP\\SiteMigrator\\Rest\\ImportController',
+		'NewfoldLabs\\WP\\SiteMigrator\\Rest\\TransferController',
 	);
 
 	/**

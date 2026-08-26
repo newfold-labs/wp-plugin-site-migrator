@@ -97,7 +97,7 @@ export const Exporting = () => {
 
 	useEffect( () => {
 		if ( done ) {
-			navigate( '/download' );
+			navigate( '/send' );
 		}
 	}, [ done, navigate ] );
 

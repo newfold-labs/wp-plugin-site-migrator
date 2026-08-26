@@ -1,5 +1,6 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { useEffect, useRef, useState } from '@wordpress/element';
+import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
 import { api } from '../../utils/api';
@@ -18,6 +19,7 @@ const mb = ( bytes ) => `${ ( bytes / 1048576 ).toFixed( 1 ) } MB`;
  * @return {Element} The screen.
  */
 export const Download = () => {
+	const navigate = useNavigate();
 	const [ data, setData ] = useState( null );
 	const [ check, setCheck ] = useState( null );
 	const [ checking, setChecking ] = useState( false );
@@ -172,7 +174,7 @@ export const Download = () => {
 	return (
 		<Layout
 			steps={ SOURCE_STEPS }
-			step="download"
+			step="deliver"
 			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Package ready', 'nfd-site-migrator' ) }
 			intro={ __(
@@ -416,6 +418,34 @@ export const Download = () => {
 					'Very large site? Instead of downloading and uploading through the browser, copy these files straight into wp-content/uploads/nfd-site-migrator/ on the destination over FTP. It will find them on its own.',
 					'nfd-site-migrator'
 				) }
+			</div>
+
+			<div className="nfd-sm-card">
+				<p className="nfd-sm-eyebrow">
+					{ __(
+						'Or skip your computer entirely',
+						'nfd-site-migrator'
+					) }
+				</p>
+				<p className="nfd-sm-hint">
+					{ __(
+						'If the destination can reach this site over the internet, it can fetch the package itself — no download, no upload, and it resumes on its own. That is the shorter road for anything larger than a few hundred megabytes.',
+						'nfd-site-migrator'
+					) }
+				</p>
+				<div className="nfd-sm-actions">
+					<button
+						type="button"
+						className="nfd-sm-btn"
+						id="nfd-sm-go-send"
+						onClick={ () => navigate( '/send' ) }
+					>
+						{ __(
+							'Send it directly instead',
+							'nfd-site-migrator'
+						) }
+					</button>
+				</div>
 			</div>
 		</Layout>
 	);

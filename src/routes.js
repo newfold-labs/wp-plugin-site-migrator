@@ -6,8 +6,10 @@ import { Pair } from './components/screens/Pair';
 import { Compatibility } from './components/screens/Compatibility';
 import { Exporting } from './components/screens/Exporting';
 import { Download } from './components/screens/Download';
+import { Send } from './components/screens/Send';
 import { Receive } from './components/screens/Receive';
 import { Choose } from './components/screens/import/Choose';
+import { Pull } from './components/screens/import/Pull';
 import { Review } from './components/screens/import/Review';
 import { Running } from './components/screens/import/Running';
 import { Done } from './components/screens/import/Done';
@@ -49,21 +51,34 @@ const Resume = () => {
 				return;
 			}
 
-			api.exportState().then( ( state ) => {
-				if ( state.failed ) {
-					navigate( '/start', { replace: true } );
-				} else if ( state.complete ) {
-					navigate( '/download', { replace: true } );
-				} else if ( state.in_progress ) {
-					navigate( '/export', { replace: true } );
-				} else {
-					navigate( '/start', { replace: true } );
+			// A direct transfer is hours of work on a large site, so a reload during one is
+			// expected rather than exceptional — and landing on the export screen would look
+			// exactly like the transfer had been lost. Only an unfinished one captures the
+			// redirect: once every file is here the package shows up in the list on /import
+			// like any other, and there is nothing left for this screen to do.
+			api.import.pull.state().then( ( pull ) => {
+				if ( ! pull.failed && pull.connected && ! pull.done ) {
+					navigate( '/import/pull', { replace: true } );
+					return;
 				}
+
+				api.exportState().then( ( state ) => {
+					if ( state.failed ) {
+						navigate( '/start', { replace: true } );
+					} else if ( state.complete ) {
+						navigate( '/send', { replace: true } );
+					} else if ( state.in_progress ) {
+						navigate( '/export', { replace: true } );
+					} else {
+						navigate( '/start', { replace: true } );
+					}
+				} );
 			} );
 		} );
 	}, [ navigate ] );
 
-	// Two requests decide this, and until they answer the page has nothing on it at all. It is
+	// Up to three requests decide this, and until they answer the page has nothing on it at all.
+	// It is
 	// the first thing anybody sees on every load, so it says so rather than showing a blank
 	// admin page that looks like the plugin failed to start.
 	return (
@@ -123,8 +138,10 @@ export default function Routes() {
 		},
 		{ path: '/export', element: <Exporting /> },
 		{ path: '/download', element: <Download /> },
+		{ path: '/send', element: <Send /> },
 		{ path: '/receive', element: <Receive /> },
 		{ path: '/import', element: <Choose /> },
+		{ path: '/import/pull', element: <Pull /> },
 		{ path: '/import/review', element: <Review /> },
 		{ path: '/import/run', element: <Running /> },
 		{ path: '/import/done', element: <Done /> },
