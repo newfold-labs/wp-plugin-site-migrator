@@ -319,10 +319,15 @@ column beside the badge rather than next to its siblings. And **the panel is one
 bands** — safety strip, stepper, body — which is why `.nfd-sm-shell` clips its children and
 `.nfd-sm-body` carries the padding.
 
-**The fonts are not bundled.** The handoff asks for Public Sans and JetBrains Mono, self-hosted
-rather than hot-linked, for WP.org compliance. Both stacks are declared and both currently fall
-through to what wp-admin already has, so the layout is right and the faces are not. Dropping the
-files in and adding the `@font-face` rules is all that is left.
+**The fonts are bundled, never hot-linked** — a plugin on wp.org may not call a third party to
+draw its own admin screen. `assets/fonts/` holds four variable woff2 files (Public Sans and
+JetBrains Mono, latin and latin-ext, 98KB in total) with their OFL licences beside them; the
+`@font-face` rules are at the top of `app.css`, and webpack emits the files into `build/fonts/`
+with hashed names and rewrites the URLs. One axis, `font-display: swap`, and stacks that fall
+back to what wp-admin already has. They are **not** an npm dependency — the woff2 files are
+committed and nothing in the build reaches for a package; `CREDITS.md` records where they came
+from and what refreshing them involves. Note this machine has no yarn, and `npm install` rewrites
+the whole of `yarn.lock` into npm registry URLs, so adding a dependency here is not a small act.
 
 ## Dead code: two kinds, opposite fates
 

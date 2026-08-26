@@ -46,9 +46,9 @@ module.exports = {
 				'row-ink': '#2f3339',
 			},
 			fontFamily: {
-				// The handoff calls for Public Sans and JetBrains Mono. The files are not
-				// bundled yet — see CLAUDE.md — so each stack ends in what WordPress admin
-				// already has, and the layout holds either way.
+				// Public Sans and JetBrains Mono, bundled in assets/fonts/ and declared in
+				// app.css. The fallbacks are what wp-admin already has, which is what shows
+				// while the woff2 loads and on the writing systems the latin subsets leave out.
 				sans: [
 					'Public Sans',
 					'-apple-system',

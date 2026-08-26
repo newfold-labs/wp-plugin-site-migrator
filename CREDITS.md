@@ -29,3 +29,24 @@ files are retained and actively developed.
 
 This plugin began as the Bluehost Site Migrator. Its commit history is preserved in full,
 and the contributors recorded there retain authorship of their work.
+
+## Bundled fonts
+
+`assets/fonts/` carries two typefaces, both under the SIL Open Font License 1.1, with the
+licence text alongside them:
+
+| Files | Typeface | Copyright |
+|---|---|---|
+| `public-sans-latin*-wght-normal.woff2` | [Public Sans](https://public-sans.digital.gov/) | The Public Sans Project Authors |
+| `jetbrains-mono-latin*-wght-normal.woff2` | [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | The JetBrains Mono Project Authors |
+
+They are the faces the design handoff specifies, and they are bundled rather than requested
+from Google Fonts: a plugin distributed through wp.org may not make a third-party request to
+render its own admin screen.
+
+The files are the latin and latin-ext variable subsets from `@fontsource-variable/public-sans`
+and `@fontsource-variable/jetbrains-mono`, both at 5.3.0. Neither is a dependency of this
+project — the four woff2 files are committed, and nothing in the build reaches for the
+packages — so refreshing them means installing the two, copying `files/*-latin*-wght-normal.woff2`
+and `LICENSE` out of each, and checking the `unicode-range` declarations in
+`assets/styles/app.css` still match the ones in the package's own `wght.css`.
