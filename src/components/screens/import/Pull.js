@@ -134,6 +134,15 @@ export const Pull = () => {
 				'nfd-site-migrator'
 			) }
 			working={ state.running }
+			// The default detail talks about exporting, which is the wrong half of the
+			// migration to reassure somebody on: this is the destination, and the site at risk
+			// is this one. The headline still holds — fetching leaves the live site alone,
+			// because the bytes go to a staging directory it never reads — so only the
+			// sentence explaining *why* has to change.
+			safetyDetail={ __(
+				'Fetching only writes to a staging folder. Nothing here is modified.',
+				'nfd-site-migrator'
+			) }
 		>
 			{ ! state.hydrated && (
 				<div className="nfd-sm-card">

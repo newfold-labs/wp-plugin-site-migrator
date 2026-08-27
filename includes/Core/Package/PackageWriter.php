@@ -202,6 +202,31 @@ class PackageWriter {
 	}
 
 	/**
+	 * Mark the package incomplete by removing its manifest.
+	 *
+	 * The exact counterpart to `finalize()`. The manifest goes on last because its presence is
+	 * what makes a package complete, and the corollary is that it has to come off first: a run
+	 * that is about to rewrite the parts must un-mark the package before it touches a byte.
+	 *
+	 * Without this the previous run's manifest sits in the directory for the whole of the next
+	 * one, and everything that asks whether there is a package here is told yes — including
+	 * `Offer`, which will hand a destination the sizes and checksums of files that are being
+	 * overwritten underneath it. Observed on a real site: a pull begun during a re-export was
+	 * quoted 1,699,040 bytes for a part that was already 6,054,712 bytes of the *next* package.
+	 *
+	 * @return bool Whether a manifest was there to remove.
+	 */
+	public function invalidate() {
+		$path = $this->path( Manifest::NAME );
+
+		if ( ! \is_file( $path ) ) {
+			return false;
+		}
+
+		return \unlink( $path );
+	}
+
+	/**
 	 * Write the manifest and remove transient run state.
 	 *
 	 * The manifest goes last: its presence is the signal that the package is complete.

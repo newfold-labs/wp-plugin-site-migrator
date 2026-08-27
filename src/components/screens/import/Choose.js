@@ -221,6 +221,10 @@ export const Choose = () => {
 	return (
 		<Layout
 			steps={ DESTINATION_STEPS }
+			safetyDetail={ __(
+				'Nothing is imported until you have seen what it would do. This site is unchanged.',
+				'nfd-site-migrator'
+			) }
 			step="choose"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Bring in a package', 'nfd-site-migrator' ) }

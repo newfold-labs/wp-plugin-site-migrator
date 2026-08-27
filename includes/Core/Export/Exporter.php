@@ -179,6 +179,15 @@ class Exporter {
 
 		$state = $this->checkpoint->load();
 
+		// A run that still has work to do is a run that is rewriting this directory, so the
+		// previous manifest has to go before any of it happens — see `PackageWriter::invalidate()`.
+		// It is done here rather than in `prepare()` because only the checkpoint knows whether
+		// this step is going to write anything: a finished export steps into nothing at all, and
+		// its manifest must survive.
+		if ( Checkpoint::STAGE_DONE !== $state['stage'] ) {
+			$this->package->invalidate();
+		}
+
 		if ( Checkpoint::STAGE_DATABASE === $state['stage'] ) {
 			$this->step_database( $state, $deadline );
 		} elseif ( Checkpoint::STAGE_FILES === $state['stage'] ) {

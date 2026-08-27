@@ -14,7 +14,6 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\Loader;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
-use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Source;
 
 /**
  * The browser drives the import through these, the same way it drives the export.
@@ -309,8 +308,7 @@ class ImportController extends Controller {
 					// connection throws away bytes somebody waited for.
 					'cleared' => (int) $result['cleared'],
 				),
-				$puller->snapshot(),
-				array( 'source' => Source::status() )
+				$puller->snapshot()
 			)
 		);
 	}
@@ -352,13 +350,16 @@ class ImportController extends Controller {
 	public function pull_state() {
 		$puller = new Puller();
 
+		// `snapshot()` already reports `source` as the source's address, and that is what the
+		// screen prints. Merging `Source::status()` over it under the same name replaced the
+		// string with the whole connection record, and a React child that is an object is a
+		// blank admin page — on the one screen whose promise is that a reloaded tab lands back
+		// on the running transfer. Nothing reads the extra fields, so they are not re-exposed
+		// under a second name either.
 		return \rest_ensure_response(
 			\array_merge(
 				$puller->snapshot(),
-				array(
-					'error'  => '',
-					'source' => Source::status(),
-				)
+				array( 'error' => '' )
 			)
 		);
 	}

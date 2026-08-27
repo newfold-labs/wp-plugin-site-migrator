@@ -512,11 +512,23 @@ class Commands {
 				return;
 			}
 
+			// Whether anybody has picked the key up is `claimed`, not `claimed_by`: the latter is
+			// the address the caller volunteered, and a proxy that drops the header leaves it
+			// empty on a transfer that is very much under way. Reporting "nobody yet" then
+			// tells the user the opposite of what is happening.
+			if ( empty( $status['claimed'] ) ) {
+				$by = 'nobody yet';
+			} elseif ( '' !== $status['claimed_by'] ) {
+				$by = $status['claimed_by'];
+			} else {
+				$by = 'a site that did not say who it was';
+			}
+
 			\WP_CLI::log(
 				\sprintf(
 					'Active until %s. Claimed by: %s. Sent so far: %s.',
 					\gmdate( 'Y-m-d H:i:s', $status['expires'] ) . ' UTC',
-					'' !== $status['claimed_by'] ? $status['claimed_by'] : 'nobody yet',
+					$by,
 					\size_format( $status['sent'] )
 				)
 			);

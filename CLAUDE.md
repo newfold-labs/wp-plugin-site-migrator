@@ -21,13 +21,30 @@ from the CLI and through wp-admin: pair, compare, package, then either hand the 
 directly or download and upload it, preview, import, roll back. What is left is phase 6 (WP-CLI
 as a supported surface), phase 7 (tests and CI) and phase 8 (hardening and distribution).
 
-**Phase 5 has been exercised against a harness, not against two real sites.** The transfer
-classes were driven over real HTTP — a `php -S` source running this plugin's own `Offer`,
-`TransferKey` and range streaming, against a `Puller` on the other side — covering the round
-trip, resume from a truncated part, a damaged part refetched, a revoked key, an oversized
-response, a mismatched package clearing the staging directory, and the step budget splitting a
-transfer. Two bugs came out of that and are fixed. What has *not* happened is a run between two
-WordPress installs, which is where 4c–4h all came from; treat it accordingly.
+**Phase 5 has now run between two real WordPress installs**, after first being driven against a
+`php -S` harness. The harness covered the round trip, resume from a truncated part, a damaged part
+refetched, a revoked key, an oversized response, a mismatched package clearing the staging
+directory, and the step budget splitting a transfer; two bugs came out of it and are fixed. The
+real run — a 5.0GB source on Local, 550MB packaged, pulled over Apache by a second install —
+covered the same ground through the CLI and through wp-admin, and found three more:
+
+- **A re-export served the *previous* package's manifest for the whole of its run.** The manifest
+  is what marks a package complete, so nothing had un-marked it; `Offer` answered 200 with sizes
+  and checksums for parts that were being overwritten underneath it. Observed live: a part quoted
+  at 1,699,040 bytes was already 6,054,712 bytes of the next package. `PackageWriter::invalidate()`
+  now takes the manifest off before a run that is going to rewrite anything, and the endpoint
+  answers 409 until `finalize()` puts it back.
+- **`/import/pull/state` merged `Source::status()` over `snapshot()`'s `source`**, replacing a URL
+  string with an object. React renders an object child as nothing at all, so the destination's pull
+  screen was a blank admin page on every load — on the one screen whose promise is that a reloaded
+  tab lands back on the running transfer. Note a hash-only navigation does not re-run the bundle,
+  so the blank persists until a real reload; that is what makes it look unfixable.
+- **The safety strip's second sentence said "Exporting only reads" on every destination screen.**
+  It is now a `safetyDetail` prop, set on all five.
+
+Also confirmed on the real run: the 3.18 and 3.19 fixes hold. The same site that once packaged
+itself into 2.36GB with a 136MB `.git` pack now produces 550MB with `large: []` and 36 skipped
+paths.
 
 **Calibrate your confidence from how 4c–4h were found.** Every one of them came from somebody
 using the plugin on a real site, not from review — including two data-integrity bugs (3.18, the
@@ -456,11 +473,19 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - View recreation has been read and not run — the fixture has no views.
 - Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
   exist yet.
-- The direct transfer has never run between two WordPress installs, only against a harness. In
-  particular: no host with a proxy in front of it, no TLS certificate that a `wp_remote_get` would
-  argue with, and the IP binding has never been tested against a source reached through more than
+- The direct transfer has run between two WordPress installs, but both were on one machine behind
+  Local's Apache. Still untested: a host with a proxy in front of it, a TLS certificate that a
+  `wp_remote_get` would argue with, and the IP binding against a source reached through more than
   one egress address — which would refuse a legitimate transfer, and whose fix is to issue a new
   key.
+- **A re-export never removes the previous run's output.** Same-named parts are overwritten, but
+  a shorter run leaves the longer one's tail behind: observed at 2.5GB on disk for a 550MB package,
+  including a stale 531MB `large/`. Nothing reads them — every consumer goes through the manifest —
+  so this is disk, not correctness. `Exporter` un-marks the package now but does not sweep it.
+- **`Puller::reconcile()` clears the staging directory with no guard for an unsettled import**,
+  where `Upload::discard()` refuses exactly that. Bounded: rollback reads the checkpoint and the
+  `nfdold_` tables, never the package, so the site is still recoverable — what is lost is a staged
+  package somebody waited for.
 - Nothing has been transferred through a host that buffers or rewrites `Range` responses, which is
   the failure the per-file checksum exists to catch and the one most likely to need a real site to
   find.

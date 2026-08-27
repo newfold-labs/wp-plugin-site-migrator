@@ -10,17 +10,21 @@ import { Steps } from './Steps';
  * infer it from a progress bar.
  *
  * @param {Object}  props
- * @param {string}  props.eyebrow     Small label above the heading.
- * @param {string}  props.title       Screen heading.
- * @param {Element} props.badge       Verdict pill shown beside the heading.
- * @param {string}  props.intro       Sentence under the heading.
- * @param {string}  props.safety      'safe' or 'committed'.
- * @param {string}  props.safetyText  Override for the safety line.
- * @param {boolean} props.working     Whether work is in flight, which the strip's dot shows.
- * @param {Array}   props.steps       Journey definition, when this screen is part of one.
- * @param {string}  props.step        Id of this screen's step.
- * @param {boolean} props.stepsLocked Whether the journey has passed its point of no return.
- * @param {Element} props.children    Screen body.
+ * @param {string}  props.eyebrow      Small label above the heading.
+ * @param {string}  props.title        Screen heading.
+ * @param {Element} props.badge        Verdict pill shown beside the heading.
+ * @param {string}  props.intro        Sentence under the heading.
+ * @param {string}  props.safety       'safe' or 'committed'.
+ * @param {string}  props.safetyText   Override for the safety headline.
+ * @param {string}  props.safetyDetail Override for the sentence beside it. The default explains
+ *                                     an export, so every destination screen has to say its own:
+ *                                     reassuring somebody about the wrong site is worse than
+ *                                     saying nothing.
+ * @param {boolean} props.working      Whether work is in flight, which the strip's dot shows.
+ * @param {Array}   props.steps        Journey definition, when this screen is part of one.
+ * @param {string}  props.step         Id of this screen's step.
+ * @param {boolean} props.stepsLocked  Whether the journey has passed its point of no return.
+ * @param {Element} props.children     Screen body.
  * @return {Element} The framed screen.
  */
 export const Layout = ( {
@@ -30,6 +34,7 @@ export const Layout = ( {
 	intro,
 	safety = 'safe',
 	safetyText = '',
+	safetyDetail = '',
 	working = false,
 	steps = null,
 	step = '',
@@ -60,10 +65,11 @@ export const Layout = ( {
 			</strong>
 			{ 'safe' === safety && (
 				<span>
-					{ __(
-						'Exporting only reads. Nothing here is modified.',
-						'nfd-site-migrator'
-					) }
+					{ safetyDetail ||
+						__(
+							'Exporting only reads. Nothing here is modified.',
+							'nfd-site-migrator'
+						) }
 				</span>
 			) }
 		</div>

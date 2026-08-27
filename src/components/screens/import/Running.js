@@ -56,6 +56,10 @@ export const Running = () => {
 	return (
 		<Layout
 			steps={ DESTINATION_STEPS }
+			safetyDetail={ __(
+				'Files and tables are staged where the live site cannot see them until the final swap.',
+				'nfd-site-migrator'
+			) }
 			step="run"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Importing', 'nfd-site-migrator' ) }

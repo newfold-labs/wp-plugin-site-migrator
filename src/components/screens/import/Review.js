@@ -66,6 +66,10 @@ export const Review = () => {
 		return (
 			<Layout
 				steps={ DESTINATION_STEPS }
+				safetyDetail={ __(
+					'This is a preview. Nothing has been written to this site yet.',
+					'nfd-site-migrator'
+				) }
 				step="review"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __(
@@ -91,6 +95,10 @@ export const Review = () => {
 		return (
 			<Layout
 				steps={ DESTINATION_STEPS }
+				safetyDetail={ __(
+					'This is a preview. Nothing has been written to this site yet.',
+					'nfd-site-migrator'
+				) }
 				step="review"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __( 'Checking the package', 'nfd-site-migrator' ) }
@@ -115,6 +123,10 @@ export const Review = () => {
 	return (
 		<Layout
 			steps={ DESTINATION_STEPS }
+			safetyDetail={ __(
+				'This is a preview. Nothing has been written to this site yet.',
+				'nfd-site-migrator'
+			) }
 			step="review"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={ __( 'Check this before you commit', 'nfd-site-migrator' ) }

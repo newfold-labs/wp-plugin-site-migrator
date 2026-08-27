@@ -132,6 +132,10 @@ export const Done = () => {
 		return (
 			<Layout
 				steps={ DESTINATION_STEPS }
+				safetyDetail={ __(
+					'The import was undone. This site is back to how it was.',
+					'nfd-site-migrator'
+				) }
 				step="done"
 				eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 				title={ __( 'Put back', 'nfd-site-migrator' ) }
