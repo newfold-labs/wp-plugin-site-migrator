@@ -138,6 +138,28 @@ a copy of the world as it was when the request started, silently undoing whateve
 meantime. The export's paused flag (`NFD_SM_PAUSED_OPTION`) is standalone for exactly that
 reason: it is set while a step is in flight. Same instinct as the on-disk checkpoint.
 
+**The storage directory is protected at its root, and preflight then *checks* that it worked.**
+`nfd_sm_protect_directory()` writes `index.php`, `.htaccess` and `web.config` — Apache and IIS.
+**nginx reads none of them**, and cannot be configured from inside the document root, so writing
+them proves nothing. `Checker::check_storage_reachable()` therefore fetches the silence file over
+HTTP and **blocks** when it comes back: a package holds `database.sql`, which is every table and
+every password hash, at a guessable path under `uploads`.
+
+Two things about that check. It confirms the *body* is the silence file rather than trusting a
+200, because a host with a catch-all landing page would otherwise look exposed when it is not. And
+a probe that cannot run **warns rather than blocks**, deliberately breaking the usual
+"indeterminate is blocking" rule — many hosts refuse loopback HTTP to themselves, and being unable
+to reach yourself is not evidence anyone else can.
+
+Protection used to be written only by `PackageWriter`, so `package/` and `incoming/` had it and
+`import/` did not: on a plain Apache host `import/import-checkpoint.json` returned **200**, leaking
+absolute server paths, the table prefix, and every plugin and theme the import installed. One
+`.htaccess` at the root covers everything beneath it.
+
+**`wp site-migrator export` runs the local gates and refuses when they block.** It did not, so a
+site whose package directory was downloadable wrote a full database dump into it and reported
+success. The UI gated on this from the start; the CLI did not.
+
 **Preflight** (`Core/Preflight/`): `Checker` runs the local gates; `SiteProfile::gather()` collects
 a site's facts; `Pairing` lets the source fetch the destination's profile live over HTTP, using a
 single-use code the user pastes once; `Compatibility` compares two profiles and returns a `Report`.

@@ -244,6 +244,27 @@ class Commands {
 		$dir    = isset( $assoc_args['to'] ) ? $assoc_args['to'] : \nfd_sm_storage_path() . 'package';
 		$budget = isset( $assoc_args['budget'] ) ? (float) $assoc_args['budget'] : 0;
 
+		// The local gates decide whether this site can be packaged at all, and until now `export`
+		// never asked -- so a site whose package directory is downloadable over the web wrote a
+		// full database dump into it and reported success. `preflight` blocked; the command that
+		// does the writing did not.
+		$gates = Checker::run();
+
+		if ( $gates->is_blocked() ) {
+			foreach ( Output::report_rows( $gates->to_array() ) as $row ) {
+				if ( 'block' === $row['status'] ) {
+					Output::progress( '  ' . $row['detail'] );
+				}
+			}
+
+			Output::fail(
+				'This site cannot be packaged as it stands. Run `wp site-migrator preflight` for the detail.',
+				Output::EXIT_INCOMPATIBLE
+			);
+
+			return;
+		}
+
 		$exporter = new Exporter( $dir );
 		$exporter->set_progress( new CliProgressReporter() );
 

@@ -278,6 +278,23 @@ terminal, a missing `--yes` is an error rather than a question that would wait f
 
 ---
 
+## Before you trust it with a real site
+
+Run `wp site-migrator preflight` on both. It refuses rather than half-works, and it checks things
+that are easy to get wrong: whether the destination's WordPress and database schema are new enough,
+whether its PHP satisfies what your plugins declare, whether `zip` is there, whether `RENAME TABLE`
+works, whether there is room — and **whether your package directory can be downloaded from the
+web**.
+
+That last one matters more than it sounds. A package contains `database.sql`: every table, every
+password hash, at a guessable path under `uploads`. The plugin writes `.htaccess` and `web.config`
+to deny access, which covers Apache and IIS — **nginx reads neither**. So preflight does not take
+its own word for it; it fetches the directory over HTTP and refuses to export if it comes back. If
+you see that block, deny access to `wp-content/uploads/nfd-site-migrator` in your server config and
+check again.
+
+---
+
 ## If something goes wrong
 
 **During packaging or transfer** — nothing on either site has changed. Everything before the swap
