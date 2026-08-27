@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	Unit tests only. They run against a bootstrap that fakes the handful of WordPress functions
+	`Core/` touches, rather than against a WordPress install, because `Core/` is deliberately
+	transport-agnostic and mostly pure — and because a suite that needs a database is a suite
+	people stop running. The behaviour that genuinely needs two WordPress installs is covered by
+	`tests/roundtrip.sh`, which is a different kind of test with a different cost.
+-->
+<phpunit
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+	bootstrap="tests/bootstrap.php"
+	colors="true"
+	convertErrorsToExceptions="true"
+	convertNoticesToExceptions="true"
+	convertWarningsToExceptions="true"
+	beStrictAboutTestsThatDoNotTestAnything="true"
+	failOnWarning="true"
+	failOnRisky="true"
+	cacheResultFile=".phpunit.result.cache"
+>
+	<testsuites>
+		<testsuite name="unit">
+			<directory suffix="Test.php">tests/Unit</directory>
+		</testsuite>
+	</testsuites>
+
+	<coverage>
+		<include>
+			<directory suffix=".php">includes</directory>
+		</include>
+	</coverage>
+</phpunit>

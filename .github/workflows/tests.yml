@@ -1,0 +1,87 @@
+name: Tests
+
+on:
+    push:
+        branches:
+            - master
+    pull_request:
+        types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+    group: tests-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    unit:
+        name: Unit
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                # The floor and something current. The floor is what the plugin header promises,
+                # and it is the one that catches modern syntax slipping in.
+                php: ['7.4', '8.3']
+        steps:
+            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+            - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
+              with:
+                  php-version: ${{ matrix.php }}
+                  extensions: zip, mysqli
+                  coverage: none
+
+            - name: Cache Composer
+              uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+              with:
+                  path: ~/.cache/composer
+                  key: composer-${{ matrix.php }}-${{ hashFiles('**/composer.lock') }}
+                  restore-keys: composer-${{ matrix.php }}-
+
+            - run: composer install --prefer-dist --no-progress
+
+            - name: PHPUnit
+              run: vendor/bin/phpunit
+
+    roundtrip:
+        name: Round trip
+        runs-on: ubuntu-latest
+        # Slow, and it provisions two WordPress installs against a real database. Worth it: every
+        # defect found in this plugin since the rework began was found by running it, not reading it.
+        services:
+            mysql:
+                image: mysql:8.0
+                env:
+                    MYSQL_ROOT_PASSWORD: root
+                ports: ['3306:3306']
+                options: >-
+                    --health-cmd="mysqladmin ping"
+                    --health-interval=10s
+                    --health-timeout=5s
+                    --health-retries=5
+        steps:
+            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+            - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
+              with:
+                  php-version: '8.3'
+                  extensions: zip, mysqli
+                  coverage: none
+
+            - run: composer install --prefer-dist --no-progress
+
+            - name: Install WP-CLI
+              run: |
+                  curl -sSLo /tmp/wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+                  chmod +x /tmp/wp-cli.phar
+                  sudo mv /tmp/wp-cli.phar /usr/local/bin/wp
+
+            - name: Create the two databases
+              run: |
+                  mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE nfd_src; CREATE DATABASE nfd_dst;"
+
+            - name: Round trip
+              env:
+                  NFD_DB_HOST: 127.0.0.1
+                  NFD_DB_USER: root
+                  NFD_DB_PASS: root
+              run: bash tests/roundtrip.sh

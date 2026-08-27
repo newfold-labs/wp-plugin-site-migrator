@@ -1843,11 +1843,61 @@ making the storage directory unwritable, `4` by pointing `inspect`, `verify` and
 directory that is not a package, and the no-prompt rule by running `rollback` with stdin closed —
 it exits rather than hanging. `--format=json` parses from stdout alone with commentary on stderr.
 
-### Phase 7 — Tests and CI · **M**
+### Phase 7 — Tests and CI · **M** — ✅ *done 2026-08-27*
 
 Runs *alongside* phases 2–4, not after. Listed separately because it needs its own
 infrastructure. Note that the round-trip test itself is **not** deferred to here — it is
 Phase 4a's exit criterion, made possible by the Phase 2 harness.
+
+**That last sentence did not survive contact.** The round trip existed as shell scripts outside
+the repository and was never committed, so "covered by Phase 4a" meant "covered on one laptop".
+Rebuilding it in the repo was this phase's first job, as [§12.1](#121-what-exists-as-of-phase-4a)
+predicted, and it turned out to be a rewrite rather than a translation.
+
+#### What shipped
+
+**A unit suite** — `phpunit.xml.dist`, `tests/bootstrap.php`, `tests/Unit/*`. 43 tests, and no
+database: the bootstrap fakes the small set of WordPress functions `Core/` actually calls, which
+is possible only because `Core/` was kept transport-agnostic. Covers §12 items 1 and 8, plus a
+`RegressionTest` named for the defects that actually happened rather than for the classes they
+live in.
+
+**A round trip** — `tests/roundtrip.sh`. 38 assertions over two WordPress installs provisioned
+from scratch **at different URLs and different table prefixes**, covering §12 items 2, 4, 5 and 6:
+the export, a damaged package refused, the import, serialized options surviving unserialization,
+Gutenberg block attributes with escaped slashes, uploads by checksum, the users merge against a
+deliberate account overlap, rollback, and the same import driven **one process per step** —
+because a loop inside one process proves the loop works, not that resuming does.
+
+**CI** — `.github/workflows/tests.yml`: PHPUnit on PHP 7.4 and 8.3, and the round trip against a
+MySQL service.
+
+#### Three things the suite found while being written
+
+- **`Manifest::recalculate_totals()`** read `parts` and `large` without guarding them, though
+  every field *inside* them was guarded. An empty manifest warned instead of totalling zero.
+- **`SearchReplace::pairs()`** guarded every `$source` key and no `$target` key, so a caller
+  passing the two facts it had got a warning about the ones it did not. It is a public method
+  behind a public filter.
+- **`.eslintrc` extended `plugin:cypress/recommended` with `eslint-plugin-cypress` absent**, so
+  `lint-js` had died before reading a line of source since `b31be3f`. Fixing it surfaced a real
+  `no-undef` on `FileReader` in `utils/upload.js`.
+
+#### And two in CI itself
+
+- **`lint.yml` ran `composer run-script fix` immediately before linting.** CI could not fail on
+  anything phpcbf can repair, because it repaired it first — while running a fixer that rewrites
+  string *literals* on a codebase that keys behaviour on strings. Removed; fixing is something a
+  person does locally and reads the diff of.
+- **The three `composer audit` advisories are all in the phpcs toolchain** (`phpcsutils`,
+  `php_codesniffer`, `wpcs`), predate this phase, and are dev-only. Recorded, not fixed here.
+
+#### Still not covered
+
+§12 item 3 (constraint simulation — a genuinely small `upload_max_filesize`, low memory), the
+`RENAME TABLE`-revoked fallback half of item 5, item 7's compatibility gates, and item 9's
+unstubbed Cypress path. The transfer endpoints are exercised by hand and by the phase 5 harness,
+not by this suite.
 
 ### Phase 8 — Hardening and distribution · **S/M**
 
@@ -1980,6 +2030,11 @@ process proves the loop works, not that resuming does.
 It is a shell script, not PHPUnit, and it is not in CI. That is the gap: the harness proves the
 behaviour today but nothing stops it regressing tomorrow. Converting it is Phase 7's first job,
 and it is now a translation rather than a design problem.
+
+**Superseded 2026-08-27.** That harness was never in the repository, so none of it survived to be
+translated. `tests/roundtrip.sh` was written fresh and is in the repo and in CI; the unit half is
+PHPUnit rather than shell. The claim above — that this was a translation rather than a design
+problem — was wrong in the way that matters: work outside version control is not coverage.
 
 Still uncovered: item **3** entirely (no constrained-host simulation), the in-place fallback in
 item **5**, and item **7**'s gates beyond the ones the fixture happens to exercise.

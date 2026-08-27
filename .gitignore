@@ -10,3 +10,7 @@ cypress.env.json
 cypress/videos
 cypress/screenshots
 .idea
+
+# PHPUnit: the result cache, and a local override of phpunit.xml.dist.
+.phpunit.result.cache
+phpunit.xml

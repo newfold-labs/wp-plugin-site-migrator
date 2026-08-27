@@ -16,10 +16,10 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–6 are done** (4a–4h, then 5, then 6). A full migration works end to end, both
+Current state: **phases 0–7 are done** (4a–4h, then 5, 6, 7). A full migration works end to end, both
 from the CLI and through wp-admin: pair, compare, package, then either hand the package over
-directly or download and upload it, preview, import, roll back. What is left is phase 7 (tests and
-CI) and phase 8 (hardening and distribution).
+directly or download and upload it, preview, import, roll back. What is left is phase 8 (hardening and
+distribution).
 
 **Phase 5 has now run between two real WordPress installs**, after first being driven against a
 `php -S` harness. The harness covered the round trip, resume from a truncated part, a damaged part
@@ -517,15 +517,49 @@ attribution headers; `CREDITS.md` records the details. Preserve both when editin
 
 ## Tests
 
-`.github/workflows/` runs lint and Cypress. **The round-trip suite is not in the repo** — it is
-shell scripts driving two local WordPress installs, and rebuilding it is phase 7's job. Until
-then, "verified" in a commit message means somebody ran it by hand.
+```bash
+composer test              # phpunit, no database, ~0.2s
+composer test:roundtrip    # two real WordPress installs -- see below for what it needs
+```
+
+**Two suites, deliberately different in kind.**
+
+`tests/Unit/` runs against `tests/bootstrap.php`, which fakes the small set of WordPress functions
+`Core/` actually calls. That is only possible because `Core/` is transport-agnostic, and it is what
+keeps the suite fast enough that people run it. It cannot test anything that needs WordPress to
+really be there — the REST controllers, the swap, the users merge — and pretending otherwise by
+stubbing harder would only test the stubs. `RegressionTest` is named for the defects that happened
+rather than the classes they live in, because that is what a reader needs six months later.
+
+`tests/roundtrip.sh` provisions two installs from scratch **at different URLs and different table
+prefixes**, then migrates between them: 38 assertions covering the export, a damaged package
+refused, the import, serialized options surviving unserialization, Gutenberg attributes with
+escaped slashes, uploads by checksum, the users merge against a deliberate account overlap,
+rollback, and the same import driven **one process per step**. It needs `wp`, a MySQL server *and
+its client on PATH*, and permission to create two databases. On macOS the client is the usual
+missing piece: `NFD_MYSQL_DIR` puts one on PATH, and `NFD_DB_HOST` takes `localhost:/path/to.sock`.
+
+**Write the fixture guards.** Four of the round trip's first failures were the test being wrong,
+not the plugin: `wp post create` leaves `post_author` at 0 under WP-CLI, `wp option add` given an
+already-serialized string double-serializes it, MySQL's `LIKE` eats the backslash in an escaped
+URL so the pattern matches the plain one too, and `$?` read after an assignment is the
+assignment's. Each would have passed for the wrong reason. The script now asserts its own fixture
+is what it thinks before testing anything with it — and needles are bound through `prepare()`
+rather than pasted into a `LIKE`.
+
+**A test that cannot fail is not a test.** Both suites have been checked by breaking the code they
+cover — an exit-code constant, a manifest key, and the escaped-slash replacement pair — and
+confirming each goes red, then green again. The escaped-slash case failed to fail the first time,
+which is how the block fixture came to exist.
+
+CI is `.github/workflows/`: lint, PHPUnit on 7.4 and 8.3, and the round trip against a MySQL
+service. **`lint.yml` no longer runs `composer fix` before linting** — it did, which meant CI could
+not fail on anything phpcbf repairs, while running a fixer that rewrites string literals.
 
 The one surviving Cypress spec (`checkCompatibility.cy.js`) stubs the REST layer with
 `cy.intercept` against URL-encoded `rest_route` paths, backed by `cypress/fixtures/`. `cy.login()`
-skips the form when already authenticated. The others covered deleted screens. Plan §12 replaces
-this approach entirely: these specs stub the whole backend and cannot catch a single defect in
-the analysis.
+skips the form when already authenticated. It stubs the whole backend and cannot catch a defect in
+the analysis; plan §12 item 9 wants one unstubbed path, which does not exist yet.
 
 ## Known gaps
 

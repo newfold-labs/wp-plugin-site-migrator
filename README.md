@@ -315,6 +315,32 @@ npx wp-scripts build ./src/nfd-site-migrator.js   # -> build/
 
 composer lint                                     # phpcs, Newfold standard
 npx wp-scripts lint-js src
+
+composer test                                     # unit suite, no database, well under a second
+composer test:roundtrip                           # two real WordPress installs
+```
+
+### Tests
+
+The unit suite runs against a bootstrap that fakes the handful of WordPress functions the core
+actually calls — possible only because the core never learned about HTTP — so it needs no database
+and finishes before you look away.
+
+The round trip is the one that matters. It provisions two WordPress installs from scratch at
+different URLs and different table prefixes, migrates between them, and checks the things a
+migration is actually judged on: that serialized options still unserialize, that Gutenberg block
+attributes with escaped slashes were rewritten, that uploads match by checksum, that the users
+merge kept both sides' accounts, that rollback puts it back — and that the same import driven one
+process per step arrives at the same place, because a loop inside one process proves the loop
+works, not that resuming does.
+
+It needs `wp`, a MySQL server **and its client on `PATH`**, and permission to create two
+databases. On macOS the client is usually what is missing:
+
+```bash
+NFD_MYSQL_DIR=/path/to/mysql/bin \
+NFD_DB_HOST="localhost:/path/to/mysqld.sock" \
+composer test:roundtrip
 ```
 
 `build/` and `src/styles/nfd-site-migrator.css` are generated and untracked. Build after cloning

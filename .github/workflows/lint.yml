@@ -35,8 +35,11 @@ jobs:
             - name: Install dependencies
               run: composer install --prefer-dist --no-progress --no-suggest
 
-            - name: Fix any standard violations we can
-              run: composer run-script fix
-
+            # `composer fix` deliberately does not run here. It did, immediately before the lint
+            # step, which meant CI could not fail on anything phpcbf can repair -- it silently
+            # repaired it and linted the result. Worse, that ruleset rewrites string *literals*
+            # ("spell WordPress correctly" applies inside strings), and this codebase keys a lot
+            # of behaviour on strings. Fixing is a thing a person does locally and reads the diff
+            # of; CI's job is to report.
             - name: Detecting PHP Code Standards Violations
               run: composer run-script lint

@@ -81,8 +81,14 @@ class SearchReplace {
 		$pairs = array();
 
 		$urls = array(
-			array( isset( $source['site_url'] ) ? $source['site_url'] : '', $target['site_url'] ),
-			array( isset( $source['home_url'] ) ? $source['home_url'] : '', $target['home_url'] ),
+			array(
+				isset( $source['site_url'] ) ? $source['site_url'] : '',
+				isset( $target['site_url'] ) ? $target['site_url'] : '',
+			),
+			array(
+				isset( $source['home_url'] ) ? $source['home_url'] : '',
+				isset( $target['home_url'] ) ? $target['home_url'] : '',
+			),
 		);
 
 		foreach ( $urls as $pair ) {
@@ -116,9 +122,18 @@ class SearchReplace {
 			}
 		}
 
+		// Both sides guarded, not just the source. This is a public method behind a public
+		// filter, so a caller passing the two facts it actually has should get the pairs those
+		// support rather than a warning about the ones it does not.
 		$paths = array(
-			array( isset( $source['abspath'] ) ? $source['abspath'] : '', $target['abspath'] ),
-			array( isset( $source['content_dir'] ) ? $source['content_dir'] : '', $target['content_dir'] ),
+			array(
+				isset( $source['abspath'] ) ? $source['abspath'] : '',
+				isset( $target['abspath'] ) ? $target['abspath'] : '',
+			),
+			array(
+				isset( $source['content_dir'] ) ? $source['content_dir'] : '',
+				isset( $target['content_dir'] ) ? $target['content_dir'] : '',
+			),
 		);
 
 		foreach ( $paths as $pair ) {

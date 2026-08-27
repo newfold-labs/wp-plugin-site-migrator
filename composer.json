@@ -22,7 +22,8 @@
         "wp-forge/wp-plugin-check": "^1.0"
     },
     "require-dev": {
-        "newfold-labs/wp-php-standards": "^1.2"
+        "newfold-labs/wp-php-standards": "^1.2",
+        "phpunit/phpunit": "^9.6"
     },
     "autoload": {
         "psr-4": {
@@ -42,7 +43,9 @@
         ],
         "lint": [
             "vendor/bin/phpcs . --ignore=*/nfd-site-migrator.asset.php"
-        ]
+        ],
+        "test": "phpunit",
+        "test:roundtrip": "bash tests/roundtrip.sh"
     },
     "scripts-descriptions": {
         "fix": "Automatically fix coding standards issues where possible.",

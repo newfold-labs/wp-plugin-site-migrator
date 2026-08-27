@@ -279,13 +279,19 @@ class Manifest {
 		$bytes = isset( $this->data['database']['bytes'] ) ? (int) $this->data['database']['bytes'] : 0;
 		$files = 0;
 
-		foreach ( $this->data['parts'] as $part ) {
+		// Guarded like every field inside them already was. A manifest with nothing added to it
+		// is a perfectly ordinary object -- `finalize()` on an export that packaged nothing
+		// reaches here -- and it should total to zero rather than warn.
+		$parts = isset( $this->data['parts'] ) ? (array) $this->data['parts'] : array();
+		$large = isset( $this->data['large'] ) ? (array) $this->data['large'] : array();
+
+		foreach ( $parts as $part ) {
 			$bytes += isset( $part['bytes'] ) ? (int) $part['bytes'] : 0;
 			$files += isset( $part['files'] ) ? (int) $part['files'] : 0;
 		}
 
-		foreach ( $this->data['large'] as $large ) {
-			$bytes += isset( $large['bytes'] ) ? (int) $large['bytes'] : 0;
+		foreach ( $large as $large_file ) {
+			$bytes += isset( $large_file['bytes'] ) ? (int) $large_file['bytes'] : 0;
 			++$files;
 		}
 
