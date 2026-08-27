@@ -1899,11 +1899,60 @@ MySQL service.
 unstubbed Cypress path. The transfer endpoints are exercised by hand and by the phase 5 harness,
 not by this suite.
 
-### Phase 8 — Hardening and distribution · **S/M**
+### Phase 8 — Hardening and distribution · **S/M** — ✅ *done 2026-08-27*
 
 - Raise the PHP floor to 7.4+ (**4.8**). The 5.6 header is already inconsistent with phpcs
   `testVersion 7.0-` and with `esc_xml()` needing WP 5.5+ (**3.8**).
 - Produce an installable zip; document install on both sites.
+
+#### The floor
+
+`Requires PHP: 7.4`, `Requires at least: 5.8`, phpcs `testVersion 7.4-`. The WordPress floor moved
+from a claimed 4.7 to the 5.8 phpcs was *already* linting against — finding 3.8 was right that 4.7
+was a fiction, `esc_xml()` alone needs 5.5, and three different numbers were in play across the
+header, the ruleset and the bootstrap.
+
+**Raising the floor does not mean rewriting the codebase.** `array()` and the absence of type
+declarations stay: 4.8 offers modern syntax as something now *permitted*, and a mechanical rewrite
+of seven thousand lines buys nothing and risks everything. Lint passes unchanged at `7.4-`.
+
+#### Two defects in the bootstrap, found by doing this
+
+- **The runtime requirement check disagreed with the header.** `nfd-site-migrator.php` hard-codes
+  `min_php_version` and `min_wp_version` into `WP_Forge_Plugin_Check`, still at `5.6`/`4.7`. Any
+  change to the header silently leaves them behind; both now match.
+- **`zip` was missing from `req_php_extensions`**, which listed only `json` and `zlib`. Every part
+  of a package is a zip archive, so a host without the extension activated the plugin cleanly and
+  then failed partway through its first export. `Checker` catches it at preflight; activation did
+  not.
+
+#### The zip
+
+`bin/build-zip.sh` builds it and `bin/verify-zip.sh` installs the result into a throwaway
+WordPress and asserts it runs — 16 checks, from "does it unpack to the right directory" to "do the
+enqueued asset URLs point inside the plugin". Both are wired into CI as the `package` job, which
+uploads the artefact, and the release workflow now calls the same script rather than keeping a
+second recipe.
+
+What was wrong with the packaging as it stood:
+
+- **The zip unpacked to the repository name, not the slug.** `${REPO##*/}` is
+  `wp-plugin-site-migrator`; the slug and text domain are `nfd-site-migrator`. The plugin survives
+  the mismatch — `nfd_sm_plugin_basename()` exists for exactly this — but wp.org does not allow it.
+- **`.distignore` excluded `*.md`, which took `CREDITS.md` with it.** That file is the attribution
+  record for the All-in-One WP Migration code this plugin derives from, and the GPL asks that it
+  be preserved. Now excluded by name instead, and `verify-zip.sh` asserts it ships.
+- **`assets/fonts` is deliberately kept** even though webpack emits hashed copies into
+  `build/fonts`: the OFL licence texts live beside the sources, and fonts that ship without their
+  licence are a violation. 98KB of duplication, on purpose.
+- **The build had to be trusted rather than checked.** `build/` is generated and untracked, so a
+  zip made from a fresh checkout without it ships a plugin whose admin page is an empty div —
+  indistinguishable from a working install until somebody opens it. The script builds and asserts.
+
+#### Deliberately not done
+
+A PHP 8.x deprecation audit beyond what lint and the suites cover. The unit tests run on 7.4 and
+8.3 in CI and the round trip on 8.3, which is evidence rather than an audit.
 
 ---
 

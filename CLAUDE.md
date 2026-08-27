@@ -16,10 +16,10 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–7 are done** (4a–4h, then 5, 6, 7). A full migration works end to end, both
+Current state: **all phases are done** (0–3, 4a–4h, then 5, 6, 7, 8). A full migration works end to end, both
 from the CLI and through wp-admin: pair, compare, package, then either hand the package over
-directly or download and upload it, preview, import, roll back. What is left is phase 8 (hardening and
-distribution).
+directly or download and upload it, preview, import, roll back. What is left is the work that follows a first
+release rather than precedes it: the gaps listed at the end of this file, and wp.org submission.
 
 **Phase 5 has now run between two real WordPress installs**, after first being driven against a
 `php -S` harness. The harness covered the round trip, resume from a truncated part, a damaged part
@@ -500,14 +500,47 @@ literals that no symbol graph follows.
 
 ## Conventions
 
-- Minimum PHP is 5.6 per the plugin header (phpcs `testVersion` is `7.0-`); avoid modern syntax —
-  `array()` throughout, no typed properties, no arrow functions. Phase 8 raises the floor to 7.4.
+- Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in three places that must agree:
+  the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, and the hard-coded
+  `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`. The last one is the one that gets
+  forgotten — it sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must list
+  `zip`, because every part of a package is a zip archive.
+- **The floor rising does not mean the style changed.** `array()` throughout, no typed properties,
+  no arrow functions — modern syntax is now permitted, not mandated, and a mechanical rewrite of
+  the codebase buys nothing. New code may use it where it earns its place.
 - PHPCS uses the `Newfold` standard from `newfold-labs/wp-php-standards`, resolved from the Satis
   repository declared in `composer.json`. It is not on Packagist, so that `repositories` block has
   to stay. `WordPress.WP.AlternativeFunctions` and `WordPress.DB.RestrictedFunctions` are downgraded
   to severity 0 because the packager needs raw file and DB access.
 - Procedural helpers go in `functions.php` with the `nfd_sm_` prefix; classes go in `includes/`
   under the PSR-4 namespace.
+
+## Distribution
+
+```bash
+composer build:zip     # bin/build-zip.sh  -> dist/nfd-site-migrator.zip
+composer verify:zip    # bin/verify-zip.sh -> installs it into a throwaway WordPress, 16 checks
+```
+
+**The directory inside the zip is the slug, not the repository name.** The repo is
+`wp-plugin-site-migrator`; the slug and text domain are `nfd-site-migrator`. The release workflow
+used `${REPO##*/}` and so produced the former — which the plugin survives, because
+`nfd_sm_plugin_basename()` exists for exactly that, but which wp.org rejects.
+
+**The build is verified, not trusted.** `build/` is generated and untracked, so a zip made from a
+fresh checkout without running the asset build ships a plugin whose admin page is an empty div —
+which looks exactly like a working install until somebody opens it. `bin/build-zip.sh` runs the
+build and then asserts the bundle, the stylesheet, the asset manifest and the fonts are all in the
+staged tree before it zips anything.
+
+**Two things ship for licence reasons and must not be tidied away.** `CREDITS.md` is the
+attribution record for the All-in-One WP Migration code, and `.distignore` used to exclude it via a
+blanket `*.md`. `assets/fonts` is kept even though webpack emits hashed copies into `build/fonts`,
+because the OFL licence texts live beside the sources. `bin/verify-zip.sh` asserts both.
+
+Composer's manifests are copied into the staging directory to run `install --no-dev` and removed
+again, so the working tree keeps its dev dependencies — building a zip must not delete the test
+suite.
 
 ## Licensing
 

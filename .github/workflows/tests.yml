@@ -85,3 +85,59 @@ jobs:
                   NFD_DB_USER: root
                   NFD_DB_PASS: root
               run: bash tests/roundtrip.sh
+
+    package:
+        name: Installable zip
+        runs-on: ubuntu-latest
+        # Builds the artefact and then installs it into a real WordPress. A release is the worst
+        # moment to discover the zip unpacks to the wrong directory or ships without its assets.
+        services:
+            mysql:
+                image: mysql:8.0
+                env:
+                    MYSQL_ROOT_PASSWORD: root
+                ports: ['3306:3306']
+                options: >-
+                    --health-cmd="mysqladmin ping"
+                    --health-interval=10s
+                    --health-timeout=5s
+                    --health-retries=5
+        steps:
+            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+            - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+              with:
+                  node-version: 18.x
+
+            - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
+              with:
+                  php-version: '8.3'
+                  extensions: zip, mysqli
+                  coverage: none
+
+            - run: npm install --no-audit --no-fund
+            - run: composer install --prefer-dist --no-progress
+
+            - name: Install WP-CLI
+              run: |
+                  curl -sSLo /tmp/wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+                  chmod +x /tmp/wp-cli.phar
+                  sudo mv /tmp/wp-cli.phar /usr/local/bin/wp
+
+            - name: Create the database
+              run: mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE nfd_src;"
+
+            - name: Build
+              run: bash bin/build-zip.sh
+
+            - name: Install it and check it runs
+              env:
+                  NFD_DB_HOST: 127.0.0.1
+                  NFD_DB_USER: root
+                  NFD_DB_PASS: root
+              run: bash bin/verify-zip.sh
+
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: nfd-site-migrator
+                  path: dist/nfd-site-migrator.zip

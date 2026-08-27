@@ -5,9 +5,11 @@
 Install it on both sites. The old one packs itself into a box. The new one opens the box — and
 shows you exactly what's inside before a single byte of your live site is touched.
 
-> **Pre-release.** Not distributed yet. A full migration works today, from wp-admin and from
-> WP-CLI. The plan lives in [`docs/implementation-plan.md`](docs/implementation-plan.md); the
-> autopsy that started it lives in [`docs/code-analysis.md`](docs/code-analysis.md).
+> **Pre-release.** Not on wp.org yet, but the zip is real: every release carries one that CI has
+> installed into a clean WordPress and run before publishing. A full migration works today, from
+> wp-admin and from WP-CLI. The plan lives in
+> [`docs/implementation-plan.md`](docs/implementation-plan.md); the autopsy that started it lives
+> in [`docs/code-analysis.md`](docs/code-analysis.md).
 
 ---
 
@@ -71,6 +73,35 @@ already worthless.
 
 Present a wrong key and you get a **404**, not a 401. A 401 would cheerfully confirm that a
 WordPress site with this plugin lives at that address.
+
+---
+
+## Installing
+
+The plugin goes on **both** sites — the one you are leaving and the one you are moving to. It is
+the same plugin on each; which role a site plays is decided by what you click, not by what you
+install.
+
+Grab `nfd-site-migrator.zip` from the [releases](../../releases), then on each site:
+
+*Plugins → Add New → Upload Plugin → Choose File → Install Now → Activate*
+
+or, if you have a shell:
+
+```bash
+wp plugin install nfd-site-migrator.zip --activate
+```
+
+**Requirements:** WordPress 5.8+, PHP 7.4+, and the `zip` extension. The plugin checks all three
+and refuses to activate rather than failing partway through your first export. Multisite is not
+supported and is blocked at preflight on both sides.
+
+Building the zip yourself:
+
+```bash
+composer build:zip     # -> dist/nfd-site-migrator.zip
+composer verify:zip    # installs it into a throwaway WordPress and checks it runs
+```
 
 ---
 
@@ -299,9 +330,9 @@ because a photo added after the import is indistinguishable from one the package
 
 ## Requirements
 
-WordPress 4.7+. PHP 5.6+ today, 7.4 before release. MySQL that can do `RENAME TABLE` — preflight
-checks, and refuses the migration rather than half-finishing it. Multisite is not supported yet
-and is blocked on both sides rather than attempted.
+WordPress 5.8+, PHP 7.4+, the `zip` extension, and MySQL that can do `RENAME TABLE`. Preflight
+checks every one of them and refuses the migration rather than half-finishing it. Multisite is not
+supported yet, and is blocked on both sides rather than attempted.
 
 ---
 

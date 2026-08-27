@@ -48,6 +48,14 @@
         "test:roundtrip": [
             "Composer\\Config::disableProcessTimeout",
             "bash tests/roundtrip.sh"
+        ],
+        "build:zip": [
+            "Composer\\Config::disableProcessTimeout",
+            "bash bin/build-zip.sh"
+        ],
+        "verify:zip": [
+            "Composer\\Config::disableProcessTimeout",
+            "bash bin/verify-zip.sh"
         ]
     },
     "scripts-descriptions": {

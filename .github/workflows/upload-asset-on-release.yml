@@ -41,9 +41,6 @@ jobs:
             - name: Install deps
               run: yarn install
 
-            - name: Run build
-              run: yarn run build
-
             - name: Validate composer.json and composer.lock
               run: composer validate
 
@@ -60,18 +57,18 @@ jobs:
                       ${{ runner.os }}-composer-
 
             - name: Install PHP Dependencies
-              run: composer install --no-progress --no-dev --optimize-autoloader
+              run: composer install --no-progress
 
-            - name: Prepare files
-              run: rsync -r --exclude-from=.distignore . ${{ steps.workflow.outputs.DIST }}/${{ steps.workflow.outputs.PACKAGE }}
+            # Built by the same script a person runs locally, rather than a second recipe that
+            # drifts from it. It also names the directory inside the zip after the plugin slug --
+            # this workflow used the *repository* name, so the artefact installed into
+            # wp-content/plugins/wp-plugin-site-migrator, which is not the slug.
+            - name: Build the zip
+              run: bash bin/build-zip.sh ${{ steps.workflow.outputs.DIST }}
 
             - name: List Files
               working-directory: ${{ steps.workflow.outputs.DIST }}
-              run: find .
-
-            - name: Create Zip
-              working-directory: ${{ steps.workflow.outputs.DIST }}
-              run: zip -r ${{ steps.workflow.outputs.PACKAGE }}.zip .
+              run: unzip -Z1 nfd-site-migrator.zip
 
             - name: Upload Release Asset
               uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1.0.21
@@ -79,6 +76,6 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               with:
                   upload_url: https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets{?name,label}
-                  asset_path: ${{ steps.workflow.outputs.DIST }}/${{ steps.workflow.outputs.PACKAGE }}.zip
-                  asset_name: ${{ steps.workflow.outputs.PACKAGE }}.zip
+                  asset_path: ${{ steps.workflow.outputs.DIST }}/nfd-site-migrator.zip
+                  asset_name: nfd-site-migrator.zip
                   asset_content_type: application/zip

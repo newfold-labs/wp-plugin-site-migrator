@@ -1,30 +1,59 @@
-# A set of files you probably don't want in your WordPress.org distribution
+# What does not belong in a distributed plugin.
+#
+# Note this is applied by rsync while staging, before `composer install --no-dev` runs in the
+# stage — so `composer.json` and `composer.lock` are copied in separately by bin/build-zip.sh and
+# removed again afterwards. They are needed to build and unwanted in the result.
 
 # Directories
+bin
+dist
+docs
 .git
 .github
 .husky
 .wporg
 node_modules
-source
 src
 tests
 .idea
+.vscode
+cypress
+assets/styles
 
-# Files
+# Development configuration
 .distignore
+.editorconfig
+.eslintrc
 .gitignore
 .huskyrc.json
+.wp-env.json
+cypress.config.js
+phpcs.xml
+phpunit.xml
+phpunit.xml.dist
+.phpunit.result.cache
+.prettierrc
+tailwind.config.js
 webpack.config.js
 /languages/nfd-site-migrator.php
 
-# File Types
+# `assets/fonts` is deliberately *not* excluded even though webpack emits hashed copies of the
+# woff2 files into `build/fonts`. The OFL licence texts live beside the sources, and a font that
+# ships without its licence is a licence violation. The duplicated 98KB is the cost of that.
+
+# Working documents. Not `*.md` as a blanket rule: CREDITS.md is the attribution record the GPL
+# asks be preserved, and it has to travel with the code it describes. LICENSE has no extension
+# and is likewise deliberately absent from this list.
+CLAUDE.md
+README.md
+
+# File types
 *.json
 *.lock
 *.log
-*.md
 *.sql
 *.tar.gz
 *.xml
 *.yml
 *.zip
+*.dist

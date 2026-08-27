@@ -14,3 +14,4 @@ cypress/screenshots
 # PHPUnit: the result cache, and a local override of phpunit.xml.dist.
 .phpunit.result.cache
 phpunit.xml
+dist/
