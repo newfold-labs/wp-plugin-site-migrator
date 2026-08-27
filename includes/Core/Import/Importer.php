@@ -43,11 +43,6 @@ class Importer {
 	const BACKUP_PREFIX = 'nfdold_';
 
 	/**
-	 * How long backup tables are kept, in days.
-	 */
-	const BACKUP_DAYS = 30;
-
-	/**
 	 * Absolute package directory.
 	 *
 	 * @var string
@@ -217,15 +212,14 @@ class Importer {
 		$report   = $this->compatibility( $manifest );
 
 		return array(
-			'ok'          => ! $report->is_blocked(),
-			'problems'    => array(),
-			'package'     => $this->package->inspect(),
-			'report'      => $report->to_array(),
-			'users'       => $this->user_plan( $manifest ),
-			'manual'      => $this->manual_steps(),
-			'target'      => $this->target(),
-			'backup_days' => self::BACKUP_DAYS,
-			'has_backup'  => $this->previous_backup_present(),
+			'ok'         => ! $report->is_blocked(),
+			'problems'   => array(),
+			'package'    => $this->package->inspect(),
+			'report'     => $report->to_array(),
+			'users'      => $this->user_plan( $manifest ),
+			'manual'     => $this->manual_steps(),
+			'target'     => $this->target(),
+			'has_backup' => $this->previous_backup_present(),
 		);
 	}
 
@@ -543,62 +537,32 @@ class Importer {
 	 * it refuses the whole statement, so the failure is safe but the message is a wall of SQL.
 	 * Better to meet it here, where the situation can be described.
 	 *
-	 * Inside the retention window this is a refusal, because those tables are the only copy of
-	 * the site as it was before the last migration and dropping them is not ours to decide. Past
-	 * it, the window has expired and they go ([D8](../docs/implementation-plan.md)).
+	 * They go, and starting this import is the consent for that. The rollback window used to be
+	 * thirty days of refusing to import at all, which protected a backup nobody had asked to keep
+	 * at the cost of blocking the migration somebody *was* asking for — and the way out of it, on
+	 * a screen the user had already left, was not discoverable. So the window is no longer a
+	 * clock: a backup lasts until its import is kept, or until the next migration begins.
+	 *
+	 * The import being run right now is still fully reversible. What is given up is the ability to
+	 * reach back past it to the one before, which is a step no part of the UI ever offered.
 	 *
 	 * @param Swap  $swap  Swap bound to this run's prefixes.
 	 * @param array $state Import state, modified in place.
 	 *
 	 * @return void
-	 *
-	 * @throws \RuntimeException If a previous import is still inside its rollback window.
 	 */
 	protected function check_previous_backup( Swap $swap, array &$state ) {
 		if ( ! $swap->has_backup() ) {
 			return;
 		}
 
-		if ( $this->backup_expired() ) {
-			$dropped = $swap->discard_backup();
+		$dropped = $swap->discard_backup();
 
-			$state['notes'][] = \sprintf(
-				'Discarded %d table(s) from an import older than %d days, which is past its rollback window.',
-				$dropped,
-				self::BACKUP_DAYS
-			);
-
-			return;
-		}
-
-		throw new \RuntimeException(
-			\sprintf(
-				'This site still holds the tables a previous import replaced, under the prefix %s, and '
-				. 'they are the only copy of what was here before it. Roll that import back, or confirm '
-				. 'it succeeded to discard them, before importing again.',
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
-				$state['backup_prefix']
-			)
+		$state['notes'][] = \sprintf(
+			'Discarded %d table(s) a previous import had kept. Starting this migration is what '
+			. 'ended that one\'s rollback window.',
+			$dropped
 		);
-	}
-
-	/**
-	 * Whether the retained tables are past their rollback window.
-	 *
-	 * @return bool
-	 */
-	protected function backup_expired() {
-		$previous = $this->checkpoint->load();
-
-		if ( empty( $previous['swapped_at'] ) ) {
-			// No record of when it happened. Treat that as inside the window: refusing is
-			// recoverable, dropping somebody's only backup is not.
-			return false;
-		}
-
-		$age = \time() - (int) \strtotime( $previous['swapped_at'] );
-
-		return $age > ( self::BACKUP_DAYS * DAY_IN_SECONDS );
 	}
 
 	/**
@@ -619,13 +583,16 @@ class Importer {
 			throw new \RuntimeException( 'No import has run on this site, so there is nothing to confirm.' );
 		}
 
-		$dropped = $this->swap( $state )->discard_backup();
-
+		// Saved before the drop, not after, because the drop cannot be undone and the save can
+		// be repeated. Interrupted the other way round — which is how this site was found with
+		// no backup tables and a checkpoint still offering to roll back to them — the run keeps
+		// promising an undo that has nothing left to undo. This order can only leave tables a
+		// later import will discard anyway.
 		$state['confirmed_at'] = \gmdate( 'c' );
 
 		$this->checkpoint->save( $state );
 
-		return $dropped;
+		return $this->swap( $state )->discard_backup();
 	}
 
 	/**
@@ -853,9 +820,8 @@ class Importer {
 		} else {
 			$state['notes'][] = \sprintf(
 				'The previous site is kept in tables prefixed %s, so this import can be rolled back '
-				. 'for the next %d days.',
-				$state['backup_prefix'],
-				self::BACKUP_DAYS
+				. 'until you keep it or start another migration.',
+				$state['backup_prefix']
 			);
 		}
 

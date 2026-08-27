@@ -155,9 +155,13 @@ class Swap {
 		$backups  = $this->tables_with_prefix( $this->backup );
 		$imported = $this->tables_with_prefix( $this->live );
 
+		// Deliberately does not blame a clock. There is no longer one to blame — a backup ends
+		// when its import is kept or when the next migration starts — and the old wording sent
+		// somebody looking for an expiry that had not happened.
 		if ( empty( $backups ) ) {
 			throw new \RuntimeException(
-				'There are no backup tables left to roll back to. The retention window has passed.'
+				'There are no backup tables left to roll back to. This import was either already '
+				. 'kept, or a later migration discarded them.'
 			);
 		}
 

@@ -230,7 +230,18 @@ and an import loader left in `mu-plugins` by a package built from a site that wa
 export already excludes itself, so ordinarily nothing matches — this is the destination declining
 to bet the running importer on a package it did not build. String comparison against a list built
 once, because it runs per entry. `UserMerger` is the one table that merges rather than replaces
-(plan §9.4). `Swap` also handles rollback and the retention window. `Fixups` repairs what the swap
+(plan §9.4). `Swap` also handles rollback and the backup tables.
+
+**A backup lasts until its import is kept, or until the next migration starts — not 30 days**
+(plan D8, revised). The cap used to make a new import *refuse* while a previous backup was inside
+its window, so a rule meant to protect one migration blocked the next, and the way out was a button
+on a screen the user had already left. `check_previous_backup()` now discards and says so in a
+note. The import being run is still fully reversible; what is gone is reaching back past it.
+
+**`confirm()` saves the checkpoint before dropping the tables**, because the drop cannot be undone
+and the save can be repeated. The other order was found live: a destination with no backup tables
+and a checkpoint still offering to roll back to them, whose `rollback()` then blamed a retention
+window that had not expired. `Fixups` repairs what the swap
 leaves inconsistent — including re-adding this plugin to `active_plugins`, which the source's list
 correctly does not contain.
 

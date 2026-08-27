@@ -78,7 +78,7 @@ plugin's job, not theirs.
 | 7 | Destination | **Confirm.** This is the one explicit destructive-action consent in the flow. |
 | 8 | Destination | **Import.** Files first. Then the database into temp-prefix tables, users merged, URLs rewritten, and everything verified — all while the live site is still untouched. Only then the atomic `RENAME` swap. Post-swap work is limited to what genuinely cannot happen earlier: recreating views and flushing permalinks. |
 | 9 | Destination | **Review.** Completion screen: what changed, any login that was renamed, the manual follow-ups ([§9.7](#97-manual-follow-ups)), and the `wp-config.php` block to paste if wanted ([§9.5](#95-wp-configphp-never-written-always-reported)). |
-| 10 | Destination | **Confirm success.** This drops the `wpold_` rollback tables. Until it happens, "revert this migration" is one click — for at most 30 days ([D8](#14-open-decisions-for-review)), after which they are dropped automatically. |
+| 10 | Destination | **Confirm success.** This drops the `wpold_` rollback tables. Until it happens, "revert this migration" is one click, and stays one click until the next migration starts ([D8](#14-open-decisions-for-review)). |
 
 Three properties of this sequence are load-bearing and easy to lose:
 
@@ -504,7 +504,7 @@ input to checkpoint 3, never a substitute for it.
 | Multisite mismatch in either direction | Different schema (`wp_blogs`, `wp_site`, per-blog prefixes). Out of scope for v1 ([D6](#14-open-decisions-for-review)). |
 | Destination PHP < the highest `Requires PHP` among the source's active plugins and theme | A fatal on the first page load after the swap, with the rollback tables as the only way out. |
 | Source collation unavailable on the destination **and** not downgradable | `Unknown collation` aborts the import mid-stream. See below. |
-| Free space < package + extracted + 2× database | The atomic swap needs a second copy, and [D8](#14-open-decisions-for-review) keeps it for 30 days. |
+| Free space < package + extracted + 2× database | The atomic swap needs a second copy, and [D8](#14-open-decisions-for-review) keeps it until the import is kept or the next one starts. |
 | No `CREATE` / `DROP` / `ALTER` on the destination database | Nothing can be staged at all. |
 
 **Warn — proceed, but say so, and record it in the completion report.**
@@ -904,7 +904,7 @@ support ticket into something the user can see and act on immediately.
 | **Not** | Any write to `wp-config.php`, ever ([§9.5](#95-wp-configphp-never-written-always-reported)) |
 | **Fallback** | In-place import with a pre-import SQL backup, when `RENAME TABLE` is unavailable |
 | **File scope** | Content only — WordPress core is never packaged ([§6](#6-the-package-format)) |
-| **Rollback window** | `wpold_` retained until the user confirms success, hard cap **30 days** |
+| **Rollback window** | `wpold_` retained until the user confirms success, or the next migration starts ([D8](#14-open-decisions-for-review), revised) |
 | **Out of scope** | True content merge — that is a WXR-based feature, not this pipeline |
 
 **This area still needs a spike before phase 4a is estimated with confidence** — specifically
@@ -1978,6 +1978,17 @@ table remains full-replace ([§9.2](#92-replace-not-merge)).
 user confirms the migration succeeded, with a dashboard notice, and a **hard cap of 30 days**
 after which they are dropped automatically. Preflight's free-space check must account for the
 second copy persisting for that window.
+
+**Revised 2026-08-27: the 30-day cap is gone, and the window is no longer a clock.** A backup is
+kept until its import is kept, or until the next migration starts — whichever comes first. Starting
+an import is the consent to discard the previous one's backup.
+
+The cap was doing the opposite of its job. Inside the window a new import was *refused*, so a
+retention rule meant to protect one migration blocked the next one, and the way out — pressing Keep
+or Roll back on a screen the user had already navigated away from — was not discoverable. Found on
+a real destination that had been stuck that way for two days. The import being run is still fully
+reversible; what is given up is reaching back *past* it to the one before, which no screen ever
+offered. Free space still has to account for the second copy, just not for a fixed number of days.
 
 **D9 — Users merge: conflict rules.** The merge itself is settled
 ([D7](#14-open-decisions-for-review), [§9.4](#94-users-merge-not-replace)). **Both sub-choices

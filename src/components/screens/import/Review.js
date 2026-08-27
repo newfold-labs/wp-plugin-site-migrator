@@ -224,13 +224,9 @@ export const Review = () => {
 					) }
 				</p>
 				<p>
-					{ sprintf(
-						/* translators: %d: number of days. */
-						__(
-							'The tables being replaced are kept for %d days, so this can be undone.',
-							'nfd-site-migrator'
-						),
-						preview.backup_days || 30
+					{ __(
+						'The tables being replaced are kept, so this can be undone — until you keep this import or start another migration.',
+						'nfd-site-migrator'
 					) }
 				</p>
 			</div>
