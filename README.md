@@ -74,47 +74,144 @@ WordPress site with this plugin lives at that address.
 
 ---
 
-## In wp-admin
+## Three ways to move a site
 
-**Site Migrator** appears in the menu on both sites. Every screen carries a strip along the top
-that answers the only question anyone actually has — *has anything broken yet?* — so you never
-have to infer it from a progress bar.
+All three end in the same place: a package staged on the destination, previewed, then swapped in.
+Pick on one question — **can the destination reach the source over the internet?**
 
-**On the source:** check compatibility against the destination, package the site, then either hand
-it over directly or download it.
+| | when to use it | what it needs |
+|---|---|---|
+| **Direct transfer** | almost always | the destination can reach the source's URL |
+| **Download and upload** | source is behind a firewall, on a laptop, or on an intranet | a browser and patience |
+| **Put it there yourself** | very large sites, or you already have SSH/FTP | shell or FTP access to the destination |
 
-**On the destination:** point it at the package. Before anything is written you get the full
-preview — the URL rewrite, what happens to every account, which plugins and themes arrive, what
-the source had in its `wp-config.php` that you don't. Then, and only then, a button.
-
-Afterwards the site you replaced is still on the server until you say you're done with it.
+The middle one moves every byte twice — down to your machine and back up. The other two don't.
 
 ---
 
-## From the command line
+## Step by step
+
+### Before you start
+
+Install and activate the plugin on **both** sites. **Site Migrator** appears in each admin menu.
+You need an administrator account on both.
+
+The destination's content is replaced. Its *user accounts* are kept.
+
+---
+
+### Flow A — Direct transfer
+
+The destination fetches the package straight from the source. Nothing goes through your computer.
+
+**On the destination** — *Site Migrator → Receive a site here*
+
+1. **Give the source this code.** It shows a **pairing code** (`XXXX-XXXX-XXXX`) and this site's address. Leave the tab open.
+
+**On the source** — *Site Migrator → Send this site somewhere else*
+
+2. Paste the destination's address and pairing code. The source reads the destination's PHP,
+   WordPress version, free space and database capabilities directly from it.
+3. **Compatibility** shows what it found. Anything that would break the move blocks here — a check
+   that could not run counts as a failure, not a pass.
+4. **Package.** The site is archived in resumable steps. You can close the tab; reopening picks up
+   where it stopped. Pause is safe.
+5. **Deliver → Generate a transfer key.** Copy the key and the address. The key is shown once.
+
+**On the destination** — *Bring in a package → Fetch it from the source*
+
+6. Paste the address and the key. It starts pulling, checksumming each file as it lands. Close the
+   tab, come back, open a second tab — the progress is measured from the files on disk, so all
+   three agree.
+7. When it finishes it verifies every file, then **See what it would do**.
+
+**Both sites — the review**
+
+8. **Review** shows everything before anything is written: the URL rewrite, every account and what
+   it will sign in as, which plugins and themes arrive, and any `wp-config.php` settings the source
+   had that this site does not. Nothing is written to your `wp-config.php` — it prints them for you
+   to copy.
+9. Tick the box, **Import it**. Files land first, the database loads into staging tables the live
+   site never reads, and everything that can fail happens before the swap.
+10. **Finish.** Check the front page, a few posts, your images, and signing in. Then **Keep it**, or
+    **Undo the import** and the old site comes straight back.
+
+> Until step 10, `Keep it` has not run and your old site is intact in `nfdold_` tables. After it,
+> the old tables are dropped and the import cannot be undone.
+
+---
+
+### Flow B — Download and upload
+
+Identical up to step 4. Use this when the destination cannot reach the source.
+
+5. On **Deliver**, choose **Download the package instead**. Your browser asks for a folder and
+   streams every file into it, subdirectories preserved — hand that folder straight to the
+   destination's picker. If your browser doesn't support folder picking, files download
+   individually instead.
+6. On the destination, *Bring in a package → **Choose the package folder***, and select the folder
+   you just downloaded. Uploads go in small pieces and resume where they stopped, so a dropped
+   connection is not a lost upload.
+7. Continue from step 7 above.
+
+---
+
+### Flow C — Put the package there yourself
+
+For very large sites, this is the quickest route and the one least likely to time out.
+
+1. Package the source — in wp-admin, or `wp site-migrator export`.
+2. Copy the package directory to the destination by SSH, `rsync` or FTP. Anywhere works; inside
+   `wp-content/uploads/nfd-site-migrator/` is tidiest.
+3. On the destination, *Bring in a package* lists it under **Already on this server**. Click
+   **Use this**, and continue from step 8 above.
+
+---
+
+### Entirely from the command line
+
+For sites where the browser is the wrong tool — a hundred thousand files, or tens of gigabytes.
 
 ```bash
 # on the source
-wp site-migrator export                  # package this site
-wp site-migrator offer                   # mint a transfer key and wait
+wp site-migrator export                       # package this site
+wp site-migrator offer                        # prints an address and a transfer key
 
 # on the destination
-wp site-migrator pull <url> <key>        # fetch it, checksumming as it lands
-wp site-migrator import <dir>            # stage, verify, swap
+wp site-migrator pull <address> <key>         # fetch it, checksumming as it lands
+wp site-migrator import <dir>                 # stage, verify, swap
 
-# afterwards
-wp site-migrator rollback                # put the old site back
-wp site-migrator confirm                 # keep it, drop the old tables
-wp site-migrator cancel                  # abandon an import that never swapped in
+# then, once you have checked the site
+wp site-migrator confirm                      # keep it, drop the old tables
+wp site-migrator rollback                     # or put the old site back
 ```
 
-`verify <dir>` re-reads every byte against the manifest if you want the reassurance.
+`--budget=<seconds>` bounds any single step; the default is no limit. Add `--yes` to skip the
+confirmation prompt. `wp site-migrator cancel` abandons an import that has not yet swapped in —
+the live site is untouched either way.
 
-An import replaces every table on the destination, so it asks first — `--yes` skips that.
-Accounts are merged by default; `--mode=replace` keeps only the source's.
+Mixing surfaces is fine. Package on the CLI, import in the browser; start a pull in the browser
+and finish it from a shell. Progress lives on disk, not in a session.
 
-The rollback window isn't a countdown. Your old tables stay until you keep the import or start
-another migration, whichever comes first.
+---
+
+## If something goes wrong
+
+**During packaging or transfer** — nothing on either site has changed. Everything before the swap
+is re-runnable. Close the tab and come back.
+
+**During the import, before the swap** — the destination is still serving its own content. `Try
+again` resumes; `wp site-migrator cancel` throws the staged copy away.
+
+**After the swap** — **Undo the import**, or `wp site-migrator rollback`. The database goes back
+exactly. Files go back only where it can be done honestly: plugins, themes, must-use plugins and
+drop-ins the package *added* are removed, but anything it *overwrote* stays, because the
+destination's own copy is already gone and deleting it would make an incomplete rollback into a
+destructive one. `uploads` is never touched — a photo added after the import is indistinguishable
+from one the package brought.
+
+**Once you press Keep it** — the old tables are gone. That is the point of no return, and it is
+the only one.
 
 ---
 
