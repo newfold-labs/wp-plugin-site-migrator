@@ -185,10 +185,20 @@ class Compatibility {
 		}
 
 		if ( \version_compare( $dst, $src, '<' ) ) {
+
+			// A source profiled from the command line reports the CLI binary's version, which on
+			// a host where the two differ turns this into confident nonsense -- one real pair
+			// reported a downgrade that was actually an upgrade. The check still runs, because
+			// the number is the only one available, but it says where it came from rather than
+			// asserting something it cannot know.
+			$measured = 'cli' === (string) $this->source->get( 'php.sapi', '' )
+				? ' This site\'s version was measured from the command line, which can differ from the one serving the site.'
+				: '';
+
 			$report->warn(
 				'php_version',
 				\sprintf( 'The destination runs an older PHP (%s) than this site (%s).', $dst, $src ),
-				array( 'detail' => 'Code written for the newer version may not run.' )
+				array( 'detail' => 'Code written for the newer version may not run.' . $measured )
 			);
 
 			return;

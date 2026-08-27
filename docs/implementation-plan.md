@@ -1946,8 +1946,26 @@ download/upload → v2 direct site-to-site → v3 WP-CLI, as in [§1](#1-release
 Both are guesses that should be validated against a real site on real shared hosting early in
 phase 2.
 
+**Resolved 2026-08-27.** The threshold shipped as proposed — `Exporter::LOOSE_THRESHOLD` is
+67108864. The part size did **not**: `VOLUME_LIMIT` is 134217728, an eighth of the proposal,
+because `ZipArchive::close()` rebuilds an archive rather than appending and the volume limit is
+what bounds a single close inside a shared host's execution budget. Volume size then adapts on
+observed **files per second** rather than bytes, since the cost is per file.
+
+*The validation clause is not met.* Everything so far has run on Local and on a `php -S` harness.
+Neither number has met real shared hosting, and that is phase 7's to close, not this decision's.
+
 **D4 — Does v1 need `verify` and `inspect` in the UI?** They are cheap once `PackageReader`
 exists and they turn "it failed" into "part 3 checksum mismatch." Recommend yes.
+
+**Resolved 2026-08-27 as recommended.** `/export/verify` is a button on the Download screen
+(`api.exportVerify()`), deliberately not run on load — checksums are taken as each volume closes
+and the destination re-verifies before it writes, so re-reading every byte on every visit buys
+nothing. The destination verifies automatically once a transfer's last byte lands.
+
+One caveat learned the hard way, recorded because it bounds what this decision buys: a checksum
+proves a file arrived intact, never that it left intact. A corrupt export hashes its own
+corruption and passes every check downstream.
 
 **D5 — v2 architecture: package-then-pull, or stream directly?** Phase 5 as written has the
 destination pull a package the source already built. The alternative is skipping packaging
@@ -1956,8 +1974,23 @@ source's ~1x disk overhead, which is a top cause of failure on shared hosting, a
 how commercial services work. It is a different `PackageReader` backend rather than a different
 core, so the decision can be deferred to phase 5 — but not later.
 
+**Resolved 2026-08-27: package-then-pull.** The premise above is wrong — streaming is not a
+different `PackageReader` backend, because there is no backend seam to swap. The parts are zip
+archives and `ZipArchive` reads a **local file**; an import driven straight off HTTP would mean
+reimplementing zip. It is also unnecessary: the import needs the package on disk regardless, so
+the pull writes into `Upload::dir()`, the same staging directory a browser upload fills, and
+verification, preview, `Importer`, `PathMap` and rollback are untouched. Only the carrying changed.
+
+The source's ~1x disk overhead is therefore **not** removed, and stays a real constraint on shared
+hosting. Revisiting it means a streaming format that is not zip — a package-format decision, not a
+transport one.
+
 **D6 — Multisite.** Currently hard-blocked by `is_not_multisite()`. Recommend explicitly out of
 scope for v1, with preflight reporting it clearly instead of failing opaquely.
+
+**Resolved 2026-08-27 as recommended: out of scope for v1.** Blocked at preflight on *both* sides,
+so such a site is refused rather than half-migrated. This is a feature that does not exist, not
+thin coverage of one that does.
 
 **D7 — Content-only scope.** **Resolved 2026-08-22, file side:** packages carry content only;
 WordPress core is never included, and `wp-config.php` never is either. Codified in
@@ -2039,7 +2072,12 @@ doomed gets renamed. Two hard rules on the cleanup itself, both in
 `DatabaseBase` is **kept**, not deleted, and no deletion is driven by a symbol-graph "unused"
 report, because this codebase dispatches through string literals.
 
-**D12 — Keep the git history, or start fresh?** **Recommend keeping it**, on the `rework`
+**D12 — Keep the git history, or start fresh? Resolved 2026-08-27 as recommended: kept**, on the
+`rework` branch, with the full 291-commit history intact. The optional `v1.0.13-archive` boundary
+tag was *not* created — Phase 0's commit is the visible boundary, which the note below argues is
+the more honest marker anyway. Original recommendation follows.
+
+**Recommend keeping it**, on the `rework`
 branch as it stands. The repository is 291 commits and 3 MB across six years — no size problem.
 Nothing that would force a rewrite is present: no committed credentials, key material, `.env`,
 or `.pem` files (scanned). Against that, three reasons to keep it. It is the **provenance record

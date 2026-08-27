@@ -58,7 +58,11 @@ class Manifest {
 					'home_url'     => \get_home_url(),
 					'wp_version'   => isset( $wp_version ) ? $wp_version : '',
 					'db_version'   => isset( $wp_db_version ) ? (int) $wp_db_version : 0,
+					// The PHP running the export, which for a CLI run is not the PHP serving
+					// the site -- see SiteProfile::gather(). Recorded with its SAPI so the
+					// destination's compatibility report can weigh it.
 					'php_version'  => PHP_VERSION,
+					'php_sapi'     => \PHP_SAPI,
 					'table_prefix' => isset( $wpdb ) ? $wpdb->prefix : '',
 					// Import rewrites absolute paths out of the database, and cannot derive the
 					// source's root from its content directory: the two are only related by

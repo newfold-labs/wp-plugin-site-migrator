@@ -7,6 +7,7 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Transfer;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\PathMap;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 
@@ -115,7 +116,11 @@ class Puller {
 			$attempt = $this->ask( $base, $key );
 
 			if ( isset( $attempt['summary'] ) ) {
-				$cleared = $this->reconcile( $attempt['summary'] );
+				try {
+					$cleared = $this->reconcile( $attempt['summary'] );
+				} catch ( \RuntimeException $e ) {
+					return array( 'error' => $e->getMessage() );
+				}
 
 				Source::connect( $url, $key, $base, $attempt['summary'] );
 
@@ -598,6 +603,8 @@ class Puller {
 	 * @param array $summary What the source reported.
 	 *
 	 * @return int Bytes cleared.
+	 *
+	 * @throws \RuntimeException If an unsettled import is using what is staged here.
 	 */
 	protected function reconcile( array $summary ) {
 		if ( Source::matches( $summary ) ) {
@@ -610,10 +617,46 @@ class Puller {
 			return 0;
 		}
 
+		// The same refusal `Upload::discard()` makes, for the same reason and against the same
+		// directory: an import that has run but has not been kept or undone is still the only
+		// account of what this site looked like, and its package is what the checkpoint names.
+		// Rollback itself reads the checkpoint and the backup tables rather than the package, so
+		// what this protects is narrower than data loss -- but it is somebody's staged gigabytes,
+		// and connecting to a different source is not consent to throw them away.
+		$state = $this->import_state();
+
+		if ( ! empty( $state ) && ! ImportCheckpoint::is_settled( $state ) ) {
+			throw new \RuntimeException(
+				'An import from the package staged here has not been kept or undone yet. Finish it, undo it, or cancel it before pulling a different site.'
+			);
+		}
+
 		Upload::reset();
 		$this->clear_retries();
 
 		return (int) $existing;
+	}
+
+	/**
+	 * The import checkpoint, when one names the directory this pull would clear.
+	 *
+	 * Anything pointing somewhere else is not this transfer's business.
+	 *
+	 * @return array Checkpoint state, or empty.
+	 */
+	protected function import_state() {
+		$checkpoint = new ImportCheckpoint();
+		$state      = $checkpoint->load();
+		$recorded   = \rtrim( (string) \nfd_sm_data_get( $state, 'package', '' ), '/\\' );
+
+		if ( '' === $recorded ) {
+			return array();
+		}
+
+		$here = \realpath( $this->dir );
+		$them = \realpath( $recorded );
+
+		return ( false !== $here && $here === $them ) ? (array) $state : array();
 	}
 
 	/**

@@ -289,6 +289,21 @@ parameter is refused before it is resolved rather than compared after.
 
 Import state lives in `uploads/nfd-site-migrator/import/`, **not in the package** (plan D15).
 
+**Search-replace covers both schemes.** Pairs are built from `site_url` and `home_url`, plus the
+slash-escaped form that Gutenberg block attributes and JSON meta use, plus **both of those under
+the opposite scheme**: a site on `http://` still accumulates `https://` references to its own host,
+and a real import left `yith_shippo_webhook_address` pointing at the source because only the http
+form was searched for. Only a leading `http://`/`https://` is flipped — never a protocol-relative
+`//host` or a bare hostname, which match far more than this site's own address.
+
+**`php.version` is the version of whatever PHP is running the code**, so a CLI export records the
+command-line binary and not the SAPI serving the site. One real pair reported a source as 8.5.9
+that serves 8.4.18, which made the destination's 8.5.3 look like a downgrade when it was an
+upgrade. It cannot be fixed from inside a CLI process, so `php.sapi` travels beside it and
+`Compatibility::check_php()` says the number was measured from the command line rather than
+asserting what it cannot know. The *blocking* gate reads `php.requires` from plugin headers, not
+this, so what was ever at risk is advice rather than safety.
+
 **Transfer** (`Core/Transfer/`): the v2 transport, where the destination fetches the package
 itself instead of a person carrying it. `TransferKey` is the source's credential, `Offer` is what
 a package will hand over, `Source` is the destination's memory of who it is pulling from, and
@@ -501,15 +516,9 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - No in-place fallback for a host without `RENAME TABLE` (plan §9.3). Preflight probes for it and
   reports it, so such a host is refused rather than half-migrated.
 - The lossy `utf8mb4` → `utf8` branch is coded and never exercised.
-- **Search-replace matches `site_url` and `home_url` verbatim, so the other scheme survives.** A
-  real import left `yith_shippo_webhook_address` pointing at `https://localhost:10023` because the
-  source's recorded URL is `http://`. Posts and postmeta were clean; this is options written by
-  plugins that store a scheme the site itself does not use.
-- **`php_version` in the manifest and the site profile is `PHP_VERSION` of the process doing the
-  work**, which for a CLI export is the CLI binary, not the site's web SAPI. Observed: a source
-  serving 8.4.18 recorded as 8.5.9, producing a backwards "the destination runs an older PHP"
-  warning. The *blocking* gate reads `php.requires` from plugin headers rather than this number, so
-  what it corrupts is advice, not safety — but phase 6 makes CLI a supported surface.
+- The `LOOSE_THRESHOLD` (64MB) and `VOLUME_LIMIT` (128MB) have never met real shared hosting. Plan
+  D3 shipped the first as proposed and cut the second to an eighth of it, and its validation clause
+  is explicitly still open.
 - View recreation has been read and not run — the fixture has no views.
 - Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
   exist yet.
@@ -521,10 +530,8 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - The `utf8mb4` note above still stands; the leftover-output problem that used to sit here was a
   correctness bug, not a disk one, and is now fixed — see *A fresh export starts on an empty
   directory*.
-- **`Puller::reconcile()` clears the staging directory with no guard for an unsettled import**,
-  where `Upload::discard()` refuses exactly that. Bounded: rollback reads the checkpoint and the
-  `nfdold_` tables, never the package, so the site is still recoverable — what is lost is a staged
-  package somebody waited for.
+- (`Puller::reconcile()`'s missing guard was fixed — it now makes the same refusal
+  `Upload::discard()` does, against the same directory.)
 - Nothing has been transferred through a host that buffers or rewrites `Range` responses, which is
   the failure the per-file checksum exists to catch and the one most likely to need a real site to
   find.

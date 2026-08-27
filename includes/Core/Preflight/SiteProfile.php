@@ -68,7 +68,14 @@ class SiteProfile {
 					'content_std'  => \rtrim( $content_dir, '/\\' ) === \rtrim( ABSPATH, '/\\' ) . '/wp-content',
 				),
 				'php'            => array(
+					// PHP_VERSION is whatever binary is running *this* code, which for anything
+					// driven from WP-CLI is the command-line PHP and not the one serving the
+					// site. Seen for real: a source serving 8.4.18 profiled as 8.5.9, which made
+					// the destination's 8.5.3 look like a downgrade when it was an upgrade. The
+					// number is kept -- it is the best available -- and the SAPI travels with it
+					// so a comparison can say how much to trust it.
 					'version'       => PHP_VERSION,
+					'sapi'          => \PHP_SAPI,
 					'extensions'    => self::extensions(),
 					'memory_limit'  => \ini_get( 'memory_limit' ),
 					'max_execution' => (int) \ini_get( 'max_execution_time' ),

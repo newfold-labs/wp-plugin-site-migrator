@@ -1,4 +1,31 @@
 {
 	"root": true,
-	"extends": ["plugin:@wordpress/eslint-plugin/recommended", "plugin:cypress/recommended"]
+	"extends": ["plugin:@wordpress/eslint-plugin/recommended"],
+	// This is browser code. The shared config's globals cover most of what src/ touches but not
+	// FileReader, which upload.js has used since it was written -- unnoticed, because the broken
+	// cypress extend below meant lint-js never reached a line of source.
+	"env": { "browser": true },
+	// Cypress globals, declared rather than pulled in via "plugin:cypress/recommended". That
+	// config was extended here from b31be3f onwards while eslint-plugin-cypress was never a
+	// dependency, so every lint-js run died before reading a line of source. Installing the
+	// package is not a small act on this repo -- npm install rewrites the whole of yarn.lock
+	// into npm registry URLs -- and all the plugin supplied that this repo used was these names.
+	"overrides": [
+		{
+			"files": ["cypress/**/*.js"],
+			"globals": {
+				"cy": "readonly",
+				"Cypress": "readonly",
+				"assert": "readonly",
+				"expect": "readonly",
+				"before": "readonly",
+				"beforeEach": "readonly",
+				"after": "readonly",
+				"afterEach": "readonly",
+				"describe": "readonly",
+				"context": "readonly",
+				"it": "readonly"
+			}
+		}
+	]
 }

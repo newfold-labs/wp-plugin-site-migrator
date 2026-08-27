@@ -100,6 +100,20 @@ class SearchReplace {
 			// Gutenberg block attributes and any JSON-encoded meta escape the slashes, so the
 			// plain form never matches them.
 			$pairs[ \str_replace( '/', '\\/', $from ) ] = \str_replace( '/', '\\/', $to );
+
+			// And again for the scheme the source does not itself use. A site on http:// still
+			// accumulates https:// references to its own host -- a real migration left
+			// `yith_shippo_webhook_address` pointing at the source over https, because only the
+			// http form was ever searched for. The destination's own scheme is what they become:
+			// an absolute URL naming the old host is wrong wherever it points.
+			$other = self::other_scheme( $from );
+
+			if ( '' !== $other ) {
+				$escaped = \str_replace( '/', '\\/', $other );
+
+				$pairs[ $other ]   = $to;
+				$pairs[ $escaped ] = \str_replace( '/', '\\/', $to );
+			}
 		}
 
 		$paths = array(
@@ -128,6 +142,30 @@ class SearchReplace {
 		 * @param array $target Destination facts.
 		 */
 		return \apply_filters( 'nfd_sm_search_replace_pairs', $pairs, $source, $target );
+	}
+
+	/**
+	 * The same URL under the other scheme.
+	 *
+	 * Only ever swaps a leading `http://` for `https://` or the reverse. Anything else -- a
+	 * protocol-relative `//host`, a bare host -- is left alone: those match far more than this
+	 * site's own address, and a replacement that is too eager corrupts content that was never
+	 * about the migration.
+	 *
+	 * @param string $url URL to flip.
+	 *
+	 * @return string The counterpart, or '' when there is not one.
+	 */
+	protected static function other_scheme( $url ) {
+		if ( 0 === \strpos( $url, 'http://' ) ) {
+			return 'https://' . \substr( $url, 7 );
+		}
+
+		if ( 0 === \strpos( $url, 'https://' ) ) {
+			return 'http://' . \substr( $url, 8 );
+		}
+
+		return '';
 	}
 
 	/**
