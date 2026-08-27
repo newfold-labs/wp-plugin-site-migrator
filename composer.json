@@ -45,7 +45,10 @@
             "vendor/bin/phpcs . --ignore=*/nfd-site-migrator.asset.php"
         ],
         "test": "phpunit",
-        "test:roundtrip": "bash tests/roundtrip.sh"
+        "test:roundtrip": [
+            "Composer\\Config::disableProcessTimeout",
+            "bash tests/roundtrip.sh"
+        ]
     },
     "scripts-descriptions": {
         "fix": "Automatically fix coding standards issues where possible.",
