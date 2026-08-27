@@ -1751,20 +1751,73 @@ mismatched package clearing the staging directory, and a step budget splitting t
 ### Phase 6 — WP-CLI as a supported surface · **S/M** *(v3)*
 
 Not "write the CLI" — that happened in Phase 2 and has been driving the test suite ever since.
-This phase promotes the harness into a product: the full command set, the machine contract, and
-the documentation. Cheap **because** `Core/` had a second consumer the whole way.
+This phase promotes the harness into a product: the machine contract and the two missing
+commands. Cheap **because** `Core/` had a second consumer the whole way.
+
+**Re-specified 2026-08-27.** The original block predated phases 4 and 5 and had drifted badly: it
+named five commands when eight ship, invented `--split` and `--exclude` that were never built,
+called the import flag `--url` when it is `--url-to`, and omitted `offer`, `pull`, `rollback`,
+`confirm` and `cancel` — the whole of the direct transfer and the entire post-import decision.
+Implementing it literally would have replaced a working CLI with a worse one. What follows
+describes what exists and what has to change.
+
+#### What already ships
 
 ```
-wp <ns> preflight  [--format=json]
-wp <ns> export     --to=<dir> [--exclude=<parts>] [--split=<size>] [--resume]
-wp <ns> inspect    <package> [--format=json]
-wp <ns> verify     <package> [--format=json]
-wp <ns> import     <package> [--url=<new>] [--dry-run] [--resume] [--yes]
+wp site-migrator export   [--to=<dir>] [--budget=<seconds>]
+wp site-migrator verify   <dir>
+wp site-migrator offer    [--status] [--revoke]
+wp site-migrator pull     [<url>] [<key>] [--budget=<seconds>]
+wp site-migrator import   <dir> [--budget=<seconds>] [--mode=<merge|replace>] [--as=<user>]
+                                [--url-to=<url>] [--discard-backup] [--restart] [--yes]
+wp site-migrator rollback [--yes]
+wp site-migrator confirm  [--yes]
+wp site-migrator cancel   [--yes]
 ```
 
-Machine contract: data on stdout, progress on stderr; versioned `--format=json`; documented
-exit codes (`0` ok, `1` failure, `2` incompatible, `3` resumable interrupt, `4` invalid
-package); never prompt.
+All eight drive `Core/` directly and have been run end to end between two WordPress installs.
+None of them change in this phase except to gain the contract below.
+
+#### What this phase adds
+
+**Two commands.** Both wrap classes that already exist and are already exercised through REST;
+neither needs anything new in `Core/`.
+
+```
+wp site-migrator preflight [--against=<url>] [--code=<code>] [--format=<format>]
+wp site-migrator inspect   <dir> [--format=<format>]
+```
+
+`preflight` runs `Checker` plus `SiteProfile::gather()` for this site, and with `--against` and a
+pairing code, `Pairing::fetch_profile()` and the full `Compatibility` report. `inspect` reads a
+package's manifest through `PackageReader::inspect()` — what it holds, where it came from, what
+was skipped — without the byte-for-byte re-read that `verify` does.
+
+**The machine contract.** Today every command writes prose to stdout and every failure exits `1`.
+
+- `--format=<table|json|yaml|csv>` on the four commands that *report* — `preflight`, `inspect`,
+  `verify`, and `offer --status`. A `schema` integer is included in every JSON payload and is
+  bumped when a field's meaning changes; adding a field does not bump it.
+- **Data on stdout, progress on stderr.** Step loops currently interleave both on stdout, which
+  makes `--format=json` unpipeable. Progress moves to `WP_CLI::log()`'s stderr equivalent.
+- **Documented exit codes**, mapped onto failures that already exist rather than invented:
+
+  | code | meaning | today |
+  |---|---|---|
+  | `0` | success | `WP_CLI::success` |
+  | `1` | failure | all 14 `WP_CLI::error` calls |
+  | `2` | incompatible — preflight or the pre-write recheck blocked it | folded into 1 |
+  | `3` | resumable interrupt — a budget expired with work outstanding | not signalled at all; the caller cannot tell "stopped" from "finished" |
+  | `4` | invalid package — verify failed, or the manifest is missing | folded into 1 |
+
+- **Never prompt.** Five `WP_CLI::confirm()` calls remain. Under `--format=json`, or when stdin is
+  not a TTY, the absence of `--yes` is an error rather than a question.
+
+#### Explicitly not in this phase
+
+`--dry-run` on import. The preview it would print is what `inspect` plus `preflight --against`
+already give, and the import's own eight stages are not separable into a no-op pass without
+staging the database first — which is not a dry run by any useful definition.
 
 ### Phase 7 — Tests and CI · **M**
 
