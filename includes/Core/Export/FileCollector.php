@@ -649,7 +649,14 @@ class FileCollector {
 		$path = $this->package->part_path( $spec->name(), (int) $state['volume'] );
 		$zip  = new \ZipArchive();
 
-		if ( true !== $zip->open( $path, \ZipArchive::CREATE ) ) {
+		// OVERWRITE as well as CREATE. A volume is opened, filled and closed exactly once, so
+		// there is never a half-written archive here worth keeping — but CREATE on its own
+		// *adds to* an archive that already exists, and a re-export finds the previous run's
+		// volumes sitting under the very same names. That silently carried the old export's
+		// entries into the new one: 296MB of site packaged as 1.3GB, and an import that
+		// restored 123,700 files from a manifest naming 44,078. The manifest was hashed from
+		// the bloated parts, so nothing downstream could tell.
+		if ( true !== $zip->open( $path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE ) ) {
 			throw new \RuntimeException( \esc_html( 'Unable to open archive: ' . $path ) );
 		}
 

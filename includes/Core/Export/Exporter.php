@@ -188,6 +188,15 @@ class Exporter {
 			$this->package->invalidate();
 		}
 
+		// A run that has not written anything yet is starting from nothing, so the directory has
+		// to be empty before it does. Overwriting by name is not enough: what the previous run
+		// wrote and this one does not reach stays behind. Guarded on the checkpoint rather than
+		// on the directory, because a resumed export must find its parts exactly where it left
+		// them — see `PackageWriter::reset()`.
+		if ( $this->is_fresh( $state ) ) {
+			$this->package->reset();
+		}
+
 		if ( Checkpoint::STAGE_DATABASE === $state['stage'] ) {
 			$this->step_database( $state, $deadline );
 		} elseif ( Checkpoint::STAGE_FILES === $state['stage'] ) {
@@ -553,5 +562,29 @@ class Exporter {
 		 * @param int $bytes Volume limit in bytes.
 		 */
 		return (int) \apply_filters( 'nfd_sm_volume_limit', self::VOLUME_LIMIT );
+	}
+
+	/**
+	 * Whether this step is the first of a run that has written nothing yet.
+	 *
+	 * Every one of these is at its initial value only before the first step; the database offset
+	 * moves on the first write, so a resume can never be mistaken for a fresh start.
+	 *
+	 * @param array $state Checkpoint state.
+	 *
+	 * @return bool
+	 */
+	protected function is_fresh( array $state ) {
+		if ( Checkpoint::STAGE_DATABASE !== $state['stage'] ) {
+			return false;
+		}
+
+		$database = isset( $state['database'] ) ? (array) $state['database'] : array();
+
+		return empty( $state['parts'] )
+			&& empty( $state['large'] )
+			&& 0 === (int) $state['part_index']
+			&& 0 === (int) \nfd_sm_data_get( $database, 'query_offset', 0 )
+			&& 0 === (int) \nfd_sm_data_get( $database, 'table_index', 0 );
 	}
 }

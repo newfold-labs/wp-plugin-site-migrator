@@ -599,6 +599,17 @@ abstract class DatabaseBase {
 
 			// Write headers
 			if ( 0 === $query_offset ) {
+
+				// Truncate first. The handle is opened 'cb', which never truncates, because a
+				// resumed dump has to seek to its offset and carry on writing. Starting from
+				// zero is the other case, and if a longer dump is already sitting there its
+				// tail survives past the new one's trailer: a file that ends with a complete
+				// dump and then continues with the middle of an older one. Seen for real --
+				// a re-export left 1,725 bytes behind, and the join landed three bytes into an
+				// INSERT, so the import died on "ERT INTO". Every checksum passed, because the
+				// corruption was there before the package was hashed.
+				ftruncate( $file_handler, 0 );
+
 				nfd_sm_write( $file_handler, $this->get_header() );
 			}
 

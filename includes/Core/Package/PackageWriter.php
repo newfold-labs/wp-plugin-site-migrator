@@ -202,6 +202,37 @@ class PackageWriter {
 	}
 
 	/**
+	 * Clear out a previous run's output so a fresh one starts on an empty directory.
+	 *
+	 * Nothing here is incremental across runs. A second export writes new parts over the old
+	 * ones by name, which leaves behind every part the shorter run did not reach — and, worse,
+	 * a `database.sql` whose tail belongs to the previous dump, because the dump is written
+	 * through a handle that seeks rather than truncates. That produced a package which verified
+	 * perfectly and then failed on import with a syntax error, the corruption having been
+	 * present before anything hashed it.
+	 *
+	 * Only ever called for a run starting from nothing. A resumed export must find its parts
+	 * exactly where it left them.
+	 *
+	 * @return void
+	 */
+	public function reset() {
+		\nfd_sm_delete_directory( $this->path( self::PARTS_DIR ) );
+		\nfd_sm_delete_directory( $this->path( self::LARGE_DIR ) );
+		\nfd_sm_delete_directory( $this->path( self::LISTS_DIR ) );
+
+		foreach ( array( Manifest::NAME, 'database.sql' ) as $name ) {
+			$path = $this->path( $name );
+
+			if ( \is_file( $path ) ) {
+				\unlink( $path );
+			}
+		}
+
+		$this->prepare();
+	}
+
+	/**
 	 * Mark the package incomplete by removing its manifest.
 	 *
 	 * The exact counterpart to `finalize()`. The manifest goes on last because its presence is

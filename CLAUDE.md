@@ -206,6 +206,26 @@ takes size from the iterator's own stat, and readability is settled by the open 
 happen anyway. Do not add syscalls there; a site can hold a hundred thousand files, and for one
 that size the browser is the wrong tool at all — CLI plus the drop-in folder is the answer.
 
+**A fresh export starts on an empty directory, and this is load-bearing.** Nothing an export
+writes is incremental across runs, so `Exporter::step()` calls `PackageWriter::reset()` when the
+checkpoint shows a run that has written nothing yet. Overwriting by name is not enough, and getting
+this wrong produced a package that verified perfectly and then failed on import:
+
+- **`database.sql` was opened `'cb'`** — create, never truncate — and seeked to the resume offset,
+  which is right for a resume and wrong for a fresh dump. A shorter new dump left the older one's
+  tail in place, so the file held a complete dump, its `-- Dump complete.` trailer, and then the
+  middle of the previous one. The join landed three bytes into an `INSERT`, and the import died on
+  `ERT INTO`. It now truncates when `0 === $query_offset`.
+- **`ZipArchive::CREATE` adds to an archive that already exists.** Every re-exported volume
+  inherited the previous run's entries: 296MB of site packaged as 1.3GB, and an import that
+  restored 123,700 files from a manifest naming 44,078. Now `CREATE | OVERWRITE`, which is what
+  "opened, filled and closed exactly once" already claimed.
+
+**None of this was catchable downstream.** The corruption existed before the package was hashed, so
+`verify` passed, and the transfer's per-file checksums passed — both correctly confirming corrupt
+bytes. A checksum proves a file arrived intact; it cannot prove it left intact. This is the reason
+the export's own output is now the thing that has to be right.
+
 **A zip volume is opened, filled and closed exactly once, and never reopened.** `ZipArchive::close()`
 rebuilds the whole archive into a temp file rather than appending, so reopening one rewrites
 everything already in it — flushing every 64 files into a 1GB volume made a 1.5GB export cost
@@ -481,6 +501,15 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - No in-place fallback for a host without `RENAME TABLE` (plan §9.3). Preflight probes for it and
   reports it, so such a host is refused rather than half-migrated.
 - The lossy `utf8mb4` → `utf8` branch is coded and never exercised.
+- **Search-replace matches `site_url` and `home_url` verbatim, so the other scheme survives.** A
+  real import left `yith_shippo_webhook_address` pointing at `https://localhost:10023` because the
+  source's recorded URL is `http://`. Posts and postmeta were clean; this is options written by
+  plugins that store a scheme the site itself does not use.
+- **`php_version` in the manifest and the site profile is `PHP_VERSION` of the process doing the
+  work**, which for a CLI export is the CLI binary, not the site's web SAPI. Observed: a source
+  serving 8.4.18 recorded as 8.5.9, producing a backwards "the destination runs an older PHP"
+  warning. The *blocking* gate reads `php.requires` from plugin headers rather than this number, so
+  what it corrupts is advice, not safety — but phase 6 makes CLI a supported surface.
 - View recreation has been read and not run — the fixture has no views.
 - Multisite is blocked at preflight on both sides — not thin coverage, a feature that does not
   exist yet.
@@ -489,10 +518,9 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
   `wp_remote_get` would argue with, and the IP binding against a source reached through more than
   one egress address — which would refuse a legitimate transfer, and whose fix is to issue a new
   key.
-- **A re-export never removes the previous run's output.** Same-named parts are overwritten, but
-  a shorter run leaves the longer one's tail behind: observed at 2.5GB on disk for a 550MB package,
-  including a stale 531MB `large/`. Nothing reads them — every consumer goes through the manifest —
-  so this is disk, not correctness. `Exporter` un-marks the package now but does not sweep it.
+- The `utf8mb4` note above still stands; the leftover-output problem that used to sit here was a
+  correctness bug, not a disk one, and is now fixed — see *A fresh export starts on an empty
+  directory*.
 - **`Puller::reconcile()` clears the staging directory with no guard for an unsettled import**,
   where `Upload::discard()` refuses exactly that. Bounded: rollback reads the checkpoint and the
   `nfdold_` tables, never the package, so the site is still recoverable — what is lost is a staged
