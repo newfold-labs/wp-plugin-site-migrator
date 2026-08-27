@@ -16,10 +16,10 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **phases 0–5 are done** (4a–4h, then 5). A full migration works end to end, both
+Current state: **phases 0–6 are done** (4a–4h, then 5, then 6). A full migration works end to end, both
 from the CLI and through wp-admin: pair, compare, package, then either hand the package over
-directly or download and upload it, preview, import, roll back. What is left is phase 6 (WP-CLI
-as a supported surface), phase 7 (tests and CI) and phase 8 (hardening and distribution).
+directly or download and upload it, preview, import, roll back. What is left is phase 7 (tests and
+CI) and phase 8 (hardening and distribution).
 
 **Phase 5 has now run between two real WordPress installs**, after first being driven against a
 `php -S` harness. The harness covered the round trip, resume from a truncated part, a damaged part
@@ -361,9 +361,30 @@ room for. `sslverify` is always on and never tied to this site's own scheme (fin
 plugin lives here".
 
 **CLI** (`includes/Cli/`):
-`wp site-migrator export|verify|offer|pull|import|rollback|cancel|confirm`. A
-harness, not the v3 product — but a real second consumer of `Core/` from the day `Core/` existed,
-and it is what makes the round-trip test a shell script.
+`wp site-migrator preflight|export|inspect|verify|import|rollback|cancel|confirm|offer|pull`. A
+real second consumer of `Core/` from the day `Core/` existed, which is what makes the round-trip
+test a shell script — and, since phase 6, a supported surface rather than a harness.
+
+**The machine contract lives in `Cli\Output`, not scattered through the commands.** `SCHEMA` for
+`--format=json`, the `EXIT_*` codes, `progress()` (always stderr, so the stdout contract does not
+depend on who is watching), `emit()` (json gets the nested payload, table/csv/yaml get flat rows),
+and `confirm()` (which fails rather than asking when `--format` is machine-readable or stdin is not
+a TTY). `Commands` has no bare `WP_CLI::error()` left; every failure carries a code.
+
+**Exit `3` needs `--max-time`, and that is not a detail.** `--budget` bounds a *step*, while
+`Exporter::run()` and `Importer::run()` loop internally until done — so a budgeted run still only
+returns when everything has finished, and "stopped early, run me again" had no way to be
+expressed. `Commands::drive()` moves the step loop into the CLI (nothing in `Core/` changed) and
+**makes the remaining time the step's own budget**: check the clock only between steps and a
+single unbounded step does the whole job before it is ever consulted. Do not "simplify" `drive()`
+back to calling `run()`.
+
+**`preflight` and `inspect` wrap what already existed** — `Checker` + `SiteProfile` + `Pairing` +
+`Compatibility`, and `PackageReader::inspect()`. `inspect` is the cheap counterpart to `verify`:
+the manifest alone, no byte-for-byte re-read. `import` now runs `Importer::preview()` *before* the
+confirmation, so a package that was never going to work says so instead of first making somebody
+agree to it — and it is the same call the review screen makes, which is what keeps the two
+surfaces agreeing on what counts as a blocker.
 
 **Frontend** (`src/`): mounts into `#nfd-sm-app`. `routes.js` picks the screen; `utils/useExport.js`,
 `utils/useImport.js` and `utils/usePull.js` drive the step loops. Calls go through `utils/api.js`,

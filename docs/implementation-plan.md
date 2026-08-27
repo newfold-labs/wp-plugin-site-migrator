@@ -1748,7 +1748,7 @@ mismatched package clearing the staging directory, and a step budget splitting t
 21 unit checks over key normalisation, binding, rate limiting, revocation and the range arithmetic.
 **Not** yet run between two WordPress installs — which is where every one of 4c–4h came from.
 
-### Phase 6 — WP-CLI as a supported surface · **S/M** *(v3)*
+### Phase 6 — WP-CLI as a supported surface · **S/M** *(v3)* — ✅ *done 2026-08-27*
 
 Not "write the CLI" — that happened in Phase 2 and has been driving the test suite ever since.
 This phase promotes the harness into a product: the machine contract and the two missing
@@ -1818,6 +1818,30 @@ was skipped — without the byte-for-byte re-read that `verify` does.
 `--dry-run` on import. The preview it would print is what `inspect` plus `preflight --against`
 already give, and the import's own eight stages are not separable into a no-op pass without
 staging the database first — which is not a dry run by any useful definition.
+
+#### What shipped, and the one thing the spec got wrong
+
+Both commands landed as described, and the contract lives in `Cli\Output`: formats, the `SCHEMA`
+constant, the `EXIT_*` codes, `progress()` writing to stderr, and a `confirm()` that refuses to
+ask a question nothing can answer. Every `WP_CLI::error()` in `Commands` now carries a code.
+
+**Exit `3` could not be signalled as specified, and needed a new flag.** The spec assumed
+`--budget` bounded the command; it bounds each *step*, and `Exporter::run()` and `Importer::run()`
+both loop internally until they finish — so a budgeted run still returns only when everything is
+done, and the "budget expired with work outstanding" branch was unreachable dead code on the first
+attempt. Two changes fixed it:
+
+- **`--max-time=<seconds>`**, a wall clock for the whole invocation, on `export` and `import`.
+- **The step loop moved into the CLI** (`Commands::drive()`), which is what a second consumer of
+  `step( $budget )` is for — nothing in `Core/` changed. `drive()` also has to *make the deadline
+  the step's own budget*, or the clock is only ever consulted after a single unbounded step has
+  already done everything. The same "a step must make one attempt" floor as `Puller` applies.
+
+Verified against two live installs: `--max-time=15` drove a full 44,078-file export in slices,
+exit `3` then `0`, and the resulting package verified with a clean dump. Exit `2` was confirmed by
+making the storage directory unwritable, `4` by pointing `inspect`, `verify` and `import` at a
+directory that is not a package, and the no-prompt rule by running `rollback` with stdin closed —
+it exits rather than hanging. `--format=json` parses from stdout alone with commentary on stderr.
 
 ### Phase 7 — Tests and CI · **M**
 

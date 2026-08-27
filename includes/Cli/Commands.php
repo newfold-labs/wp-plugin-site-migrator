@@ -12,6 +12,10 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Checker;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Offer;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Source;
@@ -25,7 +29,10 @@ use NewfoldLabs\WP\SiteMigrator\Core\Transfer\TransferKey;
  * second caller stops the core being quietly shaped around one transport's assumptions. It also
  * makes the round-trip test a shell script instead of a browser harness.
  *
- * Flags, machine-readable output, progress bars and exit-code contracts are phase 6.
+ * Phase 6 promoted it: `preflight` and `inspect` joined the eight commands that were already
+ * here, and the machine contract -- formats, exit codes, stdout/stderr, never prompting -- lives
+ * in `Output`. The commands themselves stayed as they were, which is the point: a surface built
+ * against `Core/` from the beginning needed additions, not a rewrite.
  */
 class Commands {
 
@@ -39,7 +46,9 @@ class Commands {
 			return;
 		}
 
+		\WP_CLI::add_command( 'site-migrator preflight', array( __CLASS__, 'preflight' ) );
 		\WP_CLI::add_command( 'site-migrator export', array( __CLASS__, 'export' ) );
+		\WP_CLI::add_command( 'site-migrator inspect', array( __CLASS__, 'inspect' ) );
 		\WP_CLI::add_command( 'site-migrator verify', array( __CLASS__, 'verify' ) );
 		\WP_CLI::add_command( 'site-migrator import', array( __CLASS__, 'import' ) );
 		\WP_CLI::add_command( 'site-migrator rollback', array( __CLASS__, 'rollback' ) );
@@ -47,6 +56,162 @@ class Commands {
 		\WP_CLI::add_command( 'site-migrator confirm', array( __CLASS__, 'confirm' ) );
 		\WP_CLI::add_command( 'site-migrator offer', array( __CLASS__, 'offer' ) );
 		\WP_CLI::add_command( 'site-migrator pull', array( __CLASS__, 'pull' ) );
+	}
+
+	/**
+	 * Check whether this site can take part in a migration.
+	 *
+	 * With no arguments this reports the local gates only -- what this install can do on its own.
+	 * With `--against` and a pairing code it also fetches the other site's facts over HTTP and
+	 * runs the full comparison, which is the same check the export screen makes.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--against=<url>]
+	 * : Address of the destination to compare against. Needs --code.
+	 *
+	 * [--code=<code>]
+	 * : The pairing code that destination is showing.
+	 *
+	 * [--format=<format>]
+	 * : table, json, csv or yaml. Defaults to table.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp site-migrator preflight
+	 *     wp site-migrator preflight --against=https://new.example.com --code=A1B2-C3D4-E5F6
+	 *     wp site-migrator preflight --format=json
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	public static function preflight( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
+		$against = isset( $assoc_args['against'] ) ? (string) $assoc_args['against'] : '';
+		$code    = isset( $assoc_args['code'] ) ? (string) $assoc_args['code'] : '';
+
+		if ( '' !== $against && '' === $code ) {
+			Output::fail( 'Comparing against another site needs its pairing code too. Pass --code.' );
+
+			return;
+		}
+
+		$local   = Checker::run();
+		$report  = $local->to_array();
+		$payload = array(
+			'site'  => \get_site_url(),
+			'local' => $report,
+		);
+
+		// The local gates are this site's own business and are reported whether or not there is
+		// another site to compare with. A destination that cannot be reached is a failure of the
+		// comparison, not of the checks that already ran.
+		if ( '' !== $against ) {
+			$answer = Pairing::fetch_profile( $against, $code );
+
+			if ( isset( $answer['error'] ) ) {
+				Output::fail( $answer['error'] );
+
+				return;
+			}
+
+			$comparison = new Compatibility( SiteProfile::gather( true ), $answer['profile'] );
+			$report     = $comparison->check()->to_array();
+
+			$payload['against']       = $against;
+			$payload['compatibility'] = $report;
+		}
+
+		Output::emit(
+			$assoc_args,
+			$payload,
+			Output::report_rows( $report ),
+			array( 'check', 'status', 'detail' )
+		);
+
+		if ( empty( $report['ok'] ) ) {
+			Output::fail(
+				'' === $against
+					? 'This site cannot be migrated as it stands.'
+					: 'These two sites cannot be migrated between as they stand.',
+				Output::EXIT_INCOMPATIBLE
+			);
+
+			return;
+		}
+
+		Output::progress( 'Success: Nothing is blocking a migration.' );
+	}
+
+	/**
+	 * Read a package's manifest without re-reading its bytes.
+	 *
+	 * The cheap counterpart to `verify`: what the package holds, where it came from and what was
+	 * left out, answered from the manifest alone. `verify` re-reads every byte and checks it
+	 * against that manifest, which on a large package is minutes rather than milliseconds.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <dir>
+	 * : The package directory.
+	 *
+	 * [--format=<format>]
+	 * : table, json, csv or yaml. Defaults to table.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp site-migrator inspect /tmp/mysite
+	 *     wp site-migrator inspect /tmp/mysite --format=json
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	public static function inspect( $args, $assoc_args ) {
+		if ( empty( $args[0] ) ) {
+			Output::fail( 'Give me a package directory.', Output::EXIT_INVALID_PACKAGE );
+
+			return;
+		}
+
+		$reader = new PackageReader( $args[0] );
+
+		if ( ! $reader->is_complete() ) {
+			Output::fail(
+				'There is no finished package there: the manifest is missing, which is what marks one complete.',
+				Output::EXIT_INVALID_PACKAGE
+			);
+
+			return;
+		}
+
+		$summary = $reader->inspect();
+
+		$fields = array(
+			'source'        => (string) \nfd_sm_data_get( $summary, 'source.site_url', '' ),
+			'created'       => (string) \nfd_sm_data_get( $summary, 'created_at', '' ),
+			'wordpress'     => (string) \nfd_sm_data_get( $summary, 'source.wp_version', '' ),
+			'php'           => (string) \nfd_sm_data_get( $summary, 'source.php_version', '' ),
+			'prefix'        => (string) \nfd_sm_data_get( $summary, 'source.table_prefix', '' ),
+			'files'         => (string) (int) \nfd_sm_data_get( $summary, 'totals.files', 0 ),
+			'bytes'         => \size_format( (int) \nfd_sm_data_get( $summary, 'totals.bytes', 0 ) ),
+			'parts'         => (string) \count( (array) \nfd_sm_data_get( $summary, 'parts', array() ) ),
+			'skipped_paths' => (string) (int) \nfd_sm_data_get( $summary, 'skipped_paths.total', 0 ),
+			'skipped_links' => (string) (int) \nfd_sm_data_get( $summary, 'skipped_links.total', 0 ),
+		);
+
+		$rows = array();
+
+		foreach ( $fields as $name => $value ) {
+			$rows[] = array(
+				'field' => $name,
+				'value' => $value,
+			);
+		}
+
+		Output::emit( $assoc_args, $summary, $rows, array( 'field', 'value' ) );
 	}
 
 	/**
@@ -61,9 +226,14 @@ class Commands {
 	 * : Stop and checkpoint after this many seconds per step, then continue. Defaults to no
 	 * limit, which is right under WP-CLI where max_execution_time is 0.
 	 *
+	 * [--max-time=<seconds>]
+	 * : Give up the whole command after this long, leaving a checkpoint behind and exiting 3.
+	 * Run the same command again to continue. Defaults to running until it finishes.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator export --to=/tmp/mysite
+	 *     wp site-migrator export --max-time=60   # exits 3 if it needs longer
 	 *
 	 * @param array $args       Positional arguments.
 	 * @param array $assoc_args Associative arguments.
@@ -78,22 +248,37 @@ class Commands {
 		$exporter->set_progress( new CliProgressReporter() );
 
 		if ( $exporter->is_resumable() ) {
-			\WP_CLI::log( 'Resuming an interrupted export.' );
+			Output::progress( 'Resuming an interrupted export.' );
 		}
 
 		$started = \microtime( true );
 
 		try {
-			$state = $exporter->run( $budget );
+			$state = self::drive( $exporter, $budget, self::max_time( $assoc_args ) );
 		} catch ( \Exception $e ) {
-			\WP_CLI::error( $e->getMessage() );
+			Output::fail( $e->getMessage() );
 
 			return;
 		}
 
-		\WP_CLI::success(
+		// Same contract as the import: a budget that runs out is a pause, and the caller has to
+		// be able to tell that from finishing.
+		if ( empty( $state['done'] ) ) {
+			Output::progress(
+				\sprintf(
+					'Stopped after %.1fs with work outstanding. Run the same command again to continue.',
+					\microtime( true ) - $started
+				)
+			);
+
+			\WP_CLI::halt( Output::EXIT_RESUMABLE );
+
+			return;
+		}
+
+		Output::progress(
 			\sprintf(
-				'Exported %d files, %s, in %.1fs to %s',
+				'Success: Exported %d files, %s, in %.1fs to %s',
 				$state['files'],
 				\size_format( $state['bytes'] ),
 				\microtime( true ) - $started,
@@ -110,14 +295,17 @@ class Commands {
 	 * <dir>
 	 * : The package directory.
 	 *
+	 * [--format=<format>]
+	 * : table, json, csv or yaml. Defaults to table.
+	 *
 	 * @param array $args       Positional arguments.
 	 * @param array $assoc_args Associative arguments.
 	 *
 	 * @return void
 	 */
-	public static function verify( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
+	public static function verify( $args, $assoc_args ) {
 		if ( empty( $args[0] ) ) {
-			\WP_CLI::error( 'Give me a package directory.' );
+			Output::fail( 'Give me a package directory.', Output::EXIT_INVALID_PACKAGE );
 
 			return;
 		}
@@ -126,28 +314,50 @@ class Commands {
 		$problems = $reader->verify();
 
 		if ( ! empty( $problems ) ) {
-			foreach ( $problems as $problem ) {
-				\WP_CLI::log( '  ' . $problem );
-			}
+			Output::emit(
+				$assoc_args,
+				array(
+					'ok'       => false,
+					'problems' => $problems,
+				),
+				\array_map(
+					function ( $problem ) {
+						return array( 'problem' => $problem );
+					},
+					$problems
+				),
+				array( 'problem' )
+			);
 
-			\WP_CLI::error( \sprintf( '%d problem(s) found.', \count( $problems ) ) );
+			Output::fail(
+				\sprintf( '%d problem(s) found.', \count( $problems ) ),
+				Output::EXIT_INVALID_PACKAGE
+			);
 
 			return;
 		}
 
 		$summary = $reader->inspect();
 
-		\WP_CLI::log( \sprintf( 'Source:   %s', \nfd_sm_data_get( $summary, 'source.site_url', '?' ) ) );
-		\WP_CLI::log( \sprintf( 'Created:  %s', \nfd_sm_data_get( $summary, 'created_at', '?' ) ) );
-		\WP_CLI::log(
-			\sprintf(
-				'Contents: %d files, %s',
-				(int) \nfd_sm_data_get( $summary, 'totals.files', 0 ),
-				\size_format( (int) \nfd_sm_data_get( $summary, 'totals.bytes', 0 ) )
-			)
+		Output::emit(
+			$assoc_args,
+			array(
+				'ok'       => true,
+				'problems' => array(),
+				'package'  => $summary,
+			),
+			array(
+				array(
+					'source'  => (string) \nfd_sm_data_get( $summary, 'source.site_url', '' ),
+					'created' => (string) \nfd_sm_data_get( $summary, 'created_at', '' ),
+					'files'   => (string) (int) \nfd_sm_data_get( $summary, 'totals.files', 0 ),
+					'bytes'   => \size_format( (int) \nfd_sm_data_get( $summary, 'totals.bytes', 0 ) ),
+				),
+			),
+			array( 'source', 'created', 'files', 'bytes' )
 		);
 
-		\WP_CLI::success( 'Package verified.' );
+		Output::progress( 'Success: Package verified.' );
 	}
 
 	/**
@@ -161,6 +371,10 @@ class Commands {
 	 * [--budget=<seconds>]
 	 * : Stop and checkpoint after this many seconds per step, then continue. Defaults to no
 	 * limit, which is right under WP-CLI where max_execution_time is 0.
+	 *
+	 * [--max-time=<seconds>]
+	 * : Give up the whole command after this long, leaving a checkpoint behind and exiting 3.
+	 * Run the same command again to continue. Never stops after the swap has begun.
 	 *
 	 * [--mode=<mode>]
 	 * : `merge` keeps this site's user accounts alongside the source's. `replace` keeps only
@@ -193,7 +407,7 @@ class Commands {
 	 */
 	public static function import( $args, $assoc_args ) {
 		if ( empty( $args[0] ) ) {
-			\WP_CLI::error( 'Give me a package directory.' );
+			Output::fail( 'Give me a package directory.', Output::EXIT_INVALID_PACKAGE );
 
 			return;
 		}
@@ -217,7 +431,7 @@ class Commands {
 		}
 
 		if ( $importer->is_complete() ) {
-			\WP_CLI::error(
+			Output::fail(
 				'This package has already been imported into this site. Roll it back first, or pass '
 				. '--restart to run it again.'
 			);
@@ -226,11 +440,43 @@ class Commands {
 		}
 
 		if ( $importer->is_resumable() ) {
-			\WP_CLI::log( 'Resuming an interrupted import.' );
+			Output::progress( 'Resuming an interrupted import.' );
 		} else {
-			\WP_CLI::confirm(
+
+			// Asked *before* the confirmation rather than after it, so a run that was never going
+			// to work says so instead of first making somebody agree to it. `preview()` is the
+			// same call the review screen makes, which is what keeps the two surfaces agreeing
+			// about what counts as a blocker.
+			$preview = $importer->preview();
+
+			if ( ! empty( $preview['problems'] ) ) {
+				foreach ( $preview['problems'] as $problem ) {
+					Output::progress( '  ' . $problem );
+				}
+
+				Output::fail( 'That package cannot be read.', Output::EXIT_INVALID_PACKAGE );
+
+				return;
+			}
+
+			if ( empty( $preview['ok'] ) ) {
+				foreach ( Output::report_rows( (array) \nfd_sm_data_get( $preview, 'report', array() ) ) as $row ) {
+					if ( 'block' === $row['status'] ) {
+						Output::progress( '  ' . $row['detail'] );
+					}
+				}
+
+				Output::fail(
+					'This site cannot accept that package as it stands.',
+					Output::EXIT_INCOMPATIBLE
+				);
+
+				return;
+			}
+
+			Output::confirm(
 				\sprintf(
-					'This replaces every table on %s with the contents of that package. Continue?',
+					'This replaces every table on %s with the contents of that package.',
 					\get_site_url()
 				),
 				$assoc_args
@@ -238,20 +484,36 @@ class Commands {
 		}
 
 		$started = \microtime( true );
-		$state   = $importer->run( $budget );
+		$state   = self::drive( $importer, $budget, self::max_time( $assoc_args ) );
 
 		foreach ( $state['refused'] as $path ) {
 			\WP_CLI::warning( 'Refused an unsafe path in the package: ' . $path );
 		}
 
 		if ( '' !== $state['error'] ) {
-			\WP_CLI::error( $state['error'] );
+			Output::fail( $state['error'] );
+
+			return;
+		}
+
+		// A budget that expires mid-import is the normal way to run this on a host with a time
+		// limit, and it is not a failure: the checkpoint is written and the same command picks
+		// up where it stopped. Exiting 0 would tell a wrapper script the migration had finished.
+		if ( empty( $state['done'] ) ) {
+			Output::progress(
+				\sprintf(
+					'Stopped after %.1fs with work outstanding. Run the same command again to continue.',
+					\microtime( true ) - $started
+				)
+			);
+
+			\WP_CLI::halt( Output::EXIT_RESUMABLE );
 
 			return;
 		}
 
 		foreach ( $state['notes'] as $note ) {
-			\WP_CLI::log( '  ' . $note );
+			Output::progress( '  ' . $note );
 		}
 
 		self::report_users( $state['users'] );
@@ -282,7 +544,7 @@ class Commands {
 	 * @return void
 	 */
 	public static function rollback( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
-		\WP_CLI::confirm( 'This puts the site back as it was before the import. Continue?', $assoc_args );
+		Output::confirm( 'This puts the site back as it was before the import.', $assoc_args );
 
 		// No package argument: the run is recorded against the site, not the package, and
 		// naming the wrong directory should not be a way to roll back the wrong thing.
@@ -291,7 +553,7 @@ class Commands {
 		try {
 			$state = $importer->rollback();
 		} catch ( \Exception $e ) {
-			\WP_CLI::error( $e->getMessage() );
+			Output::fail( $e->getMessage() );
 
 			return;
 		}
@@ -320,7 +582,7 @@ class Commands {
 	 * @return void
 	 */
 	public static function cancel( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
-		\WP_CLI::confirm( 'This discards the staged import. The live site is not affected. Continue?', $assoc_args );
+		Output::confirm( 'This discards the staged import. The live site is not affected.', $assoc_args );
 
 		$importer = new Importer( '' );
 		$importer->cancel();
@@ -344,8 +606,8 @@ class Commands {
 	 * @return void
 	 */
 	public static function confirm( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
-		\WP_CLI::confirm(
-			'This drops the tables the import replaced. After it, the import cannot be rolled back. Continue?',
+		Output::confirm(
+			'This drops the tables the import replaced. After it, the import cannot be rolled back.',
 			$assoc_args
 		);
 
@@ -354,12 +616,79 @@ class Commands {
 		try {
 			$dropped = $importer->confirm();
 		} catch ( \Exception $e ) {
-			\WP_CLI::error( $e->getMessage() );
+			Output::fail( $e->getMessage() );
 
 			return;
 		}
 
 		\WP_CLI::success( \sprintf( 'Confirmed. Dropped %d retained table(s).', $dropped ) );
+	}
+
+	/**
+	 * How long this whole invocation may take.
+	 *
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return float Seconds, or 0 for no limit.
+	 */
+	protected static function max_time( array $assoc_args ) {
+		return isset( $assoc_args['max-time'] ) ? (float) $assoc_args['max-time'] : 0;
+	}
+
+	/**
+	 * Step a run to completion, or until the clock runs out.
+	 *
+	 * `Exporter::run()` and `Importer::run()` both loop until they are finished, which is right
+	 * for the default and useless to a caller that has to fit inside a window: `--budget` bounds
+	 * each *step*, so even a budgeted run returns only once the whole thing is done. Nothing in
+	 * `Core/` needed changing -- the loop simply moves out here, which is what having a second
+	 * consumer of `step( $budget )` is for.
+	 *
+	 * Stopping is always safe. Every step writes its checkpoint before returning and both halves
+	 * resume from it; on the import side the swap is a single statement that has either run or
+	 * not, so there is no moment where stopping leaves a half-migrated site.
+	 *
+	 * @param object $runner   Anything with `step( $budget )` returning a state carrying `done`.
+	 * @param float  $budget   Per-step budget, passed straight through.
+	 * @param float  $max_time Wall clock for the whole run, or 0 for no limit.
+	 *
+	 * @return array The last state, whose `done` says whether it finished.
+	 */
+	protected static function drive( $runner, $budget, $max_time ) {
+		$deadline = $max_time > 0 ? \microtime( true ) + $max_time : 0;
+
+		do {
+			// The clock can only be consulted between steps, so a deadline has to become the
+			// step's own budget or it is never reached: with no `--budget` a single step runs the
+			// entire export, and the check below then happens once, after everything is already
+			// done. Whichever of the two is smaller wins, and the remaining time is always at
+			// least one step -- "as much as fits" has a floor of one attempt here as well.
+			$step = $budget;
+
+			if ( $deadline > 0 ) {
+				$remaining = $deadline - \microtime( true );
+				$step      = $budget > 0 ? \min( $budget, $remaining ) : $remaining;
+
+				if ( $step <= 0 ) {
+					$step = 1;
+				}
+			}
+
+			$state = $runner->step( $step );
+
+			// A stage that failed leaves the run neither done nor advancing, and looping on that
+			// spins forever. `Importer::run()` guards it the same way; the export signals failure
+			// by throwing, so on that side there is nothing here to catch.
+			if ( isset( $state['error'] ) && '' !== $state['error'] ) {
+				return $state;
+			}
+
+			if ( $deadline > 0 && \microtime( true ) >= $deadline ) {
+				return $state;
+			}
+		} while ( empty( $state['done'] ) );
+
+		return $state;
 	}
 
 	/**
@@ -379,7 +708,7 @@ class Commands {
 				: \get_user_by( 'login', $assoc_args['as'] );
 
 			if ( ! $user ) {
-				\WP_CLI::error( \sprintf( 'No such user: %s', $assoc_args['as'] ) );
+				Output::fail( \sprintf( 'No such user: %s', $assoc_args['as'] ) );
 			}
 
 			return (int) $user->ID;
@@ -485,6 +814,9 @@ class Commands {
 	 * [--revoke]
 	 * : Withdraw the outstanding key.
 	 *
+	 * [--format=<format>]
+	 * : table, json, csv or yaml, for --status. Defaults to table.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator offer
@@ -507,7 +839,14 @@ class Commands {
 
 		if ( ! empty( $assoc_args['status'] ) ) {
 			if ( empty( $status['active'] ) ) {
-				\WP_CLI::log( 'No key is outstanding.' );
+				Output::emit(
+					$assoc_args,
+					array( 'active' => false ),
+					array( array( 'active' => 'no' ) ),
+					array( 'active' )
+				);
+
+				Output::progress( 'No key is outstanding.' );
 
 				return;
 			}
@@ -524,13 +863,18 @@ class Commands {
 				$by = 'a site that did not say who it was';
 			}
 
-			\WP_CLI::log(
-				\sprintf(
-					'Active until %s. Claimed by: %s. Sent so far: %s.',
-					\gmdate( 'Y-m-d H:i:s', $status['expires'] ) . ' UTC',
-					$by,
-					\size_format( $status['sent'] )
-				)
+			Output::emit(
+				$assoc_args,
+				$status,
+				array(
+					array(
+						'active'     => 'yes',
+						'expires'    => \gmdate( 'Y-m-d H:i:s', $status['expires'] ) . ' UTC',
+						'claimed_by' => $by,
+						'sent'       => \size_format( $status['sent'] ),
+					),
+				),
+				array( 'active', 'expires', 'claimed_by', 'sent' )
 			);
 
 			return;
@@ -539,18 +883,42 @@ class Commands {
 		$offer = new Offer();
 
 		if ( ! $offer->is_ready() ) {
-			\WP_CLI::error( 'There is no finished package here to send. Run `wp site-migrator export` first.' );
+			Output::fail(
+				'There is no finished package here to send. Run `wp site-migrator export` first.',
+				Output::EXIT_INVALID_PACKAGE
+			);
 
 			return;
 		}
 
 		$summary = $offer->summary();
+		$address = \get_site_url();
 
-		\WP_CLI::log( \sprintf( 'Address: %s', \get_site_url() ) );
-		\WP_CLI::log( \sprintf( 'Key:     %s', TransferKey::issue() ) );
-		\WP_CLI::success(
+		// Issued once and never recoverable -- only a hash is kept -- so it goes through `emit()`
+		// like any other answer. This is the single most scriptable line the CLI produces: a
+		// wrapper pairing two sites reads the key from here and hands it to `pull` on the other.
+		$key = TransferKey::issue();
+
+		Output::emit(
+			$assoc_args,
+			array(
+				'address' => $address,
+				'key'     => $key,
+				'files'   => \count( $summary['files'] ),
+				'bytes'   => (int) $summary['bytes'],
+			),
+			array(
+				array(
+					'address' => $address,
+					'key'     => $key,
+				),
+			),
+			array( 'address', 'key' )
+		);
+
+		Output::progress(
 			\sprintf(
-				'%d files, %s, ready to be pulled.',
+				'Success: %d files, %s, ready to be pulled.',
 				\count( $summary['files'] ),
 				\size_format( $summary['bytes'] )
 			)
@@ -594,7 +962,7 @@ class Commands {
 			$result = $puller->connect( $args[0], isset( $args[1] ) ? $args[1] : '' );
 
 			if ( isset( $result['error'] ) ) {
-				\WP_CLI::error( $result['error'] );
+				Output::fail( $result['error'] );
 
 				return;
 			}
@@ -617,7 +985,7 @@ class Commands {
 				)
 			);
 		} elseif ( empty( Source::load() ) ) {
-			\WP_CLI::error( 'Give me the source\'s address and a transfer key.' );
+			Output::fail( 'Give me the source\'s address and a transfer key.' );
 
 			return;
 		}
@@ -628,7 +996,7 @@ class Commands {
 			try {
 				$state = $puller->step( $budget );
 			} catch ( \Exception $e ) {
-				\WP_CLI::error( $e->getMessage() );
+				Output::fail( $e->getMessage() );
 
 				return;
 			}
@@ -661,7 +1029,10 @@ class Commands {
 				\WP_CLI::warning( $problem );
 			}
 
-			\WP_CLI::error( 'The package arrived but does not match its own checksums.' );
+			Output::fail(
+				'The package arrived but does not match its own checksums.',
+				Output::EXIT_INVALID_PACKAGE
+			);
 
 			return;
 		}

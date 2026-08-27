@@ -186,12 +186,64 @@ wp site-migrator confirm                      # keep it, drop the old tables
 wp site-migrator rollback                     # or put the old site back
 ```
 
-`--budget=<seconds>` bounds any single step; the default is no limit. Add `--yes` to skip the
-confirmation prompt. `wp site-migrator cancel` abandons an import that has not yet swapped in —
-the live site is untouched either way.
+`wp site-migrator cancel` abandons an import that has not yet swapped in — the live site is
+untouched either way. Add `--yes` to skip a confirmation.
 
 Mixing surfaces is fine. Package on the CLI, import in the browser; start a pull in the browser
 and finish it from a shell. Progress lives on disk, not in a session.
+
+### Looking before you leap
+
+```bash
+wp site-migrator preflight                                  # can this site be migrated at all?
+wp site-migrator preflight --against=<url> --code=<code>    # ...and to that one?
+wp site-migrator inspect <dir>                              # what is in this package?
+wp site-migrator verify <dir>                               # ...and does it match its manifest?
+```
+
+`inspect` reads the manifest; `verify` re-reads every byte and checks it against that manifest,
+which on a large package is minutes rather than milliseconds. Both are read-only.
+
+### Scripting it
+
+Four commands report rather than act — `preflight`, `inspect`, `verify` and `offer` — and all four
+take `--format=table|json|csv|yaml`. **Data goes to stdout, everything else to stderr**, so the
+JSON is the only thing in the pipe:
+
+```bash
+wp site-migrator preflight --format=json | jq '.local.ok'
+KEY=$(wp site-migrator offer --format=json | jq -r '.key')
+```
+
+Every JSON payload carries a `schema` integer. It is bumped when a field changes meaning or
+disappears — not when one is added, since a consumer reading by name is unaffected by a field it
+has never heard of.
+
+**Exit codes** say what happened without anyone reading English:
+
+| | meaning |
+|---|---|
+| `0` | it worked |
+| `1` | it failed |
+| `2` | the sites are incompatible — the fix is on a server, not in the command |
+| `3` | stopped early with work outstanding; run the same command again |
+| `4` | the package is missing, unreadable, or does not match its manifest |
+
+`3` is the one worth building around. `--budget=<seconds>` bounds a single step; **`--max-time=<seconds>`
+bounds the whole command**, leaving a checkpoint and exiting `3` if it needs longer. That makes a
+migration something cron can drive:
+
+```bash
+until wp site-migrator export --max-time=50; do
+    [ $? -eq 3 ] || exit 1        # 3 means "not finished", anything else is real
+done
+```
+
+Stopping is always safe. Every step checkpoints before it returns, and the swap is a single
+statement that has either run or not.
+
+**Nothing ever prompts when nobody can answer.** With `--format=json`, or when stdin is not a
+terminal, a missing `--yes` is an error rather than a question that would wait forever.
 
 ---
 
