@@ -15,3 +15,9 @@ cypress/screenshots
 .phpunit.result.cache
 phpunit.xml
 dist/
+
+# Playwright: the browser suite's own output. The WordPress it drives lives in the system
+# temp directory, not here.
+/test-results
+/playwright-report
+/.playwright

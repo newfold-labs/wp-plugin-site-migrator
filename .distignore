@@ -17,7 +17,8 @@ src
 tests
 .idea
 .vscode
-cypress
+test-results
+playwright-report
 assets/styles
 
 # Development configuration
@@ -27,7 +28,7 @@ assets/styles
 .gitignore
 .huskyrc.json
 .wp-env.json
-cypress.config.js
+playwright.config.js
 phpcs.xml
 phpunit.xml
 phpunit.xml.dist

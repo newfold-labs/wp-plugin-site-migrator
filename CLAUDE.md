@@ -73,8 +73,15 @@ throughout. `engines.node` is `>=20`.
 `build/` and `src/styles/nfd-site-migrator.css` are **generated and not tracked**. Build after
 cloning or the admin page renders an empty div.
 
-`.wp-env.json` exists but wp-env is not provisioned here; the working local setup is two
-WordPress installs driven by the CLI (see *Tests*).
+**npm, and only npm.** `yarn.lock` was tracked while every script, the build and CI all ran npm —
+which ignores it — so installs resolved fresh and the lockfile locked nothing. `package-lock.json`
+is the lockfile now and `npm ci` is what CI runs. `@wordpress/env` is gone with the Cypress
+workflow that was its only caller; it pulled `@php-wasm/node`, whose native module does not build
+on current Node, which is what broke `npm ci`.
+
+**`typescript` is pinned by an override.** `@wordpress/eslint-plugin` depends on it without
+constraining it, npm resolves 7.x, and `@typescript-eslint@5` cannot parse that — `lint-js` dies
+before reading a line of source. `overrides: { typescript: ^5.9.0 }` holds it down.
 
 ## Naming
 
@@ -602,23 +609,38 @@ assignment's. Each would have passed for the wrong reason. The script now assert
 is what it thinks before testing anything with it — and needles are bound through `prepare()`
 rather than pasted into a `LIKE`.
 
+`tests/e2e/` is Playwright, and it is **unstubbed** — plan §12 item 9, which had never existed.
+`playwright.config.js` provisions a real WordPress (wp-cli), symlinks the working tree into it and
+serves it with `php -S`; nothing is intercepted, so every assertion goes through the real REST API.
+Provisioning happens inside the `webServer` command rather than `globalSetup`, because Playwright
+starts the server **first** and a global setup would run too late to build the site it needs.
+
+It exists to catch **the blank admin page** — the failure this plugin keeps having, from a wrong
+`plugin_dir_url()` under a symlink, a REST payload handing React an object where it wanted a
+string, and a resume redirect that returned `null`. All three look identical to a user and none are
+visible to a unit test. Asserting the mount point exists proves nothing (PHP prints it); the test
+asserts React put a child inside it.
+
+The site is built in the system temp directory, **not** in the repo. Built inside it, the plugin
+directory contains the site that contains the plugin: asset URLs come out recursive, and the
+exporter would package a WordPress install into its own fixture.
+
 **A test that cannot fail is not a test.** Both suites have been checked by breaking the code they
-cover — an exit-code constant, a manifest key, and the escaped-slash replacement pair — and
-confirming each goes red, then green again. The escaped-slash case failed to fail the first time,
+cover — an exit-code constant, a manifest key, the escaped-slash replacement pair, and the admin
+page's script enqueue — and confirming each goes red, then green again. The escaped-slash case failed to fail the first time,
 which is how the block fixture came to exist.
 
 **Four workflows, and exactly one of them publishes anything.** `lint.yml` (phpcs), `tests.yml`
-(PHPUnit on 7.4 and 8.3, the round trip against a MySQL service, and a `package` job that builds
-the zip and installs it into a real WordPress), `ai-code-review.yml` (a Newfold reusable), and
+(PHPUnit on 7.4 and 8.3, the round trip, a `package` job that builds the zip and installs it into a
+real WordPress, and the browser suite), `ai-code-review.yml` (a Newfold reusable), and
 `upload-asset-on-release.yml`, which runs **only** on a published release and attaches the zip with
 `gh release upload`. Node is 22.
 
 Two workflows were deleted rather than repaired. `upload-artifact-on-push.yml` built and uploaded a
-zip on every push to master. `cypress.yml` ran a single spec that stubs the entire REST layer with
-`cy.intercept`, so it verified React against fixtures and could not catch a defect in the plugin —
-and it uploaded failure screenshots from `tests/cypress/screenshots`, a path that has never
-existed. The specs are still in `cypress/` and still run by hand with `npm test`; plan §12 item 9
-wants one unstubbed path, which does not exist yet.
+zip on every push to master. `cypress.yml` uploaded failure screenshots from
+`tests/cypress/screenshots`, a path that never existed — and its one spec drove
+`#check-compatibility-button` and `#begin-transfer-button`, neither of which has appeared anywhere
+in `src/` since the rework. It was testing a deleted UI through a fully stubbed REST layer.
 
 **`lint.yml` no longer runs `composer fix` before linting** — it did, which meant CI could not fail
 on anything phpcbf repairs, while running a fixer that rewrites string literals.
