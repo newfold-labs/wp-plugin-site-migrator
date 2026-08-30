@@ -394,8 +394,7 @@ composer test:roundtrip
 `build/` and `src/styles/nfd-site-migrator.css` are generated and untracked. Build after cloning
 or the admin page renders a very confident empty `<div>`.
 
-> `package.json`'s own `build` and `start` scripts hard-code `yarn`, so `npm run build` dies at the
-> first step on a machine without it. Run the two commands above directly, or install yarn.
+> `npm run build` runs both steps together if you prefer. Node 20 or newer.
 
 > `composer fix` rewrites string literals — Newfold's ruleset includes a "spell WordPress
 > correctly" sniff that doesn't know which strings are prose and which are data. Read its diff. It

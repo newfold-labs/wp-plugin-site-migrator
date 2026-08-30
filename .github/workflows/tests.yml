@@ -91,6 +91,8 @@ jobs:
         runs-on: ubuntu-latest
         # Builds the artefact and then installs it into a real WordPress. A release is the worst
         # moment to discover the zip unpacks to the wrong directory or ships without its assets.
+        # Nothing is uploaded: this is a test that the zip works, and the only workflow that
+        # publishes anything is the one that runs on a published release.
         services:
             mysql:
                 image: mysql:8.0
@@ -107,7 +109,7 @@ jobs:
 
             - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
               with:
-                  node-version: 18.x
+                  node-version: 22
 
             - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
               with:
@@ -136,8 +138,3 @@ jobs:
                   NFD_DB_USER: root
                   NFD_DB_PASS: root
               run: bash bin/verify-zip.sh
-
-            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-              with:
-                  name: nfd-site-migrator
-                  path: dist/nfd-site-migrator.zip

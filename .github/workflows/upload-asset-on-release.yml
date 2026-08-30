@@ -1,81 +1,48 @@
 name: Package Plugin
 
+# The only workflow that publishes anything. Everything else in .github/workflows reports.
+#
+# Triggered by publishing a release rather than by pushing a tag: publishing is the deliberate
+# act, and it means there is already a release for the asset to hang off. A mistyped tag stays a
+# mistyped tag.
 on:
     release:
         types:
             - published
 
+permissions:
+    contents: write
+
 jobs:
-    deploy:
-        name: On Release
+    package:
+        name: Build and attach the zip
         runs-on: ubuntu-latest
         steps:
-            - name: Checkout
-              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-            - name: Setup Workflow Context
-              id: workflow
-              working-directory: ${{ runner.temp }}
-              env:
-                  REPO: ${{ github.repository }}
+            - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+              with:
+                  node-version: 22
+
+            - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
+              with:
+                  php-version: '8.3'
+                  extensions: zip
+                  coverage: none
+
+            - name: Install dependencies
               run: |
-                  mkdir dist
-                  echo "DIST=${PWD}/dist" >> $GITHUB_OUTPUT
-                  echo "PACKAGE=${REPO##*/}" >> $GITHUB_OUTPUT
+                  npm install --no-audit --no-fund
+                  composer install --prefer-dist --no-progress
 
-            - name: PHP version
-              run: php --version
+            # One build recipe, the same one a person runs locally. This step also asserts what is
+            # in the staged tree before zipping -- the bundle, the stylesheet, the asset manifest,
+            # the fonts, the licences -- because `build/` is generated and untracked, and a zip
+            # built without it installs cleanly and then renders an empty admin page.
+            - name: Build
+              run: bash bin/build-zip.sh
 
-            - name: Set Node.js 18.x
-              uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
-              with:
-                  node-version: 18.x
-                  cache: 'yarn'
-
-            - name: Node version
-              run: node --version
-
-            - name: Enable yarn
-              run: corepack enable
-
-            - name: Install deps
-              run: yarn install
-
-            - name: Validate composer.json and composer.lock
-              run: composer validate
-
-            - name: Get Composer Cache Directory
-              id: composer-cache
-              run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
-            - name: Cache Composer vendor directory
-              uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
-              with:
-                  path: ${{ steps.composer-cache.outputs.dir }}
-                  key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-composer-
-
-            - name: Install PHP Dependencies
-              run: composer install --no-progress
-
-            # Built by the same script a person runs locally, rather than a second recipe that
-            # drifts from it. It also names the directory inside the zip after the plugin slug --
-            # this workflow used the *repository* name, so the artefact installed into
-            # wp-content/plugins/wp-plugin-site-migrator, which is not the slug.
-            - name: Build the zip
-              run: bash bin/build-zip.sh ${{ steps.workflow.outputs.DIST }}
-
-            - name: List Files
-              working-directory: ${{ steps.workflow.outputs.DIST }}
-              run: unzip -Z1 nfd-site-migrator.zip
-
-            - name: Upload Release Asset
-              uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1.0.21
+            - name: Attach it to the release
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets{?name,label}
-                  asset_path: ${{ steps.workflow.outputs.DIST }}/nfd-site-migrator.zip
-                  asset_name: nfd-site-migrator.zip
-                  asset_content_type: application/zip
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: gh release upload "${{ github.event.release.tag_name }}" dist/nfd-site-migrator.zip --clobber

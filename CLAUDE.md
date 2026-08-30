@@ -66,9 +66,9 @@ npx wp-scripts build ./src/nfd-site-migrator.js   # -> build/
 npx wp-scripts lint-js src                        # --fix to autofix
 ```
 
-**`package.json` hard-codes `yarn` inside its own `build` and `start` scripts**, so on a machine
-without yarn `npm run build` dies at the first step instead of falling back. Run the two halves
-directly, as above, or install yarn.
+`npm run build` runs both halves. It used to hard-code `yarn` inside its own `build` and `start`
+scripts, so on a machine without yarn it died at the first step; that is fixed, and CI uses npm
+throughout. `engines.node` is `>=20`.
 
 `build/` and `src/styles/nfd-site-migrator.css` are **generated and not tracked**. Build after
 cloning or the admin page renders an empty div.
@@ -607,14 +607,26 @@ cover — an exit-code constant, a manifest key, and the escaped-slash replaceme
 confirming each goes red, then green again. The escaped-slash case failed to fail the first time,
 which is how the block fixture came to exist.
 
-CI is `.github/workflows/`: lint, PHPUnit on 7.4 and 8.3, and the round trip against a MySQL
-service. **`lint.yml` no longer runs `composer fix` before linting** — it did, which meant CI could
-not fail on anything phpcbf repairs, while running a fixer that rewrites string literals.
+**Four workflows, and exactly one of them publishes anything.** `lint.yml` (phpcs), `tests.yml`
+(PHPUnit on 7.4 and 8.3, the round trip against a MySQL service, and a `package` job that builds
+the zip and installs it into a real WordPress), `ai-code-review.yml` (a Newfold reusable), and
+`upload-asset-on-release.yml`, which runs **only** on a published release and attaches the zip with
+`gh release upload`. Node is 22.
 
-The one surviving Cypress spec (`checkCompatibility.cy.js`) stubs the REST layer with
-`cy.intercept` against URL-encoded `rest_route` paths, backed by `cypress/fixtures/`. `cy.login()`
-skips the form when already authenticated. It stubs the whole backend and cannot catch a defect in
-the analysis; plan §12 item 9 wants one unstubbed path, which does not exist yet.
+Two workflows were deleted rather than repaired. `upload-artifact-on-push.yml` built and uploaded a
+zip on every push to master. `cypress.yml` ran a single spec that stubs the entire REST layer with
+`cy.intercept`, so it verified React against fixtures and could not catch a defect in the plugin —
+and it uploaded failure screenshots from `tests/cypress/screenshots`, a path that has never
+existed. The specs are still in `cypress/` and still run by hand with `npm test`; plan §12 item 9
+wants one unstubbed path, which does not exist yet.
+
+**`lint.yml` no longer runs `composer fix` before linting** — it did, which meant CI could not fail
+on anything phpcbf repairs, while running a fixer that rewrites string literals.
+
+**The release workflow calls `bin/build-zip.sh`.** Four workflows used to build the plugin four
+different ways, none of them the way a person does it locally. `actions/upload-release-asset`,
+which the release depended on, has been archived by GitHub since 2021; `gh` is on every runner and
+needs no third-party action.
 
 ## Known gaps
 
