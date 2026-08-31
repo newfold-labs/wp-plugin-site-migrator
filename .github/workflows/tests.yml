@@ -109,7 +109,7 @@ jobs:
 
             - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
               with:
-                  node-version: 22
+                  node-version: 24
 
             - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
               with:
@@ -145,53 +145,46 @@ jobs:
         # Unstubbed: a real WordPress, the real plugin, the real REST API. This replaced a Cypress
         # spec that intercepted every route -- it asserted React can render fixtures, and by the
         # end it was clicking element IDs that no longer existed in src/.
-        services:
-            mysql:
-                image: mysql:8.0
-                env:
-                    MYSQL_ROOT_PASSWORD: root
-                ports: ['3306:3306']
-                options: >-
-                    --health-cmd="mysqladmin ping"
-                    --health-interval=10s
-                    --health-timeout=5s
-                    --health-retries=5
+        #
+        # wp-env is started here rather than from inside Playwright's `webServer`, so a container
+        # that fails to come up reads as an environment failure and not as a test failure.
         steps:
             - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
             - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
               with:
-                  node-version: 22
+                  node-version: 24
                   cache: npm
 
             - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1
               with:
                   php-version: '8.3'
-                  extensions: zip, mysqli
+                  extensions: zip
                   coverage: none
 
             - run: npm ci
             - run: composer install --prefer-dist --no-progress
 
             # `build/` is generated and untracked, and the admin page is an empty div without it --
-            # which is precisely what these tests check for, so it has to be built first or they
-            # would fail for the wrong reason.
+            # which is exactly what these tests check for, so it has to exist first or they would
+            # fail for the wrong reason.
             - run: npm run build
 
-            - name: Install WP-CLI
+            # wp-env is an optional dependency: it pulls a native module with prebuilt binaries
+            # only up to Node 25, so it cannot install on newer Node and must not take `npm
+            # install` down with it. Here it is required, so its absence is stated plainly rather
+            # than surfacing later as a connection refused.
+            - name: Check wp-env installed
               run: |
-                  curl -sSLo /tmp/wp-cli.phar https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
-                  chmod +x /tmp/wp-cli.phar
-                  sudo mv /tmp/wp-cli.phar /usr/local/bin/wp
+                  test -d node_modules/@wordpress/env || {
+                    echo "@wordpress/env did not install. The browser suite needs it."
+                    exit 1
+                  }
 
-            - name: Create the database
-              run: mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE nfd_e2e;"
+            - name: Start WordPress
+              run: npx wp-env start
 
             - run: npx playwright install --with-deps chromium
 
             - name: Browser tests
-              env:
-                  NFD_DB_HOST: 127.0.0.1
-                  NFD_DB_USER: root
-                  NFD_DB_PASS: root
               run: npm run test:e2e

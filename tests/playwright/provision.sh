@@ -15,8 +15,8 @@
 set -euo pipefail
 
 SITE="${1:?Give me a directory to build the site in}"
-PORT="${NFD_E2E_PORT:-8781}"
-URL="http://127.0.0.1:$PORT"
+PORT="${NFD_E2E_PORT:-10004}"
+URL="http://localhost:$PORT"
 
 PHP_BIN="${NFD_PHP_BIN:-php}"
 WP_BIN="${NFD_WP_BIN:-$(command -v wp)}"
@@ -42,7 +42,7 @@ wp config create --dbname="$DB_NAME" --dbuser="$DB_USER" --dbpass="$DB_PASS" --d
 	--dbprefix=e2e_ --force --quiet
 wp db reset --yes --quiet
 wp core install --url="$URL" --title="Site Migrator e2e" \
-	--admin_user=admin --admin_password="${NFD_E2E_PASS:-password}" --admin_email=admin@e2e.test \
+	--admin_user="${WP_ADMIN_USERNAME:-admin}" --admin_password="${WP_ADMIN_PASSWORD:-password}" --admin_email=admin@e2e.test \
 	--skip-email --quiet
 
 # Symlinked rather than copied so the test drives the working tree. `bin/verify-zip.sh` is what

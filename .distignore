@@ -17,6 +17,7 @@ src
 tests
 .idea
 .vscode
+playwright.config.mjs
 test-results
 playwright-report
 assets/styles
@@ -28,7 +29,6 @@ assets/styles
 .gitignore
 .huskyrc.json
 .wp-env.json
-playwright.config.js
 phpcs.xml
 phpunit.xml
 phpunit.xml.dist

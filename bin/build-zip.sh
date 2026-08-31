@@ -90,8 +90,9 @@ done
 # And things that must not. Shipping the test suite or the working notes is untidy; shipping
 # node_modules or the .git directory is a different order of mistake.
 forbidden=(
-	".git" ".github" ".vscode" "node_modules" "src" "tests" "cypress"
-	"phpunit.xml.dist" ".phpunit.result.cache" "cypress.config.js" "tailwind.config.js"
+	".git" ".github" ".vscode" "node_modules" "src" "tests"
+	"test-results" "playwright-report" "playwright.config.mjs" ".wp-env.json"
+	"phpunit.xml.dist" ".phpunit.result.cache" "tailwind.config.js"
 	"composer.json" "composer.lock" "CLAUDE.md" "README.md" "assets/styles"
 	"vendor/phpunit" "vendor/squizlabs"
 )

@@ -33,7 +33,9 @@
     "lint:js": "wp-scripts lint-js ./src",
     "lint:js:fix": "wp-scripts lint-js ./src --fix",
     "watch": "watch 'npm run generate:css' ./src ./assets",
-    "test:e2e": "playwright test"
+    "test:e2e": "npm run test:playwright",
+    "test:playwright": "playwright test",
+    "wp-env": "wp-env"
   },
   "dependencies": {
     "@wordpress/api-fetch": "^6.37.0",
@@ -49,5 +51,8 @@
   },
   "overrides": {
     "typescript": "^5.9.0"
+  },
+  "optionalDependencies": {
+    "@wordpress/env": "^11.6.0"
   }
 }

@@ -18,6 +18,8 @@ dist/
 
 # Playwright: the browser suite's own output. The WordPress it drives lives in the system
 # temp directory, not here.
+/tests/playwright/test-results
 /test-results
+/tests/playwright/screenshots
 /playwright-report
-/.playwright
+/.wp-env.override.json

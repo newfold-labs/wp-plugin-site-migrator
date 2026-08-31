@@ -366,7 +366,7 @@ npx wp-scripts lint-js src
 
 composer test                                     # unit suite, no database, well under a second
 composer test:roundtrip                           # two real WordPress installs
-npm run test:e2e                                  # Playwright, against a real WordPress
+npm run test:e2e                                  # Playwright, against a real WordPress (wp-env)
 ```
 
 ### Tests
@@ -383,8 +383,9 @@ merge kept both sides' accounts, that rollback puts it back — and that the sam
 process per step arrives at the same place, because a loop inside one process proves the loop
 works, not that resuming does.
 
-The browser suite is Playwright, and nothing in it is mocked: it provisions a WordPress, symlinks
-this working tree into it, serves it, and clicks. It exists for one failure in particular — the
+The browser suite is Playwright, and nothing in it is mocked. It runs against wp-env by default;
+`NFD_E2E_SERVER=builtin` provisions with WP-CLI and PHP's own server instead, for machines without
+Docker. It exists for one failure in particular — the
 blank admin page — which has been caused by a symlinked plugin directory, by a REST payload
 handing React an object, and by a redirect returning nothing. All three look the same to a user
 and none show up in a unit test.

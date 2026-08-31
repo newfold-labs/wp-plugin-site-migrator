@@ -1,0 +1,7 @@
+[
+  {
+    "name": "newfold-labs/wp-plugin-site-migrator",
+    "testDir": "./tests/playwright/specs",
+    "testMatch": "**/*.spec.js"
+  }
+]

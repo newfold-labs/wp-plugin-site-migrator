@@ -22,7 +22,7 @@ jobs:
 
             - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
               with:
-                  node-version: 22
+                  node-version: 24
                   cache: npm
 
             - uses: shivammathur/setup-php@ccf2c627fe61b1b4d924adfcbd19d661a18133a0 # v2.31.1

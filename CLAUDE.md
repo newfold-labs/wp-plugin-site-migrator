@@ -609,21 +609,34 @@ assignment's. Each would have passed for the wrong reason. The script now assert
 is what it thinks before testing anything with it — and needles are bound through `prepare()`
 rather than pasted into a `LIKE`.
 
-`tests/e2e/` is Playwright, and it is **unstubbed** — plan §12 item 9, which had never existed.
-`playwright.config.js` provisions a real WordPress (wp-cli), symlinks the working tree into it and
-serves it with `php -S`; nothing is intercepted, so every assertion goes through the real REST API.
-Provisioning happens inside the `webServer` command rather than `globalSetup`, because Playwright
-starts the server **first** and a global setup would run too late to build the site it needs.
+`tests/playwright/` follows the layout the other plugins in this org use — `specs/`, `helpers/`
+with an `index.mjs` barrel, `global-setup.js`, `playwright-projects.json`, and
+`playwright.config.mjs` at the root. It is **unstubbed** (plan §12 item 9, which had never
+existed): nothing is intercepted, so every assertion goes through the real REST API.
 
 It exists to catch **the blank admin page** — the failure this plugin keeps having, from a wrong
 `plugin_dir_url()` under a symlink, a REST payload handing React an object where it wanted a
 string, and a resume redirect that returned `null`. All three look identical to a user and none are
-visible to a unit test. Asserting the mount point exists proves nothing (PHP prints it); the test
-asserts React put a child inside it.
+visible to a unit test. `wordpress.waitForApp()` asserts a *child* of `#nfd-sm-app`, because the
+mount point itself is printed by PHP and proves nothing.
 
-The site is built in the system temp directory, **not** in the repo. Built inside it, the plugin
-directory contains the site that contains the plugin: asset URLs come out recursive, and the
-exporter would package a WordPress install into its own fixture.
+**Two ways to serve the site under test, and the reason for both.** CI starts `wp-env` as its own
+workflow step and Playwright connects — a container that fails to come up should read as an
+environment failure, not a test failure. `NFD_E2E_SERVER=builtin` instead provisions with WP-CLI
+and serves with PHP's own server, which needs no Docker *and* ignores `.htaccess` exactly as nginx
+does — the only way `Checker::check_storage_reachable()` is exercised the way it behaves on a real
+nginx host. `PHP_CLI_SERVER_WORKERS` is set because that server is single-threaded by default and
+the admin app fires several REST calls at once.
+
+**`@wordpress/env` is an `optionalDependency`, deliberately.** It pulls `@php-wasm/node`, whose
+native module ships prebuilt binaries only up to Node 25 — on Node 26+ it cannot install, and as a
+hard dependency it would take the whole `npm install` down with it. Optional means npm warns and
+carries on. The CI job asserts it is present before using it, so its absence is stated plainly
+rather than surfacing later as a connection refused.
+
+**The site under test is built in the system temp directory, not in the repo.** Built inside it,
+the plugin directory contains the site that contains the plugin: asset URLs come out recursive, and
+the exporter would package a WordPress install into its own fixture.
 
 **A test that cannot fail is not a test.** Both suites have been checked by breaking the code they
 cover — an exit-code constant, a manifest key, the escaped-slash replacement pair, and the admin
@@ -632,9 +645,9 @@ which is how the block fixture came to exist.
 
 **Four workflows, and exactly one of them publishes anything.** `lint.yml` (phpcs), `tests.yml`
 (PHPUnit on 7.4 and 8.3, the round trip, a `package` job that builds the zip and installs it into a
-real WordPress, and the browser suite), `ai-code-review.yml` (a Newfold reusable), and
+real WordPress, and the browser suite under wp-env), `ai-code-review.yml` (a Newfold reusable), and
 `upload-asset-on-release.yml`, which runs **only** on a published release and attaches the zip with
-`gh release upload`. Node is 22.
+`gh release upload`. Node is 24, which is what GitHub Actions recommends.
 
 Two workflows were deleted rather than repaired. `upload-artifact-on-push.yml` built and uploaded a
 zip on every push to master. `cypress.yml` uploaded failure screenshots from
