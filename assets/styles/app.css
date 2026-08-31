@@ -61,17 +61,17 @@
        own page, so this is where the product names itself; it is not a place to compete with the
        heading that says what is actually happening. */
     .nfd-sm-masthead {
-        @apply flex flex-wrap items-center gap-3 max-w-[900px] pt-1.5
+        @apply flex flex-wrap items-center gap-4 max-w-[900px] pt-2
     }
-    .nfd-sm-mark { @apply block h-9 w-9 shrink-0 text-ink }
-    .nfd-sm-brand { @apply flex flex-col gap-[5px] mr-auto }
+    .nfd-sm-mark { @apply block h-14 w-14 shrink-0 text-ink }
+    .nfd-sm-brand { @apply flex flex-col gap-2 mr-auto }
     .nfd-sm-wordmark {
-        @apply m-0 p-0 text-[15px] font-semibold leading-none tracking-[-.012em] text-ink
+        @apply m-0 p-0 text-[28px] font-bold leading-none tracking-[-.02em] text-ink
     }
-    .nfd-sm-tagline { @apply m-0 p-0 text-[12px] leading-none text-muted }
+    .nfd-sm-tagline { @apply m-0 p-0 text-[14px] leading-none text-muted }
     .nfd-sm-version {
-        @apply font-mono text-[11px] leading-none text-muted bg-sunk border border-hair
-        rounded-full px-2.5 py-[7px]
+        @apply font-mono text-[12px] leading-none text-muted bg-sunk border border-hair
+        rounded-full px-3 py-2
     }
 
     /* The panel.
