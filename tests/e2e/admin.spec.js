@@ -10,7 +10,7 @@
  * React an object where it expected a string, and by a resume redirect that returned `null`. All
  * three look identical to a user and none are visible to a unit test.
  *
- * @package NewfoldLabs\WP\SiteMigrator
+ * @package
  */
 
 const { test, expect } = require( '@playwright/test' );
@@ -26,7 +26,12 @@ const PLUGIN_PAGE = '/wp-admin/admin.php?page=nfd-site-migrator';
 test.beforeEach( async ( { page } ) => {
 	await page.goto( '/wp-login.php' );
 
-	if ( await page.locator( '#user_login' ).isVisible().catch( () => false ) ) {
+	if (
+		await page
+			.locator( '#user_login' )
+			.isVisible()
+			.catch( () => false )
+	) {
 		await page.fill( '#user_login', 'admin' );
 		await page.fill( '#user_pass', process.env.NFD_E2E_PASS || 'password' );
 		await page.click( '#wp-submit' );
@@ -95,14 +100,21 @@ test.describe( 'the admin app', () => {
 	} ) => {
 		await page.goto( PLUGIN_PAGE );
 
-		// Nothing is intercepted, so this text only appears if the SPA called the REST API, got
-		// a report back, and rendered it. On this install the storage check genuinely blocks --
-		// PHP's built-in server ignores .htaccess exactly as nginx does -- so the app has to be
-		// able to render a refusal as well as a pass.
-		await expect(
-			page.getByText(
-				/cannot be exported yet|Send this site somewhere else/
-			)
-		).toBeVisible( { timeout: 20_000 } );
+		// Nothing is intercepted, so this only appears if the SPA called the REST API, got a
+		// report back, and rendered it.
+		//
+		// The expected state here is a *refusal*, and deterministically so: PHP's built-in server
+		// ignores .htaccess exactly as nginx does, so `Checker::check_storage_reachable()` fetches
+		// the uploads directory, gets its own silence file back, and blocks. That makes this the
+		// one place the nginx-shaped exposure check is exercised end to end, and it means the app
+		// has to render a refusal as well as a pass.
+		//
+		// Asserted on the note itself rather than on "either this or the start button": both are
+		// on the page once preflight resolves, so a looser matcher passed only by winning a race
+		// against the render and failed the moment the server got faster.
+		await expect( page.locator( '.nfd-sm-note--stop' ) ).toContainText(
+			'cannot be exported yet',
+			{ timeout: 20_000 }
+		);
 	} );
 } );
