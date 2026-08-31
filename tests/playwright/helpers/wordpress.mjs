@@ -8,11 +8,15 @@
  * The mount point existing proves nothing — it is printed by PHP, and every blank-page bug this
  * plugin has had left it present and empty. What matters is a child inside it.
  *
+ * Generous by default: a container-backed WordPress on a cold cache is meaningfully slower to
+ * first paint than PHP's built-in server, and a timeout tuned to the quick one shows up as
+ * flakiness rather than as a failure anybody can act on.
+ *
  * @param {import('@playwright/test').Page} page    Playwright page.
  * @param {number}                          timeout Milliseconds.
  * @return {import('@playwright/test').Locator} The app root.
  */
-async function waitForApp( page, timeout = 20000 ) {
+async function waitForApp( page, timeout = 30000 ) {
 	const app = page.locator( '#nfd-sm-app' );
 
 	await app.waitFor( { state: 'attached', timeout } );

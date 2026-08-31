@@ -14,7 +14,7 @@ const __dirname = dirname( __filename );
 const wpEnv = existsSync( './.wp-env.json' )
 	? JSON.parse( readFileSync( './.wp-env.json', 'utf8' ) )
 	: {};
-const port = process.env.NFD_E2E_PORT || wpEnv.port || 10004;
+const port = process.env.NFD_E2E_PORT || wpEnv.port || 8888;
 
 const projects = JSON.parse(
 	readFileSync( resolve( __dirname, './tests/playwright/playwright-projects.json' ), 'utf8' )

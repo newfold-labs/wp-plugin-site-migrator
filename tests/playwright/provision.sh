@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SITE="${1:?Give me a directory to build the site in}"
-PORT="${NFD_E2E_PORT:-10004}"
+PORT="${NFD_E2E_PORT:-8888}"
 URL="http://localhost:$PORT"
 
 PHP_BIN="${NFD_PHP_BIN:-php}"

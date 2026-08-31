@@ -15,7 +15,7 @@ set -euo pipefail
 
 HERE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SITE="${NFD_E2E_SITE:-${TMPDIR:-/tmp}/nfd-sm-e2e/site}"
-PORT="${NFD_E2E_PORT:-10004}"
+PORT="${NFD_E2E_PORT:-8888}"
 
 bash "$HERE/provision.sh" "$SITE" >&2
 

@@ -620,13 +620,22 @@ string, and a resume redirect that returned `null`. All three look identical to 
 visible to a unit test. `wordpress.waitForApp()` asserts a *child* of `#nfd-sm-app`, because the
 mount point itself is printed by PHP and proves nothing.
 
-**Two ways to serve the site under test, and the reason for both.** CI starts `wp-env` as its own
-workflow step and Playwright connects — a container that fails to come up should read as an
-environment failure, not a test failure. `NFD_E2E_SERVER=builtin` instead provisions with WP-CLI
-and serves with PHP's own server, which needs no Docker *and* ignores `.htaccess` exactly as nginx
-does — the only way `Checker::check_storage_reachable()` is exercised the way it behaves on a real
-nginx host. `PHP_CLI_SERVER_WORKERS` is set because that server is single-threaded by default and
-the admin app fires several REST calls at once.
+**Two ways to serve the site under test, and running both is what makes the suite honest.** CI
+starts `wp-env` as its own workflow step and Playwright connects — a container that fails to come
+up should read as an environment failure, not a test failure. `NFD_E2E_SERVER=builtin` instead
+provisions with WP-CLI and serves with PHP's own server, which needs no Docker *and* ignores
+`.htaccess` exactly as nginx does. `PHP_CLI_SERVER_WORKERS` is set because that server is
+single-threaded by default and the admin app fires several REST calls at once.
+
+**The two servers disagree, on purpose, and a test must not.** Under wp-env's Apache the
+`.htaccess` the plugin writes works and `check_storage_reachable()` **passes**; under `php -S` it
+is ignored and the same check **blocks**. An assertion written against the refusal passed on one
+server and failed on the other — a test measuring its environment rather than the code. Assert on
+`.nfd-sm-gates`, which renders whenever a report arrived, not on any particular verdict.
+
+**wp-env needs Node ≤ 25 and ports clear of LocalWP.** `.wp-env.json` uses 8888/8889 because
+LocalWP occupies 10000+ on a developer machine and `wp-env start` dies on the collision. The
+Node ceiling is the `@wordpress/env` note below.
 
 **`@wordpress/env` is an `optionalDependency`, deliberately.** It pulls `@php-wasm/node`, whose
 native module ships prebuilt binaries only up to Node 25 — on Node 26+ it cannot install, and as a
