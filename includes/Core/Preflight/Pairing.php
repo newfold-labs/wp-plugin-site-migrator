@@ -169,6 +169,72 @@ class Pairing {
 	}
 
 	/**
+	 * Is the destination still answering at all?
+	 *
+	 * Reading its *profile* needs a code, and a code lives fifteen minutes on the other site, so
+	 * a source that paired days ago cannot re-read the facts it is comparing against. It can
+	 * still ask whether anything is there — and it should, because the alternative is what the
+	 * screen used to do: recompute a verdict from remembered facts and present it as a fresh
+	 * answer about a site that has since moved, expired its certificate, or gone off the air.
+	 *
+	 * The probe is `pairing/profile` with **no code**, which the endpoint short-circuits before
+	 * `redeem()` — so it costs the destination nothing and, importantly, does not spend one of
+	 * the ten attempts that protect a code somebody is about to use for real.
+	 *
+	 * What comes back is narrower than it looks, and the caller must not overstate it. A 404 is
+	 * what that endpoint gives *everyone* without a code, deliberately, so an answer proves only
+	 * that something served HTTP at that address — not that it is still the destination, and not
+	 * that this plugin is still active there. A transport error, on the other hand, is real
+	 * evidence: this site tried to reach that one and could not.
+	 *
+	 * @param string $url Destination site URL.
+	 *
+	 * @return array `reachable`, plus `error` and `status` where they apply.
+	 */
+	public static function reach( $url ) {
+		$url = \esc_url_raw( \trim( (string) $url ) );
+
+		if ( '' === $url ) {
+			return array(
+				'reachable' => false,
+				'error'     => 'There is no destination address to check.',
+			);
+		}
+
+		$error = 'The destination did not answer.';
+
+		// Both bases, for the reason `endpoints()` gives: a site on plain permalinks answers
+		// only the query form, and calling the other one unreachable would be this site's
+		// mistake reported as the other site's fault.
+		foreach ( self::endpoints( $url ) as $endpoint ) {
+			$response = \wp_remote_get(
+				$endpoint,
+				array(
+					'timeout'   => 15,
+					'sslverify' => true,
+					'headers'   => array( 'X-NFD-SM-From' => \get_site_url() ),
+				)
+			);
+
+			if ( \is_wp_error( $response ) ) {
+				$error = $response->get_error_message();
+
+				continue;
+			}
+
+			return array(
+				'reachable' => true,
+				'status'    => (int) \wp_remote_retrieve_response_code( $response ),
+			);
+		}
+
+		return array(
+			'reachable' => false,
+			'error'     => $error,
+		);
+	}
+
+	/**
 	 * Where the destination's REST API might be, best guess first.
 	 *
 	 * A site with pretty permalinks serves both forms; a site without them serves only

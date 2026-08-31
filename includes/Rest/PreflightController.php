@@ -69,6 +69,21 @@ class PreflightController extends Controller {
 				),
 			)
 		);
+
+		// Separate from `/preflight/destination` on purpose. That one is read on every arrival
+		// at the compatibility screen and has to be instant; this one crosses the network to
+		// another server, so it is what the button does, not what the page load does.
+		\register_rest_route(
+			$this->namespace,
+			'/preflight/destination/reach',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'reach_destination' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
 	}
 
 	/**
@@ -109,6 +124,40 @@ class PreflightController extends Controller {
 					'url'        => $saved['url'],
 					'fetched_at' => (int) $saved['fetched_at'],
 				)
+			)
+		);
+	}
+
+	/**
+	 * Is the paired destination still there?
+	 *
+	 * The comparison this screen shows is recomputed from facts the destination reported once,
+	 * and re-reading those facts needs a fresh pairing code. Nothing in that round trip touches
+	 * the network, so a destination that has moved, expired a certificate or been taken down
+	 * produced a clean verdict and no hint that anything was wrong.
+	 *
+	 * `Pairing::reach()` says only whether anything answered — see its note on how little a 200
+	 * or a 404 proves — which is why this endpoint reports and does not decide. An unreachable
+	 * destination does not block packaging: a package can be downloaded and carried by hand, and
+	 * it is the *direct transfer* that needs one site to be able to open a connection to the
+	 * other.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function reach_destination() {
+		$saved = Destination::load();
+
+		if ( null === $saved ) {
+			return \rest_ensure_response( array( 'saved' => false ) );
+		}
+
+		return \rest_ensure_response(
+			\array_merge(
+				array(
+					'saved' => true,
+					'url'   => $saved['url'],
+				),
+				Pairing::reach( $saved['url'] )
 			)
 		);
 	}

@@ -37,7 +37,7 @@ const introFor = ( result, live ) => {
 	return sprintf(
 		/* translators: 1: destination site URL, 2: how long ago it was read. */
 		__(
-			'Compared against what %1$s reported %2$s. Checking again re-tests this site against that reading; reading the destination again needs a new pairing code.',
+			'Compared against what %1$s reported %2$s. Checking again re-tests this site against that reading and confirms the destination is still answering; re-reading its facts needs a new pairing code.',
 			'nfd-site-migrator'
 		),
 		result.destination?.site_url || '',
@@ -65,6 +65,7 @@ const introFor = ( result, live ) => {
 export const Compatibility = ( { result, onResult, request } ) => {
 	const [ busy, setBusy ] = useState( false );
 	const [ looked, setLooked ] = useState( false );
+	const [ unreachable, setUnreachable ] = useState( '' );
 	const navigate = useNavigate();
 
 	// `onResult` is rebuilt on every render of the router, so the effect below cannot rely on
@@ -131,23 +132,46 @@ export const Compatibility = ( { result, onResult, request } ) => {
 
 	const recheck = async () => {
 		setBusy( true );
+		setUnreachable( '' );
 
-		let fresh = canReread
-			? await api.compare( request )
-			: await api.destination.get();
+		if ( canReread ) {
+			const fresh = await api.compare( request );
 
-		// The code lives fifteen minutes and this screen can outlive it. Falling back to the
-		// reading we already have beats telling somebody their code is wrong when the only
-		// thing that changed is the clock — and `saved` on the result is what then makes the
-		// line under the heading stop promising a live read.
-		if ( fresh.failed || ! fresh.ok ) {
-			fresh = await api.destination.get();
+			// An unreachable destination is the answer to the question, not a reason to go
+			// looking for a different one. The fallback below is for a code that has expired;
+			// taking it on *every* failure is what made a site that had gone off the air
+			// produce a clean verdict, recomputed from facts nobody had been able to re-read.
+			if ( ! fresh.failed && fresh.unreachable ) {
+				setUnreachable( fresh.error );
+				setBusy( false );
+				return;
+			}
+
+			if ( ! fresh.failed && fresh.ok ) {
+				setBusy( false );
+				onResult( fresh, request );
+				return;
+			}
 		}
+
+		// Either there was no code to re-read with, or the one we had is past its fifteen
+		// minutes. Re-test this site against the reading we already have — which is what
+		// somebody who has just fixed something *here* is asking for — and, separately, ask
+		// whether the other site is still answering. Without that second question this button
+		// cannot fail, and a button that cannot fail is not a check.
+		const [ stored, reach ] = await Promise.all( [
+			api.destination.get(),
+			api.destination.reach(),
+		] );
 
 		setBusy( false );
 
-		if ( ! fresh.failed && fresh.ok ) {
-			onResult( fresh, fresh.saved ? undefined : request );
+		if ( ! reach.failed && reach.saved && ! reach.reachable ) {
+			setUnreachable( reach.error );
+		}
+
+		if ( ! stored.failed && stored.ok ) {
+			onResult( stored, stored.saved ? undefined : request );
 		}
 	};
 
@@ -172,6 +196,30 @@ export const Compatibility = ( { result, onResult, request } ) => {
 			}
 			intro={ introFor( result, canReread ) }
 		>
+			{ unreachable && (
+				<div className="nfd-sm-note nfd-sm-note--stop">
+					<strong>
+						{ __(
+							'Could not reach the destination',
+							'nfd-site-migrator'
+						) }
+					</strong>
+					<p>{ unreachable }</p>
+					<p>
+						{ __(
+							'Everything below is still what the destination reported when it was last read, not a fresh answer. It can be right and the site still be unavailable.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<p>
+						{ __(
+							'You can carry on and build the package — a package can be downloaded from here and uploaded there by hand. It is the direct transfer that needs this site to be able to open a connection to that one.',
+							'nfd-site-migrator'
+						) }
+					</p>
+				</div>
+			) }
+
 			<Gates report={ report } showPass={ true } summary={ true } />
 
 			<div className="nfd-sm-actions">

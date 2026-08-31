@@ -93,6 +93,28 @@ class Fixture {
 	public static $filters = array();
 
 	/**
+	 * What the next `wp_remote_get()` calls return, in order.
+	 *
+	 * A queue rather than one value, because the calls that matter here try more than one URL:
+	 * `Pairing` asks the `?rest_route=` form and then the `/wp-json/` one, and "the first
+	 * failed, the second answered" is a different outcome from "both failed".
+	 *
+	 * @var array
+	 */
+	public static $http = array();
+
+	/**
+	 * Every `wp_remote_get()` call, as `url` and `args`.
+	 *
+	 * The arguments are kept because what a request does *not* carry is sometimes the point --
+	 * a reachability probe that sent a pairing header would spend an attempt on the code the
+	 * user is about to use.
+	 *
+	 * @var array
+	 */
+	public static $requests = array();
+
+	/**
 	 * Start a test with nothing carried over from the last one.
 	 *
 	 * @return string The temporary uploads directory.
@@ -102,6 +124,8 @@ class Fixture {
 		self::$transients = array();
 		self::$site_url   = 'http://source.test';
 		self::$filters    = array();
+		self::$http       = array();
+		self::$requests   = array();
 		self::$uploads    = \sys_get_temp_dir() . '/nfd-sm-tests/' . \uniqid( 'u', true );
 
 		\wp_mkdir_p( self::$uploads );
@@ -431,6 +455,41 @@ class WP_Theme_Stub {
 
 function wp_get_theme( $stylesheet = '' ) {
 	return new WP_Theme_Stub();
+}
+
+/**
+ * Outbound HTTP. Answers come from `Fixture::$http`, and an empty queue is a connection failure
+ * -- which makes "the destination is not there" the default a test has to opt out of rather than
+ * one it has to remember to arrange.
+ *
+ * @param string $url  Requested URL.
+ * @param array  $args Request arguments.
+ *
+ * @return array|WP_Error
+ */
+function wp_remote_get( $url, $args = array() ) {
+	Fixture::$requests[] = array(
+		'url'  => $url,
+		'args' => $args,
+	);
+
+	if ( empty( Fixture::$http ) ) {
+		return new WP_Error( 'http_request_failed', 'cURL error 7: Failed to connect' );
+	}
+
+	return \array_shift( Fixture::$http );
+}
+
+function wp_remote_retrieve_response_code( $response ) {
+	return isset( $response['response']['code'] ) ? $response['response']['code'] : 0;
+}
+
+function wp_remote_retrieve_header( $response, $name ) {
+	return isset( $response['headers'][ $name ] ) ? $response['headers'][ $name ] : '';
+}
+
+function wp_remote_retrieve_body( $response ) {
+	return isset( $response['body'] ) ? $response['body'] : '';
 }
 
 $GLOBALS['wpdb']          = new WPDB_Stub();

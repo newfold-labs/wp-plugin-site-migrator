@@ -173,6 +173,9 @@ export const api = {
 	// pairing code expires in fifteen minutes and lives on the other site.
 	destination: {
 		get: () => call( { path: `${ BASE }/preflight/destination` } ),
+		// Whether the other site still answers. A separate call from `get`, because it crosses
+		// the network and `get` runs on every arrival at the screen.
+		reach: () => call( { path: `${ BASE }/preflight/destination/reach` } ),
 		forget: () =>
 			call( {
 				path: `${ BASE }/preflight/destination`,

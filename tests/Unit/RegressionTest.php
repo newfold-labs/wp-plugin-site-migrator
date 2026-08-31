@@ -16,6 +16,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\SearchReplace;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use PHPUnit\Framework\TestCase;
 
 class RegressionTest extends TestCase {
@@ -180,5 +181,78 @@ class RegressionTest extends TestCase {
 		);
 
 		$this->assertSame( array(), $pairs );
+	}
+
+	/**
+	 * A destination that has gone away is reported, not papered over.
+	 *
+	 * Found live. The compatibility screen recomputes its verdict from facts the destination
+	 * reported once, because a verdict about two sites goes stale and one of the two is this
+	 * one. Nothing in that round trip touches the network -- so a source paired days ago, whose
+	 * destination had since gone off the air, clicked Check again and got a clean "Ready to
+	 * migrate" with no hint that the other end was unavailable.
+	 */
+	public function test_reach_reports_a_destination_that_does_not_answer() {
+		$result = Pairing::reach( 'http://gone.test' );
+
+		$this->assertFalse( $result['reachable'] );
+		$this->assertNotSame( '', $result['error'] );
+	}
+
+	/**
+	 * A response -- any response -- means something is there.
+	 *
+	 * 404 is what `pairing/profile` gives everybody without a code, deliberately, so that the
+	 * endpoint is not an oracle for "a WordPress with this plugin lives here". It is still the
+	 * answer this probe wants: the question is whether the address is serving, not whether we
+	 * are allowed in.
+	 */
+	public function test_reach_counts_a_refusal_as_an_answer() {
+		\Fixture::$http = array( array( 'response' => array( 'code' => 404 ) ) );
+
+		$result = Pairing::reach( 'http://alive.test' );
+
+		$this->assertTrue( $result['reachable'] );
+		$this->assertSame( 404, $result['status'] );
+	}
+
+	/**
+	 * One base failing is not the destination failing.
+	 *
+	 * `?rest_route=` is tried first and `/wp-json/` second, for the reason finding 3.17 records.
+	 * Reporting the first transport error would call a site unreachable over this site's own
+	 * choice of URL.
+	 */
+	public function test_reach_tries_the_second_base_before_giving_up() {
+		\Fixture::$http = array(
+			new \WP_Error( 'http_request_failed', 'nope' ),
+			array( 'response' => array( 'code' => 200 ) ),
+		);
+
+		$result = Pairing::reach( 'http://alive.test' );
+
+		$this->assertTrue( $result['reachable'] );
+		$this->assertCount( 2, \Fixture::$requests );
+		$this->assertStringContainsString( '?rest_route=', \Fixture::$requests[0]['url'] );
+		$this->assertStringContainsString( '/wp-json/', \Fixture::$requests[1]['url'] );
+	}
+
+	/**
+	 * The probe carries no code, and that is not an oversight.
+	 *
+	 * `PairingController::profile()` short-circuits an empty code before `Pairing::redeem()`, so
+	 * a probe costs the destination nothing. Sending a junk code instead would spend one of the
+	 * ten attempts in the rate-limit window -- protecting a code the user is very likely about
+	 * to type for real.
+	 */
+	public function test_reach_does_not_spend_an_attempt_on_the_destination() {
+		Pairing::reach( 'http://alive.test' );
+
+		$this->assertNotEmpty( \Fixture::$requests );
+
+		foreach ( \Fixture::$requests as $sent ) {
+			$this->assertArrayNotHasKey( 'X-NFD-SM-Pairing', $sent['args']['headers'] );
+			$this->assertTrue( $sent['args']['sslverify'] );
+		}
 	}
 }

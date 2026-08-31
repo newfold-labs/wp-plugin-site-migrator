@@ -187,6 +187,19 @@ from the other site. It stores the destination's **facts, never the verdict** �
 recomputed on every read, because half of it is this site and this site changes. The code itself
 is deliberately not stored.
 
+**Which is why *Check again* also probes.** Recomputing from remembered facts never touches the
+network, so on a source that paired days ago the button could not fail — a destination that had
+gone off the air still produced "Ready to migrate". `Pairing::reach()` asks `pairing/profile` with
+**no code**, which `PairingController::profile()` short-circuits before `redeem()`, so the probe
+costs the destination nothing and does not spend one of the ten attempts protecting a code
+somebody is about to type. What it proves is narrow and must not be overstated: a 404 is what that
+endpoint gives everyone, so an answer means only that *something* served HTTP there. A transport
+error is the real signal. It is reported and does not block — a package can still be downloaded
+here and uploaded there by hand; it is the *direct transfer* that needs one site to open a
+connection to the other. The screen's error state was the other half of the bug: `recheck()` fell
+back to the stored reading on **every** failure, a fallback written for an expired code, and
+rendered nothing at all when a call failed.
+
 **Package** (`Core/Package/`): `PackageWriter` owns the directory layout and nothing else should
 build paths inside a package by hand. `Manifest` is written last, so its presence is what makes a
 package complete. `PackageReader::verify()` checks sizes and SHA-256 against it. `Checkpoint` is
