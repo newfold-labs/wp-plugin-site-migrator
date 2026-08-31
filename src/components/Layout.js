@@ -1,10 +1,15 @@
 import { __ } from '@wordpress/i18n';
+import { Masthead } from './Masthead';
 import { Steps } from './Steps';
 
 /**
  * Frame shared by every screen.
  *
- * One panel, three bands: the safety strip, the stepper, and the body. The safety line is the
+ * The masthead above it names the product, because wp-admin does not: every screen's own `<h1>`
+ * describes the step rather than the plugin, and the sidebar entry scrolls away.
+ *
+ * The panel itself is three bands: the safety strip, the stepper, and the body. The safety line is
+ * the
  * point of the first one. During a migration the only question a user really has is whether
  * anything has been broken yet, so the interface answers it permanently instead of making them
  * infer it from a progress bar.
@@ -41,60 +46,68 @@ export const Layout = ( {
 	stepsLocked = false,
 	children,
 } ) => (
-	<div className="nfd-sm-shell">
-		<div
-			className={ [
-				'nfd-sm-safety',
-				`nfd-sm-safety--${ safety }`,
-				working ? 'nfd-sm-safety--working' : '',
-			]
-				.filter( Boolean )
-				.join( ' ' ) }
-		>
-			<strong>
-				{ safetyText ||
-					( 'safe' === safety
-						? __(
-								'This site stays online and unchanged',
-								'nfd-site-migrator'
-						  )
-						: __(
-								'This site has been changed',
-								'nfd-site-migrator'
-						  ) ) }
-			</strong>
-			{ 'safe' === safety && (
-				<span>
-					{ safetyDetail ||
-						__(
-							'Exporting only reads. Nothing here is modified.',
-							'nfd-site-migrator'
-						) }
-				</span>
-			) }
-		</div>
+	<>
+		<Masthead />
 
-		{ steps && (
-			<Steps steps={ steps } current={ step } locked={ stepsLocked } />
-		) }
-
-		<div className="nfd-sm-body">
-			<div className="nfd-sm-head">
-				{ eyebrow && <p className="nfd-sm-eyebrow">{ eyebrow }</p> }
-				{ badge ? (
-					<div className="nfd-sm-headline">
-						<h1>{ title }</h1>
-						{ badge }
-					</div>
-				) : (
-					<div className="nfd-sm-headline">
-						<h1>{ title }</h1>
-					</div>
+		<div className="nfd-sm-shell">
+			<div
+				className={ [
+					'nfd-sm-safety',
+					`nfd-sm-safety--${ safety }`,
+					working ? 'nfd-sm-safety--working' : '',
+				]
+					.filter( Boolean )
+					.join( ' ' ) }
+			>
+				<strong>
+					{ safetyText ||
+						( 'safe' === safety
+							? __(
+									'This site stays online and unchanged',
+									'nfd-site-migrator'
+							  )
+							: __(
+									'This site has been changed',
+									'nfd-site-migrator'
+							  ) ) }
+				</strong>
+				{ 'safe' === safety && (
+					<span>
+						{ safetyDetail ||
+							__(
+								'Exporting only reads. Nothing here is modified.',
+								'nfd-site-migrator'
+							) }
+					</span>
 				) }
-				{ intro && <p className="nfd-sm-intro">{ intro }</p> }
 			</div>
 
-			{ children }
+			{ steps && (
+				<Steps
+					steps={ steps }
+					current={ step }
+					locked={ stepsLocked }
+				/>
+			) }
+
+			<div className="nfd-sm-body">
+				<div className="nfd-sm-head">
+					{ eyebrow && <p className="nfd-sm-eyebrow">{ eyebrow }</p> }
+					{ badge ? (
+						<div className="nfd-sm-headline">
+							<h1>{ title }</h1>
+							{ badge }
+						</div>
+					) : (
+						<div className="nfd-sm-headline">
+							<h1>{ title }</h1>
+						</div>
+					) }
+					{ intro && <p className="nfd-sm-intro">{ intro }</p> }
+				</div>
+
+				{ children }
+			</div>
 		</div>
-	</div>
+	</>
 );

@@ -29,8 +29,8 @@ final class WP_Admin {
 	 */
 	public static function register_admin_menu() {
 		\add_menu_page(
-			__( 'Site Migrator', 'nfd_site_migrator' ),
-			__( 'Site Migrator', 'nfd_site_migrator' ),
+			__( 'Site Migrator', 'nfd-site-migrator' ),
+			__( 'Site Migrator', 'nfd-site-migrator' ),
 			'manage_options',
 			'nfd-site-migrator',
 			array( __CLASS__, 'render_page' ),
@@ -83,6 +83,10 @@ final class WP_Admin {
 						\untrailingslashit( \home_url() ) . '/?rest_route=/nfd-site-migrator/v1/'
 					),
 					'nonce'        => \wp_create_nonce( 'wp_rest' ),
+					// Shown in the masthead. The same number the manifest stamps into a
+					// package, so what a user reads on screen is what a destination reads
+					// out of the package they hand it.
+					'version'      => \defined( 'NFD_SM_VERSION' ) ? NFD_SM_VERSION : '',
 				)
 			);
 

@@ -42,6 +42,19 @@ test.describe( 'Admin app', () => {
 		await expect( page.getByText( 'Receive a site here' ) ).toBeVisible();
 	} );
 
+	test( 'names itself above the screen heading', async ( { page } ) => {
+		await wordpress.waitForApp( page );
+
+		// wp-admin gives a plugin no title on its own page, so the masthead is the only place
+		// the product is named -- and it is rendered by React, which means it disappears with
+		// exactly the failures this file exists to catch.
+		await expect( page.locator( '.nfd-sm-masthead' ) ).toBeVisible();
+		await expect( page.locator( '.nfd-sm-wordmark' ) ).toHaveText(
+			'Site Migrator'
+		);
+		await expect( page.locator( '.nfd-sm-mark' ) ).toBeVisible();
+	} );
+
 	test( 'loads its own stylesheet, script and fonts', async ( { page } ) => {
 		const failed = wordpress.watchPluginAssets( page );
 
