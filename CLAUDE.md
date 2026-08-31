@@ -523,9 +523,20 @@ quieter than the heading beneath it — 15px against 31px, a `<p>` rather than a
 mark is an inline SVG in the same file rather than an image, for the reason the fonts are bundled
 and because only an inline one inherits `currentColor`; the glyph is a package with motion lines
 behind it, and the first draft — a container with an arrow leaving through its open side — was
-redrawn because that is the standard sign-out icon. The **menu** icon stays `dashicons-migrate`: a
-data-URI SVG there does not recolour with the menu's hover and current states, and a mark that
-cannot follow them looks broken rather than branded.
+redrawn because that is the standard sign-out icon. The **menu** icon is the same mark, and it is drawn as a
+*knockout* — the tile painted, the glyph a hole through it. WordPress applies its hover and
+current-item opacity to `<img>` menu icons only, and a base64 SVG becomes a CSS `background-image`,
+so the icon gets no state change from WordPress whatever colour it is drawn in; a hole shows the
+menu item's own background, which does change. `nfd_sm_menu_icon()` builds it, at `#a7aaad` so it
+sits at the weight of the dashicons around it. The two forms cannot be generated from one another
+— the masthead's has a white glyph *on* the tile — so `MarkTest` asserts the path data in
+`functions.php` and `Masthead.js` still match. Two hand-maintained copies of a logo drift, and the
+one nobody looks at is the one in the sidebar.
+
+**`WP_Admin::register_assets()` runs on this plugin's page only**, checked against the hook suffix
+`add_menu_page()` returned. `admin_enqueue_scripts` fires on every screen in wp-admin and this had
+no check, so 140KB of bundle and stylesheet plus four woff2 files loaded on somebody's post editor,
+for a mount point that is only ever printed here.
 
 **The fonts are bundled, never hot-linked** — a plugin on wp.org may not call a third party to
 draw its own admin screen. `assets/fonts/` holds four variable woff2 files (Public Sans and

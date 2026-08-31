@@ -82,3 +82,24 @@ test.describe( 'Admin app', () => {
 		await expect( page.locator( '.nfd-sm-gate' ).first() ).toBeVisible();
 	} );
 } );
+
+test.describe( 'Everywhere else', () => {
+	test( 'keeps its assets off other admin screens', async ( { page } ) => {
+		// `admin_enqueue_scripts` fires on every screen in wp-admin, and `register_assets()`
+		// had no page check -- so the bundle, the stylesheet and four woff2 files loaded on
+		// somebody's post editor, on every request, for a mount point that is only ever
+		// printed on this plugin's own page.
+		const loaded = [];
+
+		page.on( 'request', ( request ) => {
+			if ( request.url().includes( '/build/nfd-site-migrator' ) ) {
+				loaded.push( request.url() );
+			}
+		} );
+
+		await auth.navigateToAdminPage( page, 'options-general.php' );
+		await expect( page.locator( '#wpbody-content' ) ).toBeVisible();
+
+		expect( loaded, 'plugin assets loaded off its own page' ).toEqual( [] );
+	} );
+} );

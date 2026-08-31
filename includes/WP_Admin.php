@@ -15,6 +15,13 @@ final class WP_Admin {
 	public static $slug = 'nfd-site-migrator';
 
 	/**
+	 * The hook suffix WordPress gave this plugin's page.
+	 *
+	 * @var string
+	 */
+	protected static $hook = '';
+
+	/**
 	 * Tap WordPress Hooks
 	 *
 	 * @return void
@@ -28,20 +35,32 @@ final class WP_Admin {
 	 * Register the admin menu for site migrator
 	 */
 	public static function register_admin_menu() {
-		\add_menu_page(
+		self::$hook = (string) \add_menu_page(
 			__( 'Site Migrator', 'nfd-site-migrator' ),
 			__( 'Site Migrator', 'nfd-site-migrator' ),
 			'manage_options',
 			'nfd-site-migrator',
 			array( __CLASS__, 'render_page' ),
-			'dashicons-migrate'
+			\nfd_sm_menu_icon()
 		);
 	}
 
 	/**
-	 * Register built assets with WordPress
+	 * Register built assets with WordPress.
+	 *
+	 * Only on this plugin's own page. `admin_enqueue_scripts` fires on every screen in wp-admin,
+	 * and this used to enqueue on all of them -- 140KB of bundle and stylesheet, plus four woff2
+	 * files, on somebody's post editor. The mount point is only ever printed here.
+	 *
+	 * @param string $hook Current admin page's hook suffix.
+	 *
+	 * @return void
 	 */
-	public static function register_assets() {
+	public static function register_assets( $hook = '' ) {
+		if ( '' !== self::$hook && $hook !== self::$hook ) {
+			return;
+		}
+
 		$asset_file = NFD_SM_PLUGIN_BUILD_DIR . '/nfd-site-migrator.asset.php';
 
 		if ( is_readable( $asset_file ) ) {

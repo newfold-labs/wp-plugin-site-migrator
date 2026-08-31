@@ -61,7 +61,7 @@
        own page, so this is where the product names itself; it is not a place to compete with the
        heading that says what is actually happening. */
     .nfd-sm-masthead {
-        @apply flex flex-wrap items-center gap-4 max-w-[900px] pt-2
+        @apply flex flex-wrap items-center gap-4 max-w-[900px] pt-7 pb-2
     }
     .nfd-sm-mark { @apply block h-14 w-14 shrink-0 text-ink }
     .nfd-sm-brand { @apply flex flex-col gap-2 mr-auto }
@@ -80,7 +80,7 @@
        padding rather than the card. */
     .nfd-sm-shell {
         @apply max-w-[900px] bg-surface border border-black/[.08] rounded-[10px]
-        shadow-card overflow-hidden mt-4
+        shadow-card overflow-hidden mt-5
     }
     .nfd-sm-body { @apply px-7 pt-[34px] pb-[30px] }
 

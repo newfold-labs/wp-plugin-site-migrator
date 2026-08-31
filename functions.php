@@ -189,6 +189,44 @@ function nfd_sm_rest_url( $base, $route, $args = array() ) {
 }
 
 /**
+ * The plugin's mark, as an admin-menu icon.
+ *
+ * The same logo the masthead draws, in the one form the admin menu accepts. Keep the geometry
+ * here and in `src/components/Masthead.js` identical -- `MarkTest` asserts they are, because two
+ * hand-maintained copies of a path are two logos waiting to drift apart.
+ *
+ * It is drawn as a **knockout**: the tile is painted and the glyph is a hole through it. That is
+ * not a stylistic choice. WordPress applies its hover and current-item opacity to `<img>` menu
+ * icons only, and a base64 SVG becomes a CSS `background-image` instead -- so this icon gets no
+ * state change from WordPress at all, whatever colour it is drawn in. A hole shows the menu item's
+ * own background, which *does* change on hover and when the page is current, so the mark picks up
+ * the states WordPress will not give it.
+ *
+ * The tile is `#a7aaad`, the colour wp-admin rests its own menu icons at, so it sits at the same
+ * weight as the dashicons above and below it.
+ *
+ * @return string A `data:image/svg+xml;base64,` URI.
+ */
+function nfd_sm_menu_icon() {
+	$glyph = '<g fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+		. '<rect x="15.8" y="10.5" width="10.4" height="11" rx="2.9"/>'
+		. '<path d="M15.8 15.1h10.4"/>'
+		. '<path d="M7.6 13.2h5M5.4 18.8h7"/>'
+		. '</g>';
+
+	$svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+		. '<mask id="nfd-sm-mark">'
+		. '<rect width="32" height="32" rx="9" fill="#fff"/>'
+		. $glyph
+		. '</mask>'
+		. '<rect width="32" height="32" rx="9" fill="#a7aaad" mask="url(#nfd-sm-mark)"/>'
+		. '</svg>';
+
+	// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- what the menu API takes.
+	return 'data:image/svg+xml;base64,' . base64_encode( $svg );
+}
+
+/**
  * Where this site keeps the package it exported.
  *
  * One place, because two now ask: the browser downloads parts out of it and a paired destination
