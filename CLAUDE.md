@@ -503,6 +503,17 @@ column beside the badge rather than next to its siblings. And **the panel is one
 bands** — safety strip, stepper, body — which is why `.nfd-sm-shell` clips its children and
 `.nfd-sm-body` carries the padding.
 
+**`Masthead` names the product, because nothing else does.** wp-admin gives a plugin no title on
+its own page: each screen's `<h1>` describes the step, and the sidebar entry is not on the reading
+path. It is rendered by `Layout` above the shell, so it is on every screen, and it is deliberately
+quieter than the heading beneath it — 15px against 31px, a `<p>` rather than a second heading. The
+mark is an inline SVG in the same file rather than an image, for the reason the fonts are bundled
+and because only an inline one inherits `currentColor`; the glyph is a package with motion lines
+behind it, and the first draft — a container with an arrow leaving through its open side — was
+redrawn because that is the standard sign-out icon. The **menu** icon stays `dashicons-migrate`: a
+data-URI SVG there does not recolour with the menu's hover and current states, and a mark that
+cannot follow them looks broken rather than branded.
+
 **The fonts are bundled, never hot-linked** — a plugin on wp.org may not call a third party to
 draw its own admin screen. `assets/fonts/` holds four variable woff2 files (Public Sans and
 JetBrains Mono, latin and latin-ext, 98KB in total) with their OFL licences beside them; the
