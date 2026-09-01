@@ -400,7 +400,6 @@ class Importer {
 			\sprintf(
 				'An import from %s is already under way on this site. Finish it, roll it back, or '
 					. 'cancel it before importing a different package.',
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				$state['package']
 			)
 		);
@@ -474,7 +473,6 @@ class Importer {
 
 		if ( ! empty( $problems ) ) {
 			throw new \RuntimeException(
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				'This package is not usable: ' . \implode( ' ', $problems )
 			);
 		}
@@ -492,7 +490,6 @@ class Importer {
 			}
 
 			throw new \RuntimeException(
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				'This site cannot accept the package: ' . \implode( ' ', $reasons )
 			);
 		}
@@ -765,7 +762,6 @@ class Importer {
 		if ( ! empty( $problems ) ) {
 			throw new \RuntimeException(
 				'The imported data did not pass verification, so nothing was swapped in: '
-					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 					. \implode( ' ', $problems )
 			);
 		}
@@ -1031,10 +1027,8 @@ class Importer {
 				\sprintf(
 					'This package was built by a different version of the plugin: it describes the source '
 					. 'in format %s and this site reads format %d. Export it again from the source.',
-					// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception message, not output.
 					(string) \nfd_sm_data_get( $recorded, 'schema_version', 'unknown' ),
 					SiteProfile::SCHEMA
-					// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
 				)
 			);
 		}

@@ -121,7 +121,6 @@ class FileRestorer {
 
 		if ( ! \is_readable( $path ) ) {
 			throw new \RuntimeException(
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				'Missing archive: ' . $path
 			);
 		}
@@ -135,7 +134,6 @@ class FileRestorer {
 
 		if ( true !== $zip->open( $path ) ) {
 			throw new \RuntimeException(
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				'Unable to open archive: ' . $path
 			);
 		}

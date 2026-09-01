@@ -681,10 +681,8 @@ class UserMerger {
 					\sprintf(
 						'The merged users table would contain duplicate %s values (%s), which WordPress '
 							. 'cannot resolve. Nothing has been changed.',
-						// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception messages, not output.
 						$column,
 						\implode( ', ', $duplicates )
-						// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
 					)
 				);
 			}

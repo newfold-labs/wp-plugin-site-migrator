@@ -905,10 +905,8 @@ abstract class DatabaseBase {
 							'A single row of the source database is %d bytes, which is larger than this '
 							. "server's max_allowed_packet of %d bytes. Raise max_allowed_packet on the "
 							. 'destination and run the import again.',
-							// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception messages, not output.
 							strlen( $statement ),
 							$max_packet
-							// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
 						)
 					);
 				}
@@ -987,11 +985,9 @@ abstract class DatabaseBase {
 			throw new \Exception(
 				sprintf(
 					'Database error %d while importing: %s (statement began: %s)',
-					// phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- exception messages, not output.
 					$this->errno(),
 					$this->error(),
 					substr( $input, 0, 200 )
-					// phpcs:enable WordPress.Security.EscapeOutput.OutputNotEscaped
 				)
 			);
 		}

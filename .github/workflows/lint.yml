@@ -33,7 +33,7 @@ jobs:
                       ${{ runner.os }}-composer-
 
             - name: Install dependencies
-              run: composer install --prefer-dist --no-progress --no-suggest
+              run: composer install --prefer-dist --no-progress
 
             # `composer fix` deliberately does not run here. It did, immediately before the lint
             # step, which meant CI could not fail on anything phpcbf can repair -- it silently

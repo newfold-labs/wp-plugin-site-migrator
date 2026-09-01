@@ -244,7 +244,6 @@ class Puller {
 		} catch ( \Exception $e ) {
 			$this->release();
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( $e->getMessage() );
 		}
 
@@ -433,7 +432,6 @@ class Puller {
 		if ( \is_wp_error( $response ) ) {
 			$this->discard( $temp );
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'The source stopped responding: ' . $response->get_error_message() );
 		}
 
@@ -450,7 +448,6 @@ class Puller {
 		if ( 206 !== $status && ! ( 200 === $status && 0 === $offset ) ) {
 			$this->discard( $temp );
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( \sprintf( 'The source answered with status %d while sending %s.', $status, $relative ) );
 		}
 
@@ -460,7 +457,6 @@ class Puller {
 		if ( $size <= 0 ) {
 			$this->discard( $temp );
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( \sprintf( 'The source sent nothing for %s.', $relative ) );
 		}
 
@@ -469,7 +465,6 @@ class Puller {
 		if ( $size > $room ) {
 			$this->discard( $temp );
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( \sprintf( 'The source sent more of %s than it said the file contains.', $relative ) );
 		}
 
@@ -497,7 +492,6 @@ class Puller {
 			if ( ! \rename( $temp, $target ) ) {
 				$this->discard( $temp );
 
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				throw new \RuntimeException( 'Could not put ' . \basename( $target ) . ' into place.' );
 			}
 
@@ -518,7 +512,6 @@ class Puller {
 
 			$this->discard( $temp );
 
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'Could not append to ' . \basename( $target ) . '.' );
 		}
 
@@ -578,9 +571,7 @@ class Puller {
 			throw new \RuntimeException(
 				\sprintf(
 					'%s keeps arriving damaged after %d attempts. Something between the two sites is altering it — a proxy or a security filter is the usual cause.',
-					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 					$relative,
-					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 					$done + 1
 				)
 			);
@@ -756,7 +747,6 @@ class Puller {
 		$parent = \dirname( $path );
 
 		if ( ! \is_dir( $parent ) && ! \wp_mkdir_p( $parent ) ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'Could not create a directory for ' . \basename( $path ) . '.' );
 		}
 	}

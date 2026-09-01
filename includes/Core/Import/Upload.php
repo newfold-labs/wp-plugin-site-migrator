@@ -138,14 +138,12 @@ class Upload {
 		$path = PathMap::safe_path( $dir, $relative );
 
 		if ( '' === $path ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'That is not a path inside a package: ' . $relative );
 		}
 
 		$parent = \dirname( $path );
 
 		if ( ! \is_dir( $parent ) && ! \wp_mkdir_p( $parent ) ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'Could not create a directory for ' . $relative );
 		}
 
@@ -159,10 +157,8 @@ class Upload {
 			throw new \RuntimeException(
 				\sprintf(
 					'Chunk out of order for %s: it starts at %d but %d bytes are here.',
-					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 					$relative,
 					(int) $offset,
-					// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 					$have
 				)
 			);
@@ -171,7 +167,6 @@ class Upload {
 		$handle = \fopen( $path, 0 === $have ? 'wb' : 'ab' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		if ( false === $handle ) {
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 			throw new \RuntimeException( 'Could not open ' . $relative . ' for writing.' );
 		}
 

@@ -285,7 +285,6 @@ class Swap {
 
 		if ( false === $result ) {
 			throw new \RuntimeException(
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- an exception message, not output: it reaches a terminal or a JSON field, never an HTML page.
 				'The table swap failed and nothing was changed: ' . $wpdb->last_error
 			);
 		}
