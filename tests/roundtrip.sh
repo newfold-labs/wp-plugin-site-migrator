@@ -340,25 +340,48 @@ assert "and rolling back twice is refused rather than repeated" "1" \
 	"$(dst site-migrator rollback --yes >/dev/null 2>&1; echo $?)"
 
 # --------------------------------------------------------------------------------------------
-say "Resuming: the same import driven one step per process"
+say "Resuming: the same import driven across separate processes"
 
 # A loop inside one process proves the loop works. It does not prove that resuming works, because
-# every checkpoint is still sitting in memory. Thirteen separate invocations do.
+# every checkpoint is still sitting in memory. Separate invocations do.
+#
+# `--max-time` is a thousandth of a second, not one second, and the difference is the whole test.
+# `drive()` can only consult the clock *between* steps, so a one-second deadline means "run steps
+# until a second has gone by" — and on a fast machine with this small a fixture the entire import
+# fits inside that: one process, nothing resumed, and "it took more than one process" became a
+# measurement of the runner rather than of the code. A deadline already in the past stops after
+# the first step on any machine.
+#
+# The count is then deliberately *not* asserted. One step per process needs far more than a
+# hundred of them, so a loop long enough to finish that way is a loop nobody will wait for. What
+# matters is that a run stops mid-flight and says so, that another process picks it up from the
+# checkpoint on disk, and that the site is right at the end. A dozen slices establish that across
+# a dozen different checkpoint states; whatever is left is finished in one unbounded process.
+#
 # `$?` has to be captured into a variable on the very next line: `STEPS=1` is itself a command
 # whose success overwrites it, so testing `$?` in the loop condition below was reading the
 # assignment rather than the import, and the loop ran zero times.
-dst site-migrator import "$PKG" --yes --restart --max-time=1 >/dev/null 2>&1
+dst site-migrator import "$PKG" --yes --restart --max-time=0.001 >/dev/null 2>&1
 LAST=$?
 STEPS=1
 
-while [ "$LAST" -eq 3 ] && [ "$STEPS" -lt 120 ]; do
-	dst site-migrator import "$PKG" --yes --max-time=1 >/dev/null 2>&1
+# Exit 3 is the reason `--max-time` and `drive()` exist at all, and it is unreachable without
+# them: `Importer::run()` loops internally until it is done, so a budgeted run still only returns
+# once everything has finished and "stopped early, run me again" had no way to be said.
+assert "one sliced process stops early and says so" "3" "$LAST"
+
+while [ "$LAST" -eq 3 ] && [ "$STEPS" -lt 12 ]; do
+	dst site-migrator import "$PKG" --yes --max-time=0.001 >/dev/null 2>&1
 	LAST=$?
 	STEPS=$((STEPS+1))
 done
 
+if [ "$LAST" -eq 3 ]; then
+	dst site-migrator import "$PKG" --yes >/dev/null 2>&1
+	LAST=$?
+fi
+
 assert "a sliced import finishes with 0" "0" "$LAST"
-assert "and it took more than one process to do it" "yes" "$([ "$STEPS" -gt 1 ] && echo yes || echo no)"
 assert "the sliced import moved the site too" "$SRC_POSTS" "$(dst post list --post_type=post --format=count)"
 
 dst site-migrator confirm --yes >/dev/null 2>&1

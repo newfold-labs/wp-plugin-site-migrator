@@ -572,10 +572,24 @@ literals that no symbol graph follows.
 - **The floor rising does not mean the style changed.** `array()` throughout, no typed properties,
   no arrow functions — modern syntax is now permitted, not mandated, and a mechanical rewrite of
   the codebase buys nothing. New code may use it where it earns its place.
+- **`config.platform.php` is `7.4`, and that is what makes the lockfile mean anything.** Without
+  it Composer resolves against whatever PHP the developer happens to run — here 8.5 — and pins dev
+  dependencies that cannot install on the floor the plugin promises. `composer install` then failed
+  outright on the 7.4 leg of CI (`doctrine/instantiator 2.1.0 requires php ^8.4`) while passing on
+  8.3, which reads as a broken matrix rather than as a lockfile resolved for the wrong platform.
+  Re-resolving at 7.4 also *raised* phpcs 3.7.2 → 3.13.6 and WPCS 3.0 → 3.4.1, which cleared the
+  three `composer audit` advisories that had been sitting in the toolchain.
 - PHPCS uses the `Newfold` standard from `newfold-labs/wp-php-standards`, resolved from the Satis
   repository declared in `composer.json`. It is not on Packagist, so that `repositories` block has
   to stay. `WordPress.WP.AlternativeFunctions` and `WordPress.DB.RestrictedFunctions` are downgraded
   to severity 0 because the packager needs raw file and DB access.
+- **`WordPress.Security.EscapeOutput.ExceptionNotEscaped` is off, and `tests/` is excluded.** WPCS 3
+  split exception messages out of `OutputNotEscaped` into their own code, which silently retired
+  thirty `phpcs:ignore` comments naming the old one; they are gone and one rule in `phpcs.xml` says
+  why instead. `Core/` cannot echo at all, so an exception from it reaches REST JSON or stderr and
+  escaping it for HTML would corrupt the message. The test suite is excluded because it is not
+  plugin code and does not ship — `bootstrap.php` must keep WordPress's signatures whether or not
+  it uses every parameter, and groups stub classes in one file deliberately.
 - Procedural helpers go in `functions.php` with the `nfd_sm_` prefix; classes go in `includes/`
   under the PSR-4 namespace.
 

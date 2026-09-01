@@ -69,17 +69,27 @@ test.describe( 'Admin app', () => {
 	} ) => {
 		await wordpress.waitForApp( page );
 
-		// Nothing is intercepted, so this list only exists if the app called the REST API, got a
-		// report back and rendered it.
+		// Nothing is intercepted, so these facts exist only if the app called the REST API, got
+		// a profile back and rendered it.
 		//
-		// Asserted on the list of checks rather than on any particular verdict, because the
-		// verdict legitimately differs by how the site is served: under Apache the `.htaccess`
+		// Asserted on the profile rather than on the compatibility gates, which took two goes to
+		// get right. The verdict differs by how the site is served: under Apache the `.htaccess`
 		// the plugin writes works and the storage check passes, while PHP's built-in server
-		// ignores it — exactly as nginx does — and the same check blocks. An assertion on the
-		// refusal passed under one server and failed under the other, which is a test measuring
-		// its environment rather than the code.
-		await expect( page.locator( '.nfd-sm-gates' ) ).toBeVisible();
-		await expect( page.locator( '.nfd-sm-gate' ).first() ).toBeVisible();
+		// ignores it — exactly as nginx does — and the same check blocks. Asserting on the
+		// refusal failed under Apache. Asserting on the list of checks failed too, for a
+		// subtler reason: `Gates` renders nothing at all when a report has nothing blocking and
+		// nothing to warn about, so the element is absent precisely when everything is fine.
+		// Both were measuring how the site under test happens to be served. The profile comes
+		// back in the same response whatever the verdict is.
+		const facts = page.locator( '.nfd-sm-facts' );
+
+		await expect( facts ).toBeVisible();
+
+		// WordPress, PHP, Database, Table prefix. A version number here is a value that was
+		// measured on the server and travelled through the REST API to get onto the screen.
+		await expect( facts.locator( 'dd' ).nth( 1 ) ).toHaveText(
+			/^\d+\.\d+/
+		);
 	} );
 } );
 

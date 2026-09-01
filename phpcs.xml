@@ -19,4 +19,25 @@
         <severity>0</severity>
     </rule>
 
+    <!-- An exception message is not output.
+
+         `Core/` is transport-agnostic and cannot echo anything; every exception it throws is
+         caught and turned into REST JSON or written to stderr by the CLI, so escaping one for
+         HTML would corrupt the message rather than protect anybody. WPCS 3 split this out of
+         `OutputNotEscaped` into its own code, which silently retired thirty `phpcs:ignore`
+         comments naming the old one. Those have been removed and this rule takes their place:
+         thirty suppressions of a code that no longer fires is worse than one rule that says
+         why. -->
+    <rule ref="WordPress.Security.EscapeOutput.ExceptionNotEscaped">
+        <severity>0</severity>
+    </rule>
+
+    <!-- The test suite is not plugin code and does not ship: `.distignore` leaves it out and
+         `bin/verify-zip.sh` asserts it is absent from the zip. Held to this standard, the parts
+         of it that are deliberate read as defects. `tests/bootstrap.php` declares stand-ins for
+         WordPress functions, so it must keep their signatures whether or not it uses every
+         parameter, and it groups small stub classes in one file on purpose. What keeps the suite
+         honest is CI running it, not phpcs formatting it. -->
+    <exclude-pattern>tests/*</exclude-pattern>
+
 </ruleset>
