@@ -687,6 +687,10 @@ cover — an exit-code constant, a manifest key, the escaped-slash replacement p
 page's script enqueue — and confirming each goes red, then green again. The escaped-slash case failed to fail the first time,
 which is how the block fixture came to exist.
 
+**The default branch is `main`, and `lint.yml` and `tests.yml` name it.** They said `master`,
+which was the branch this began on; a repository whose CI runs on pull requests but never on its
+own default branch looks green for a reason nobody checks.
+
 **Four workflows, and exactly one of them publishes anything.** `lint.yml` (phpcs), `tests.yml`
 (PHPUnit on 7.4 and 8.3, the round trip, a `package` job that builds the zip and installs it into a
 real WordPress, and the browser suite under wp-env), `ai-code-review.yml` (a Newfold reusable), and
