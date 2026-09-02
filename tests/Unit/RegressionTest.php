@@ -16,6 +16,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\SearchReplace;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use PHPUnit\Framework\TestCase;
 
@@ -254,5 +255,107 @@ class RegressionTest extends TestCase {
 			$this->assertArrayNotHasKey( 'X-NFD-SM-Pairing', $sent['args']['headers'] );
 			$this->assertTrue( $sent['args']['sslverify'] );
 		}
+	}
+
+	/**
+	 * Deactivating the plugin does not destroy the package.
+	 *
+	 * Found on a production site. `register_deactivation_hook` pointed at `nfd_sm_purge_all()`,
+	 * which recursively deletes the storage directory -- so switching the plugin off, the routine
+	 * "turn everything off and find the conflict" move, silently deleted a package that had taken
+	 * an hour and several gigabytes to build. Removing data belongs in `uninstall.php`.
+	 */
+	public function test_deactivation_leaves_the_package_alone() {
+		$package = \nfd_sm_package_path();
+
+		\wp_mkdir_p( $package );
+		\file_put_contents( $package . '/manifest.json', '{}' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		\nfd_sm_flush_state();
+
+		$this->assertFileExists( $package . '/manifest.json' );
+		$this->assertDirectoryExists( \nfd_sm_storage_path() );
+
+		// And the hook points at it. The function being harmless is only half of the fix; the
+		// defect was which function the hook named, and nothing else here would notice it being
+		// pointed back.
+		$bootstrap = (string) \file_get_contents( __DIR__ . '/../../nfd-site-migrator.php' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		$this->assertStringContainsString(
+			"register_deactivation_hook( __FILE__, 'nfd_sm_flush_state' )",
+			$bootstrap
+		);
+		$this->assertStringNotContainsString(
+			"register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' )",
+			$bootstrap
+		);
+	}
+
+	/**
+	 * Uninstalling while an import is undecided is refused.
+	 *
+	 * The backup tables are the only copy of the site as it was, and `Importer::rollback()` reads
+	 * the checkpoint on disk to know how to put them back. Delete the state directory and the
+	 * tables are orphaned: a swapped site with no way home.
+	 */
+	public function test_an_undecided_import_is_not_purged() {
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['stage'] = ImportCheckpoint::STAGE_DONE;
+		$checkpoint->save( $state );
+
+		$this->assertTrue( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * Nor is one still in flight, which may be a statement short of the swap.
+	 */
+	public function test_an_import_in_progress_is_not_purged() {
+		$checkpoint = new ImportCheckpoint();
+
+		$checkpoint->save( ImportCheckpoint::defaults() );
+
+		$this->assertTrue( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * A decided run holds nothing back.
+	 *
+	 * Rolled back or confirmed, it is a record of what happened rather than the only way out of
+	 * it -- so deleting the plugin is free to take it.
+	 *
+	 * @dataProvider settled_states
+	 *
+	 * @param string $key Which decision was recorded.
+	 */
+	public function test_a_settled_import_is_purged( $key, $value ) {
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['stage'] = ImportCheckpoint::STAGE_DONE;
+		$state[ $key ]  = $value;
+		$checkpoint->save( $state );
+
+		$this->assertFalse( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * The two ways a finished import gets decided.
+	 *
+	 * @return array
+	 */
+	public function settled_states() {
+		return array(
+			'rolled back' => array( 'rolled_back', true ),
+			'confirmed'   => array( 'confirmed_at', '2026-09-02T00:00:00+00:00' ),
+		);
+	}
+
+	/**
+	 * With no import at all there is nothing to protect.
+	 */
+	public function test_no_import_means_nothing_to_hold_back() {
+		$this->assertFalse( \nfd_sm_import_unsettled() );
 	}
 }

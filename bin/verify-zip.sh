@@ -84,6 +84,15 @@ assert "so is the stylesheet" "yes" \
 assert "and the fonts it references" "4" \
 	"$(find "$SITE/wp-content/plugins/$SLUG/build/fonts" -name '*.woff2' 2>/dev/null | wc -l | tr -d ' ')"
 
+# Cleanup happens on delete, and only if the file that does it shipped. Deactivation used to
+# purge, which meant switching the plugin off destroyed the package; the fix moves that to
+# `uninstall.php`, and a fix that does not ship is not a fix.
+assert "uninstall.php shipped" "yes" \
+	"$([ -f "$SITE/wp-content/plugins/$SLUG/uninstall.php" ] && echo yes || echo no)"
+assert "and deactivation no longer purges" "no" \
+	"$(grep -q "register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' )" \
+		"$SITE/wp-content/plugins/$SLUG/nfd-site-migrator.php" && echo yes || echo no)"
+
 # Licence obligations.
 assert "the GPL text shipped" "yes" \
 	"$([ -f "$SITE/wp-content/plugins/$SLUG/LICENSE" ] && echo yes || echo no)"

@@ -45,7 +45,12 @@ if ( 'plugins.php' === $pagenow ) {
 // Include functions
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'functions.php';
 
-register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' );
+// Deactivation is reversible, so it takes nothing with it but a transient. It used to call
+// `nfd_sm_purge_all()`, which recursively deletes the storage directory -- switching the plugin
+// off to see whether it was the cause destroyed the package the user had just built, and on a
+// destination mid-import took the checkpoint `rollback()` needs along with it. Removing data is
+// `uninstall.php`'s job, and it refuses while a migration is still undecided.
+register_deactivation_hook( __FILE__, 'nfd_sm_flush_state' );
 
 // Initialize the Admin page
 new NewfoldLabs\WP\SiteMigrator\WP_Admin();

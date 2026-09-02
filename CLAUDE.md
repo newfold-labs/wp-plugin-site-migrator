@@ -120,7 +120,23 @@ four-place scheme made `WP_Admin::register_assets()` silently skip enqueueing on
 **Bootstrap** (`nfd-site-migrator.php`): Composer autoload, `constants.php`, then `functions.php`
 (procedural helpers, all prefixed `nfd_sm_`, required explicitly). Instantiates `WP_Admin`,
 registers `Rest\Routes::register()` and `Cli\Commands::register()`, primes `Utils\Options::fetch()`,
-and persists options on `shutdown`. One deactivation hook (`nfd_sm_purge_all`); no activation hooks.
+and persists options on `shutdown`. No activation hooks.
+
+**Deactivation takes nothing with it, and deleting the plugin is what purges.** The deactivation
+hook pointed at `nfd_sm_purge_all()`, which recursively deletes the storage directory — so on a
+production site, switching the plugin off to see whether it was the cause destroyed a package that
+had taken an hour and several gigabytes to build, with no warning and nothing to undo it. That is
+the routine "turn everything off and find the conflict" move, and WordPress asks a plugin to make
+it reversible. Worse was a destination mid-import: the same call deleted `import/` and with it the
+checkpoint `Importer::rollback()` reads, leaving a swapped site, orphaned `nfdold_` tables, and no
+way for the plugin to put it back. Deactivation now calls `nfd_sm_flush_state()`, which drops one
+transient. `uninstall.php` does the purge, and **refuses while an import is unsettled** —
+`nfd_sm_import_unsettled()`, which is `ImportCheckpoint::is_settled()` inverted: in flight, or
+finished and neither rolled back nor confirmed. A source that has only exported is not protected;
+deleting a plugin is deliberate and taking its files with it is what deleting means, whereas being
+unable to reverse a migration is a different order of loss. `bin/verify-zip.sh` asserts
+`uninstall.php` is in the zip and that the old hook is not, because a fix that does not ship is
+not a fix.
 
 **The execution contract.** Everything in `Core/` that does bulk work exposes
 `step( $budget )`: do as much as fits in `$budget` seconds, write a checkpoint, return. A budget
