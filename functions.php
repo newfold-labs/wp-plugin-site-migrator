@@ -516,16 +516,31 @@ function nfd_sm_uninstall() {
 		return;
 	}
 
-	foreach ( get_sites( array( 'fields' => 'ids' ) ) as $site_id ) {
+	// `number => 0` is load-bearing. `WP_Site_Query` defaults to **100**, so the obvious call
+	// purges the first hundred sites of a network and leaves the rest -- which is precisely the
+	// half-purged state the guard above exists to avoid, arrived at by a default rather than by a
+	// timeout. Any network between 101 sites and `wp_is_large_network()` hits it.
+	$sites = get_sites(
+		array(
+			'fields' => 'ids',
+			'number' => 0,
+		)
+	);
+
+	foreach ( $sites as $site_id ) {
 		switch_to_blog( (int) $site_id );
 
-		// Asked per site, because the answer is per site: the checkpoint lives under that
-		// site's own uploads directory.
-		if ( ! nfd_sm_import_unsettled() ) {
-			nfd_sm_purge_all();
+		try {
+			// Asked per site, because the answer is per site: the checkpoint lives under that
+			// site's own uploads directory.
+			if ( ! nfd_sm_import_unsettled() ) {
+				nfd_sm_purge_all();
+			}
+		} finally {
+			// A network left switched to the wrong site is a strange thing to hand back to
+			// whatever runs next, and one throw from a future change is all it would take.
+			restore_current_blog();
 		}
-
-		restore_current_blog();
 	}
 }
 

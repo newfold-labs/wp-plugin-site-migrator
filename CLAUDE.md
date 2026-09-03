@@ -147,6 +147,15 @@ refusal is asked per site, because a checkpoint lives under its own site's uploa
 `wp_is_large_network()` is skipped rather than iterated: a loop long enough to exhaust the request
 leaves a half-purged network, which is worse than an untouched one.
 
+**`get_sites()` is called with `'number' => 0`, and that is load-bearing.** `WP_Site_Query`
+defaults to **100**, so the obvious call purges the first hundred sites and leaves the rest — the
+same half-purged state the large-network guard exists to prevent, reached through a default rather
+than a timeout, on any network between 101 sites and the threshold. The unit suite could not have
+caught it: `Fixture`'s `get_sites()` returned everything it held whatever it was asked for, so the
+stub was more generous than the function it stood in for. **A stub that is more permissive than the
+real function hides exactly the bugs it is there to catch** — it honours `number` now, and a
+150-site test fails without the `0`.
+
 **The execution contract.** Everything in `Core/` that does bulk work exposes
 `step( $budget )`: do as much as fits in `$budget` seconds, write a checkpoint, return. A budget
 of `0` means no limit, which is how the CLI runs it. The browser loops on the REST endpoint; the

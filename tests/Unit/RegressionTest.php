@@ -376,6 +376,29 @@ class RegressionTest extends TestCase {
 	}
 
 	/**
+	 * Every site, not the first hundred.
+	 *
+	 * Raised by the AI review, and it was right: `WP_Site_Query` defaults to `number = 100`, so
+	 * `get_sites( array( 'fields' => 'ids' ) )` silently pages. Any network between 101 sites and
+	 * `wp_is_large_network()` would have been purged down to its first hundred and left there --
+	 * the exact half-purged state the large-network guard exists to avoid, reached through a
+	 * default rather than a timeout.
+	 *
+	 * The unit suite could not have caught it either, which is the more useful half of the
+	 * lesson: `Fixture`'s `get_sites()` returned everything it held whatever it was asked for, so
+	 * the stub was more generous than the function it stood in for and the bug was invisible.
+	 * It honours `number` now.
+	 */
+	public function test_a_network_past_the_default_page_is_purged_whole() {
+		\Fixture::$sites = \range( 1, 150 );
+
+		\nfd_sm_uninstall();
+
+		$this->assertCount( 150, \Fixture::$switched );
+		$this->assertSame( 150, \end( \Fixture::$switched ) );
+	}
+
+	/**
 	 * A large network is left alone rather than half-purged.
 	 *
 	 * WordPress stops counting sites past `wp_is_large_network()`, and this stops deleting past it
@@ -407,11 +430,24 @@ class RegressionTest extends TestCase {
 		$kept = \nfd_sm_storage_path();
 		\restore_current_blog();
 
+		// Site 2 has a storage directory and nothing to protect, so the uninstall should take it.
+		\switch_to_blog( 2 );
+		$purged = \nfd_sm_storage_path();
+		\restore_current_blog();
+
 		\Fixture::$switched = array();
 
 		\nfd_sm_uninstall();
 
 		$this->assertSame( array( 1, 2 ), \Fixture::$switched );
+
+		// The one mid-migration keeps its state, and the one that is not is actually gone --
+		// tracking the switches alone would pass for a loop that visited every site and deleted
+		// nothing.
 		$this->assertDirectoryExists( $kept );
+
+		\switch_to_blog( 2 );
+		$this->assertDirectoryDoesNotExist( $purged );
+		\restore_current_blog();
 	}
 }

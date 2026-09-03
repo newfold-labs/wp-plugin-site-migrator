@@ -534,8 +534,22 @@ function is_multisite() {
 	return ! empty( Fixture::$sites );
 }
 
+/**
+ * Faithful about `number`, which is the point of it.
+ *
+ * `WP_Site_Query` defaults to **100** and treats 0 as no limit. A stub that ignored that returned
+ * every site whatever the caller asked for, so a caller relying on the default would have looked
+ * correct here and silently purged the first hundred sites of a network in production.
+ */
 function get_sites( $args = array() ) {
-	return Fixture::$sites;
+	$number = isset( $args['number'] ) ? (int) $args['number'] : 100;
+	$offset = isset( $args['offset'] ) ? (int) $args['offset'] : 0;
+
+	if ( 0 === $number ) {
+		return \array_slice( Fixture::$sites, $offset );
+	}
+
+	return \array_slice( Fixture::$sites, $offset, $number );
 }
 
 function wp_is_large_network( $using = 'sites' ) {
