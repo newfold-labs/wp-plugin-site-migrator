@@ -138,6 +138,15 @@ unable to reverse a migration is a different order of loss. `bin/verify-zip.sh` 
 `uninstall.php` is in the zip and that the old hook is not, because a fix that does not ship is
 not a fix.
 
+**And a network is purged site by site.** `wp_get_upload_dir()` follows `switch_to_blog()`, so a
+network-activated plugin leaves a storage directory and an options row on *each* site, not one per
+network — deleting only the current site's cleans one of however many. Migration is blocked at
+preflight on multisite, so today that residue is an empty protected directory and a row of
+defaults, but the loop is the same one that would matter if multisite is ever supported. The
+refusal is asked per site, because a checkpoint lives under its own site's uploads. A network past
+`wp_is_large_network()` is skipped rather than iterated: a loop long enough to exhaust the request
+leaves a half-purged network, which is worse than an untouched one.
+
 **The execution contract.** Everything in `Core/` that does bulk work exposes
 `step( $budget )`: do as much as fits in `$budget` seconds, write a checkpoint, return. A budget
 of `0` means no limit, which is how the CLI runs it. The browser loops on the REST endpoint; the

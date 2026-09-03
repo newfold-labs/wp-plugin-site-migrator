@@ -69,6 +69,14 @@ assert "and WordPress agrees it is active" "active" "$(site plugin get "$SLUG" -
 # The header WordPress read out of the zip, not the one in the working tree.
 assert "the PHP requirement travelled" "7.4" "$(site plugin get "$SLUG" --field=requires_php 2>/dev/null)"
 
+# The number WordPress reads and the number a manifest records are the same number. A package
+# that says it was built by a version the plugin does not claim to be is a confusing thing to be
+# holding when a migration has gone wrong.
+ZIP_VERSION="$(site plugin get "$SLUG" --field=version 2>/dev/null)"
+assert "the version travelled" "yes" "$([ -n "$ZIP_VERSION" ] && echo yes || echo no)"
+assert "and the stamped version agrees with the header" "$ZIP_VERSION" \
+	"$(site eval 'echo NFD_SM_VERSION;' 2>/dev/null)"
+
 # No dev dependencies, no test suite.
 assert "the test suite did not ship" "no" \
 	"$([ -e "$SITE/wp-content/plugins/$SLUG/tests" ] && echo yes || echo no)"

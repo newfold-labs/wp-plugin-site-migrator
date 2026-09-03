@@ -1,6 +1,6 @@
 <?php
 
-define( 'NFD_SM_VERSION', '0.1.0' );
+define( 'NFD_SM_VERSION', '0.1.1' );
 define( 'NFD_SM_PLUGIN_NAME', 'nfd-site-migrator' );
 define( 'NFD_SM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 // Build output is unversioned on purpose: a versioned path meant the plugin header,

@@ -358,4 +358,60 @@ class RegressionTest extends TestCase {
 	public function test_no_import_means_nothing_to_hold_back() {
 		$this->assertFalse( \nfd_sm_import_unsettled() );
 	}
+
+	/**
+	 * A network is purged site by site, because a network has one of everything per site.
+	 *
+	 * Raised by the AI review on the uninstall change. Migration is blocked at preflight on
+	 * multisite, so what a network-activated plugin leaves behind is an empty protected directory
+	 * and a row of defaults on each site rather than a package — but `wp_get_upload_dir()` follows
+	 * `switch_to_blog()`, so deleting only the current site's is deleting one of however many.
+	 */
+	public function test_a_network_is_purged_site_by_site() {
+		\Fixture::$sites = array( 1, 2, 3 );
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array( 1, 2, 3 ), \Fixture::$switched );
+	}
+
+	/**
+	 * A large network is left alone rather than half-purged.
+	 *
+	 * WordPress stops counting sites past `wp_is_large_network()`, and this stops deleting past it
+	 * for the same reason: a loop long enough to exhaust the request leaves the uninstall
+	 * half-done, which is a worse state than an untouched one.
+	 */
+	public function test_a_large_network_is_left_alone() {
+		\Fixture::$sites         = array( 1, 2, 3 );
+		\Fixture::$large_network = true;
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array(), \Fixture::$switched );
+	}
+
+	/**
+	 * And the refusal is asked per site, not once for the network.
+	 *
+	 * The checkpoint lives under a site's own uploads directory, so one site mid-migration must
+	 * not stop the others being cleaned, and must not be cleaned itself.
+	 */
+	public function test_one_undecided_site_does_not_stop_the_others() {
+		\Fixture::$sites = array( 1, 2 );
+
+		// Give site 1 an unsettled import, then run the uninstall over both.
+		\switch_to_blog( 1 );
+		$checkpoint = new ImportCheckpoint();
+		$checkpoint->save( ImportCheckpoint::defaults() );
+		$kept = \nfd_sm_storage_path();
+		\restore_current_blog();
+
+		\Fixture::$switched = array();
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array( 1, 2 ), \Fixture::$switched );
+		$this->assertDirectoryExists( $kept );
+	}
 }

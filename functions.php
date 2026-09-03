@@ -482,6 +482,54 @@ function nfd_sm_flush_state() {
 }
 
 /**
+ * Everything deleting this plugin should take with it.
+ *
+ * Split out of `uninstall.php` so it can be tested, and so the multisite branch below has
+ * somewhere to live that is not a bare script.
+ *
+ * **On a network, every site has its own.** `wp_get_upload_dir()` follows `switch_to_blog()`, so a
+ * network-activated plugin leaves a storage directory and an options row on each site rather than
+ * one of each on the network. Migration itself is blocked at preflight on multisite, so what is
+ * left behind is an empty protected directory and a row of defaults — small, but leftover data is
+ * leftover data, and the same loop that removes it is the loop that would remove a real package if
+ * multisite ever becomes supported.
+ *
+ * A large network is skipped rather than iterated. WordPress stops counting sites past
+ * `wp_is_large_network()` for the same reason this stops deleting past it: a loop long enough to
+ * exhaust the request leaves the uninstall half-done, and a half-purged network is worse than an
+ * untouched one. On such a network the directories can be removed with `wp site-migrator` gone and
+ * a filesystem sweep, which is a thing an administrator of ten thousand sites can do and a plugin
+ * being deleted cannot.
+ *
+ * @return void
+ */
+function nfd_sm_uninstall() {
+	if ( ! is_multisite() ) {
+		if ( ! nfd_sm_import_unsettled() ) {
+			nfd_sm_purge_all();
+		}
+
+		return;
+	}
+
+	if ( wp_is_large_network( 'sites' ) ) {
+		return;
+	}
+
+	foreach ( get_sites( array( 'fields' => 'ids' ) ) as $site_id ) {
+		switch_to_blog( (int) $site_id );
+
+		// Asked per site, because the answer is per site: the checkpoint lives under that
+		// site's own uploads directory.
+		if ( ! nfd_sm_import_unsettled() ) {
+			nfd_sm_purge_all();
+		}
+
+		restore_current_blog();
+	}
+}
+
+/**
  * Purge Migration related things
  */
 function nfd_sm_purge_all() {

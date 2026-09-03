@@ -104,6 +104,38 @@ class Fixture {
 	public static $http = array();
 
 	/**
+	 * Sites `get_sites()` reports, and which one is switched to.
+	 *
+	 * Empty means single site. A network is the case `uninstall.php` has to iterate, because
+	 * `wp_get_upload_dir()` follows `switch_to_blog()` and every site has its own storage
+	 * directory.
+	 *
+	 * @var array
+	 */
+	public static $sites = array();
+
+	/**
+	 * Whether `wp_is_large_network()` says yes.
+	 *
+	 * @var bool
+	 */
+	public static $large_network = false;
+
+	/**
+	 * Every blog switched to during a test, in order.
+	 *
+	 * @var array
+	 */
+	public static $switched = array();
+
+	/**
+	 * The uploads directory to come back to after a `restore_current_blog()`.
+	 *
+	 * @var string
+	 */
+	public static $network_root = '';
+
+	/**
 	 * Every `wp_remote_get()` call, as `url` and `args`.
 	 *
 	 * The arguments are kept because what a request does *not* carry is sometimes the point --
@@ -125,8 +157,12 @@ class Fixture {
 		self::$site_url   = 'http://source.test';
 		self::$filters    = array();
 		self::$http       = array();
+		self::$sites         = array();
+		self::$large_network = false;
+		self::$switched      = array();
 		self::$requests   = array();
-		self::$uploads    = \sys_get_temp_dir() . '/nfd-sm-tests/' . \uniqid( 'u', true );
+		self::$uploads      = \sys_get_temp_dir() . '/nfd-sm-tests/' . \uniqid( 'u', true );
+		self::$network_root = self::$uploads;
 
 		\wp_mkdir_p( self::$uploads );
 
@@ -362,10 +398,6 @@ function status_header( $code ) {}
 
 // --- Site facts --------------------------------------------------------------------------
 
-function is_multisite() {
-	return false;
-}
-
 function get_locale() {
 	return 'en_US';
 }
@@ -490,6 +522,39 @@ function wp_remote_retrieve_header( $response, $name ) {
 
 function wp_remote_retrieve_body( $response ) {
 	return isset( $response['body'] ) ? $response['body'] : '';
+}
+
+/**
+ * Multisite. Single site unless a test says otherwise, which is what nearly all of them want.
+ *
+ * `switch_to_blog()` moves the uploads directory, so the stub moves `Fixture::$uploads` the same
+ * way -- a per-site directory is the whole reason the uninstall has to iterate at all.
+ */
+function is_multisite() {
+	return ! empty( Fixture::$sites );
+}
+
+function get_sites( $args = array() ) {
+	return Fixture::$sites;
+}
+
+function wp_is_large_network( $using = 'sites' ) {
+	return Fixture::$large_network;
+}
+
+function switch_to_blog( $blog_id ) {
+	Fixture::$switched[] = (int) $blog_id;
+	Fixture::$uploads    = Fixture::$network_root . '/sites/' . (int) $blog_id;
+
+	\wp_mkdir_p( Fixture::$uploads );
+
+	return true;
+}
+
+function restore_current_blog() {
+	Fixture::$uploads = Fixture::$network_root;
+
+	return true;
 }
 
 $GLOBALS['wpdb']          = new WPDB_Stub();

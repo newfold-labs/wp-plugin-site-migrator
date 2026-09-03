@@ -9,6 +9,10 @@
  * that may have been an hour and several gigabytes in the making. There was no warning and no way
  * back.
  *
+ * The work is in `nfd_sm_uninstall()` so that it can be tested and so the multisite branch has
+ * somewhere to live: on a network every site has its own uploads directory and its own options
+ * row, and a network-activated plugin leaves one of each per site rather than one per network.
+ *
  * The one thing this still refuses to do is delete the state of a migration nobody has decided
  * about yet. A finished-but-undecided import's `nfdold_` backup tables are the only copy of the
  * site as it was, and `Importer::rollback()` reads the checkpoint on disk to know how to put them
@@ -37,8 +41,4 @@ require_once $nfd_sm_autoload;
 require_once __DIR__ . '/constants.php';
 require_once __DIR__ . '/functions.php';
 
-if ( nfd_sm_import_unsettled() ) {
-	return;
-}
-
-nfd_sm_purge_all();
+nfd_sm_uninstall();
