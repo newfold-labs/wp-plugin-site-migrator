@@ -69,6 +69,14 @@ assert "and WordPress agrees it is active" "active" "$(site plugin get "$SLUG" -
 # The header WordPress read out of the zip, not the one in the working tree.
 assert "the PHP requirement travelled" "7.4" "$(site plugin get "$SLUG" --field=requires_php 2>/dev/null)"
 
+# The number WordPress reads and the number a manifest records are the same number. A package
+# that says it was built by a version the plugin does not claim to be is a confusing thing to be
+# holding when a migration has gone wrong.
+ZIP_VERSION="$(site plugin get "$SLUG" --field=version 2>/dev/null)"
+assert "the version travelled" "yes" "$([ -n "$ZIP_VERSION" ] && echo yes || echo no)"
+assert "and the stamped version agrees with the header" "$ZIP_VERSION" \
+	"$(site eval 'echo NFD_SM_VERSION;' 2>/dev/null)"
+
 # No dev dependencies, no test suite.
 assert "the test suite did not ship" "no" \
 	"$([ -e "$SITE/wp-content/plugins/$SLUG/tests" ] && echo yes || echo no)"
@@ -83,6 +91,15 @@ assert "so is the stylesheet" "yes" \
 	"$([ -f "$SITE/wp-content/plugins/$SLUG/build/nfd-site-migrator.css" ] && echo yes || echo no)"
 assert "and the fonts it references" "4" \
 	"$(find "$SITE/wp-content/plugins/$SLUG/build/fonts" -name '*.woff2' 2>/dev/null | wc -l | tr -d ' ')"
+
+# Cleanup happens on delete, and only if the file that does it shipped. Deactivation used to
+# purge, which meant switching the plugin off destroyed the package; the fix moves that to
+# `uninstall.php`, and a fix that does not ship is not a fix.
+assert "uninstall.php shipped" "yes" \
+	"$([ -f "$SITE/wp-content/plugins/$SLUG/uninstall.php" ] && echo yes || echo no)"
+assert "and deactivation no longer purges" "no" \
+	"$(grep -q "register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' )" \
+		"$SITE/wp-content/plugins/$SLUG/nfd-site-migrator.php" && echo yes || echo no)"
 
 # Licence obligations.
 assert "the GPL text shipped" "yes" \

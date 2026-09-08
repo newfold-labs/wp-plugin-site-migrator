@@ -433,6 +433,118 @@ function nfd_sm_delete_directory( $dir ) {
 }
 
 /**
+ * Whether an import is under way, or finished and still awaiting a decision.
+ *
+ * The thing this protects is the ability to undo. A finished-but-undecided run's `nfdold_` backup
+ * tables are the only copy of this site as it was, and `Importer::rollback()` reads the checkpoint
+ * on disk to know what to put back -- so deleting the state directory leaves the tables orphaned
+ * and the site with no way to return to itself. A run still in flight is worse: it may be one
+ * statement short of the swap.
+ *
+ * Deliberately narrow. A source that has merely exported has a package and nothing at stake in the
+ * database; deleting a plugin is a deliberate act and taking its files with it is what deleting
+ * means. Being unable to reverse a migration is a different order of loss.
+ *
+ * @return bool
+ */
+function nfd_sm_import_unsettled() {
+	if ( ! class_exists( '\\NewfoldLabs\\WP\\SiteMigrator\\Core\\Import\\ImportCheckpoint' ) ) {
+		return false;
+	}
+
+	$checkpoint = new \NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint();
+
+	if ( ! $checkpoint->exists() ) {
+		return false;
+	}
+
+	return ! \NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint::is_settled( $checkpoint->load() );
+}
+
+/**
+ * Forget what a reactivation can work out again.
+ *
+ * This is all deactivation does, and the restraint is the point. It used to run
+ * `nfd_sm_purge_all()`, which recursively deletes the storage directory -- so switching the plugin
+ * off to check whether it was causing something destroyed the package the user had just spent an
+ * hour building, with no warning and nothing to undo it. Deactivating is the routine "turn
+ * everything off and find the conflict" move; WordPress asks a plugin to make it reversible, and
+ * removing data belongs in `uninstall.php`.
+ *
+ * The worse case was a destination mid-import. The same call deleted `import/`, and with it the
+ * checkpoint `Importer::rollback()` needs -- leaving a swapped site, orphaned backup tables, and
+ * no way for the plugin to put it back.
+ *
+ * @return void
+ */
+function nfd_sm_flush_state() {
+	delete_transient( NFD_SM_CAN_MIGRATE_TRANSIENT );
+}
+
+/**
+ * Everything deleting this plugin should take with it.
+ *
+ * Split out of `uninstall.php` so it can be tested, and so the multisite branch below has
+ * somewhere to live that is not a bare script.
+ *
+ * **On a network, every site has its own.** `wp_get_upload_dir()` follows `switch_to_blog()`, so a
+ * network-activated plugin leaves a storage directory and an options row on each site rather than
+ * one of each on the network. Migration itself is blocked at preflight on multisite, so what is
+ * left behind is an empty protected directory and a row of defaults — small, but leftover data is
+ * leftover data, and the same loop that removes it is the loop that would remove a real package if
+ * multisite ever becomes supported.
+ *
+ * A large network is skipped rather than iterated. WordPress stops counting sites past
+ * `wp_is_large_network()` for the same reason this stops deleting past it: a loop long enough to
+ * exhaust the request leaves the uninstall half-done, and a half-purged network is worse than an
+ * untouched one. On such a network the directories can be removed with `wp site-migrator` gone and
+ * a filesystem sweep, which is a thing an administrator of ten thousand sites can do and a plugin
+ * being deleted cannot.
+ *
+ * @return void
+ */
+function nfd_sm_uninstall() {
+	if ( ! is_multisite() ) {
+		if ( ! nfd_sm_import_unsettled() ) {
+			nfd_sm_purge_all();
+		}
+
+		return;
+	}
+
+	if ( wp_is_large_network( 'sites' ) ) {
+		return;
+	}
+
+	// `number => 0` is load-bearing. `WP_Site_Query` defaults to **100**, so the obvious call
+	// purges the first hundred sites of a network and leaves the rest -- which is precisely the
+	// half-purged state the guard above exists to avoid, arrived at by a default rather than by a
+	// timeout. Any network between 101 sites and `wp_is_large_network()` hits it.
+	$sites = get_sites(
+		array(
+			'fields' => 'ids',
+			'number' => 0,
+		)
+	);
+
+	foreach ( $sites as $site_id ) {
+		switch_to_blog( (int) $site_id );
+
+		try {
+			// Asked per site, because the answer is per site: the checkpoint lives under that
+			// site's own uploads directory.
+			if ( ! nfd_sm_import_unsettled() ) {
+				nfd_sm_purge_all();
+			}
+		} finally {
+			// A network left switched to the wrong site is a strange thing to hand back to
+			// whatever runs next, and one throw from a future change is all it would take.
+			restore_current_blog();
+		}
+	}
+}
+
+/**
  * Purge Migration related things
  */
 function nfd_sm_purge_all() {

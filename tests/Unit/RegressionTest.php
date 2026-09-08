@@ -16,6 +16,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\SearchReplace;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use PHPUnit\Framework\TestCase;
 
@@ -254,5 +255,199 @@ class RegressionTest extends TestCase {
 			$this->assertArrayNotHasKey( 'X-NFD-SM-Pairing', $sent['args']['headers'] );
 			$this->assertTrue( $sent['args']['sslverify'] );
 		}
+	}
+
+	/**
+	 * Deactivating the plugin does not destroy the package.
+	 *
+	 * Found on a production site. `register_deactivation_hook` pointed at `nfd_sm_purge_all()`,
+	 * which recursively deletes the storage directory -- so switching the plugin off, the routine
+	 * "turn everything off and find the conflict" move, silently deleted a package that had taken
+	 * an hour and several gigabytes to build. Removing data belongs in `uninstall.php`.
+	 */
+	public function test_deactivation_leaves_the_package_alone() {
+		$package = \nfd_sm_package_path();
+
+		\wp_mkdir_p( $package );
+		\file_put_contents( $package . '/manifest.json', '{}' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		\nfd_sm_flush_state();
+
+		$this->assertFileExists( $package . '/manifest.json' );
+		$this->assertDirectoryExists( \nfd_sm_storage_path() );
+
+		// And the hook points at it. The function being harmless is only half of the fix; the
+		// defect was which function the hook named, and nothing else here would notice it being
+		// pointed back.
+		$bootstrap = (string) \file_get_contents( __DIR__ . '/../../nfd-site-migrator.php' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		$this->assertStringContainsString(
+			"register_deactivation_hook( __FILE__, 'nfd_sm_flush_state' )",
+			$bootstrap
+		);
+		$this->assertStringNotContainsString(
+			"register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' )",
+			$bootstrap
+		);
+	}
+
+	/**
+	 * Uninstalling while an import is undecided is refused.
+	 *
+	 * The backup tables are the only copy of the site as it was, and `Importer::rollback()` reads
+	 * the checkpoint on disk to know how to put them back. Delete the state directory and the
+	 * tables are orphaned: a swapped site with no way home.
+	 */
+	public function test_an_undecided_import_is_not_purged() {
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['stage'] = ImportCheckpoint::STAGE_DONE;
+		$checkpoint->save( $state );
+
+		$this->assertTrue( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * Nor is one still in flight, which may be a statement short of the swap.
+	 */
+	public function test_an_import_in_progress_is_not_purged() {
+		$checkpoint = new ImportCheckpoint();
+
+		$checkpoint->save( ImportCheckpoint::defaults() );
+
+		$this->assertTrue( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * A decided run holds nothing back.
+	 *
+	 * Rolled back or confirmed, it is a record of what happened rather than the only way out of
+	 * it -- so deleting the plugin is free to take it.
+	 *
+	 * @dataProvider settled_states
+	 *
+	 * @param string $key Which decision was recorded.
+	 */
+	public function test_a_settled_import_is_purged( $key, $value ) {
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['stage'] = ImportCheckpoint::STAGE_DONE;
+		$state[ $key ]  = $value;
+		$checkpoint->save( $state );
+
+		$this->assertFalse( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * The two ways a finished import gets decided.
+	 *
+	 * @return array
+	 */
+	public function settled_states() {
+		return array(
+			'rolled back' => array( 'rolled_back', true ),
+			'confirmed'   => array( 'confirmed_at', '2026-09-02T00:00:00+00:00' ),
+		);
+	}
+
+	/**
+	 * With no import at all there is nothing to protect.
+	 */
+	public function test_no_import_means_nothing_to_hold_back() {
+		$this->assertFalse( \nfd_sm_import_unsettled() );
+	}
+
+	/**
+	 * A network is purged site by site, because a network has one of everything per site.
+	 *
+	 * Raised by the AI review on the uninstall change. Migration is blocked at preflight on
+	 * multisite, so what a network-activated plugin leaves behind is an empty protected directory
+	 * and a row of defaults on each site rather than a package — but `wp_get_upload_dir()` follows
+	 * `switch_to_blog()`, so deleting only the current site's is deleting one of however many.
+	 */
+	public function test_a_network_is_purged_site_by_site() {
+		\Fixture::$sites = array( 1, 2, 3 );
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array( 1, 2, 3 ), \Fixture::$switched );
+	}
+
+	/**
+	 * Every site, not the first hundred.
+	 *
+	 * Raised by the AI review, and it was right: `WP_Site_Query` defaults to `number = 100`, so
+	 * `get_sites( array( 'fields' => 'ids' ) )` silently pages. Any network between 101 sites and
+	 * `wp_is_large_network()` would have been purged down to its first hundred and left there --
+	 * the exact half-purged state the large-network guard exists to avoid, reached through a
+	 * default rather than a timeout.
+	 *
+	 * The unit suite could not have caught it either, which is the more useful half of the
+	 * lesson: `Fixture`'s `get_sites()` returned everything it held whatever it was asked for, so
+	 * the stub was more generous than the function it stood in for and the bug was invisible.
+	 * It honours `number` now.
+	 */
+	public function test_a_network_past_the_default_page_is_purged_whole() {
+		\Fixture::$sites = \range( 1, 150 );
+
+		\nfd_sm_uninstall();
+
+		$this->assertCount( 150, \Fixture::$switched );
+		$this->assertSame( 150, \end( \Fixture::$switched ) );
+	}
+
+	/**
+	 * A large network is left alone rather than half-purged.
+	 *
+	 * WordPress stops counting sites past `wp_is_large_network()`, and this stops deleting past it
+	 * for the same reason: a loop long enough to exhaust the request leaves the uninstall
+	 * half-done, which is a worse state than an untouched one.
+	 */
+	public function test_a_large_network_is_left_alone() {
+		\Fixture::$sites         = array( 1, 2, 3 );
+		\Fixture::$large_network = true;
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array(), \Fixture::$switched );
+	}
+
+	/**
+	 * And the refusal is asked per site, not once for the network.
+	 *
+	 * The checkpoint lives under a site's own uploads directory, so one site mid-migration must
+	 * not stop the others being cleaned, and must not be cleaned itself.
+	 */
+	public function test_one_undecided_site_does_not_stop_the_others() {
+		\Fixture::$sites = array( 1, 2 );
+
+		// Give site 1 an unsettled import, then run the uninstall over both.
+		\switch_to_blog( 1 );
+		$checkpoint = new ImportCheckpoint();
+		$checkpoint->save( ImportCheckpoint::defaults() );
+		$kept = \nfd_sm_storage_path();
+		\restore_current_blog();
+
+		// Site 2 has a storage directory and nothing to protect, so the uninstall should take it.
+		\switch_to_blog( 2 );
+		$purged = \nfd_sm_storage_path();
+		\restore_current_blog();
+
+		\Fixture::$switched = array();
+
+		\nfd_sm_uninstall();
+
+		$this->assertSame( array( 1, 2 ), \Fixture::$switched );
+
+		// The one mid-migration keeps its state, and the one that is not is actually gone --
+		// tracking the switches alone would pass for a loop that visited every site and deleted
+		// nothing.
+		$this->assertDirectoryExists( $kept );
+
+		\switch_to_blog( 2 );
+		$this->assertDirectoryDoesNotExist( $purged );
+		\restore_current_blog();
 	}
 }
