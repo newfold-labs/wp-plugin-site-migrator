@@ -16,10 +16,13 @@ export/import halves have been rebuilt. Read
 built, in what order, and why. `docs/code-analysis.md` records the defects that motivated it,
 and finding IDs (`2.4`, `3.11`, …) are referenced throughout the plan and in commit messages.
 
-Current state: **all phases are done** (0–3, 4a–4h, then 5, 6, 7, 8). A full migration works end to end, both
-from the CLI and through wp-admin: pair, compare, package, then either hand the package over
-directly or download and upload it, preview, import, roll back. What is left is the work that follows a first
-release rather than precedes it: the gaps listed at the end of this file, and wp.org submission.
+Current state: **phases 0–8 are done**, and phase 9 — `docs/phase-9-plan.md` — is built on top of
+them. A full migration works end to end, both from the CLI and through wp-admin: pair, compare,
+*choose what goes in*, package, then either hand the package over directly or download and upload
+it, preview, import, roll back. Phase 9 added two things: an export narrowed by a `Selection`, and
+a standing link from pairing so a direct transfer costs one copy-paste rather than two. What is
+left is the work that follows a first release rather than precedes it: the gaps listed at the end
+of this file, and wp.org submission.
 
 **Phase 5 has now run between two real WordPress installs**, after first being driven against a
 `php -S` harness. The harness covered the round trip, resume from a truncated part, a damaged part
@@ -45,6 +48,19 @@ covered the same ground through the CLI and through wp-admin, and found three mo
 Also confirmed on the real run: the 3.18 and 3.19 fixes hold. The same site that once packaged
 itself into 2.36GB with a 136MB `.git` pack now produces 550MB with `large: []` and 36 skipped
 paths.
+
+**Phase 9 has now run between the same two installs, both halves, and found four more.** A narrowed
+package (no media, four plugins refused, all three database filters on) and then a whole-site one,
+each carried by the standing link with nothing pasted, imported, verified and rolled back. The
+partial package proved out exactly as designed — no `wp-content/uploads/` entry anywhere, `jetpack`
+gone while `jetpack-boost` stayed, 0 revision rows against a live table holding 57, and the
+destination's own media untouched byte for byte — and the whole-site run then carried all of it,
+which is the pair of runs that shows the filters are opt-in rather than accidental. The four
+defects are written up in `docs/phase-9-plan.md`; two were structural and are described in place
+below (a saved selection un-marking a finished package; a settled import blocking the next one),
+one was a credential outliving its package, and two were wording. Note the second half was driven
+through the **CLI** because the destination's browser session expired — which is how
+`pull --linked` came to be exercised at all.
 
 **Calibrate your confidence from how 4c–4h were found.** Every one of them came from somebody
 using the plugin on a real site, not from review — including two data-integrity bugs (3.18, the
@@ -248,6 +264,51 @@ six near-identical archivers: everything that differed between them is data on a
 `ConfigScanner` reads the source's `wp-config.php` with `token_get_all()` — read-only, never
 `include`, never a regex.
 
+**What goes in the package is the user's choice, and the default is everything.** `Selection`
+(`Core/Export/Selection.php`) holds refusals only — a part turned off, paths inside a part, and the
+database filters for revisions, spam and transients, plus whole extra tables. Storing exceptions
+rather than inclusions is what keeps an untouched site packaging the whole thing, and what makes a
+part added in a later version carried by every existing saved selection instead of silently
+dropped from it. It is the security boundary as well as the model: a path may not climb out of its
+part, and the tables WordPress cannot start without may not be skipped, because the REST route
+behind the screen takes whatever it is handed.
+
+Three things about applying it. **`PartSpecs::all()` builds the whole list and narrows it
+afterwards** — `content-other` sweeps up whatever the other parts do not cover, computed from
+their roots, so narrowing first would let a deselected `uploads` come straight back in through it,
+which is a "leave the media behind" that packages the media. **An allowlisted part whose allowlist
+empties is dropped, not narrowed**: `PartSpec::only( array() )` leaves `is_allowlisted()` false and
+the walk falls back to the shallow one, which for `root-extras` means scanning the WordPress root
+and packaging `wp-config.php` — finding 2.4 reached from a direction that did not exist when it was
+fixed. And **`all()` defaults to everything**, because `PathMap` calls it on the *destination* to
+learn where that site keeps its plugins and themes; a destination that had once exported with a
+selection would otherwise map fewer directories than the package carries.
+
+**A run keeps the selection it started with.** `part_index` is a position in the part list, so a
+list that changed underneath a resume would restart the wrong part and finish a package whose
+manifest describes something else. The selection is written into the checkpoint before the first
+byte (schema 4) and every step reads that copy; the site's saved selection only decides where the
+*next* run begins, and `/export/contents` refuses to save while a run is unfinished rather than
+accepting a change that would quietly do nothing.
+
+**Saving a different selection un-marks a finished package.** `Exporting` starts a run only when
+the package is not already complete — correct, or every visit to the step would re-package a
+finished site — so with a package on disk, *Save and build the package* saved the selection and then
+routed straight to Deliver without building anything. What made that more than staleness is the
+manifest: it still carried the *old* `contents` block, so a source whose user had just asked for
+everything offered a partial package and the destination announced "uploads were left out on
+purpose" for a run nobody narrowed. `ExportController::choose()` calls `PackageWriter::invalidate()`
+when the stored selection differs from the one the manifest records — the same call phase 4f added
+for the same rule, that a manifest must never describe a package that is no longer what it says.
+The comparison is order-insensitive (`canonical()`), because one side was typed into a form and the
+other read back out of JSON; and only a real difference counts, so saving an unchanged selection
+never costs somebody an hour of packaging.
+
+**What was left out travels in the manifest**, under `contents`, absent meaning the whole site. It
+is the only way the destination can tell a site with no media from a package that deliberately
+left the media behind, and `Importer::manual_steps()` says so on the review screen — built from
+`Selection::describe()`, so both sides describe the choice with one implementation.
+
 **Symlinks are never packaged**, and are recorded in the manifest's `skipped_links` rather than
 dropped silently. Following one copies content from outside the site into the package.
 
@@ -398,6 +459,33 @@ overwritten. The credentials mirror each other — a destination mints a **pairi
 cannot be *targeted* by a stranger, a source mints a **transfer key** so a site cannot be *read*
 by one — and neither half of a migration can be started from outside.
 
+**There is no second code to carry, and the two codes were never mergeable.** They authenticate
+opposite directions — the pairing code lets *this source read that destination*, lives fifteen
+minutes there as a `wp_hash_password()` hash, and is deliberately not kept here; the transfer key
+lets *that destination read this source*, hours later, across hundreds of requests. What they share
+is a moment. At the instant pairing succeeds both ends have proved themselves, so the source mints
+a **link token** (`Core/Transfer/Link.php`), sends it as a header on the pairing request it already
+makes, and the destination keeps it (`Core/Transfer/LinkedSource.php`) — but *only after
+`Pairing::redeem()` succeeds*, or the route would let a stranger point a site at a source of their
+choosing.
+
+Four properties hold it together. The token is **worth nothing on its own**: presenting it asks one
+question, and until an administrator on the source presses *Offer* the answer is the same 404 a
+stranger gets, so it cannot even be used to find out whether the source has a package. The key is
+**minted at the moment it is claimed**, not when it is offered, so the source still stores nothing
+but a hash and `TransferKey`'s promise is not quietly traded away for this convenience. The claim
+is **single-use per offer**, and the address that took it is shown on the source's own screen. And
+the link is **deliberately not IP-bound**, which is where it differs from the key: a key binds
+because a transfer is one conversation with one machine, while a link is a standing arrangement and
+a destination behind more than one egress address would find it refused invisibly, with re-pairing
+as the only cure.
+
+It is **pull, not push**, like everything else: the destination asks (`/import/pull/offer` → the
+source's `/transfer/handoff`) and claims on a click (`/import/pull/link`), so the person authorising
+the overwrite is still standing at the machine being overwritten, and a link that works proves the
+direction the transfer itself needs. The manual key stays on both screens — a source talking to an
+older destination gets `linked: false` back from pairing and falls through to it.
+
 **The transfer key is long and its hash is fast, which is the opposite of the pairing code.** A
 pairing code is twelve characters because a human reads it aloud, so it is stored under
 `wp_hash_password()`; there is nothing to guess in 48 characters of `random_bytes()`, and the
@@ -406,6 +494,14 @@ check is paid on every one of the hundreds of requests a large pull makes. It ex
 case this exists for — and it **binds to the first caller's address**, so a key that leaks once a
 transfer is under way is already useless. A wrong key gets a 404, not a 401, for the same reason
 `/pairing/profile` does.
+
+**A credential does not survive the package it was minted for.** `Exporter::step()` revokes the
+transfer key and withdraws the outstanding offer in the same fresh-run branch that calls
+`PackageWriter::reset()` — the point at which the old package stops existing. Without it a
+destination still holding the key would fetch a *different* site under a credential issued for
+another, and the source's own Deliver screen drew the previous transfer's bytes against the new
+package's total, which is a progress bar comparing two packages. `withdraw()` rather than
+`revoke()`: the pairing is a standing arrangement and survives, so only the offer ends.
 
 **Progress is the bytes on disk, not a number anything keeps.** Sizes come from the manifest the
 source declared; how far along each file is comes from `filesize()`. There is no checkpoint to
@@ -437,7 +533,7 @@ room for. `sslverify` is always on and never tied to this site's own scheme (fin
 plugin lives here".
 
 **CLI** (`includes/Cli/`):
-`wp site-migrator preflight|export|inspect|verify|import|rollback|cancel|confirm|offer|pull`. A
+`wp site-migrator preflight|contents|export|inspect|verify|import|rollback|cancel|confirm|offer|pull`. A
 real second consumer of `Core/` from the day `Core/` existed, which is what makes the round-trip
 test a shell script — and, since phase 6, a supported surface rather than a harness.
 
@@ -508,6 +604,15 @@ the server's `rolled_back` / `confirmed`). A finished run that is still **undeci
 its backup tables are the only copy of this site as it was. `Importer::rollback()` and `confirm()`
 say which of the two already happened rather than "nothing to undo".
 
+**"Already imported" means finished *and undecided*.** `Importer::is_complete()` guards the run
+that swapped and has been neither rolled back nor kept — its `nfdold_` tables are the only copy of
+the site as it was, so importing over them destroys the way back. It asked only whether a finished
+run named this directory, so a *settled* one counted too, and the refusal told the user to "roll it
+back first" when that is exactly what they had done. A linked pull always stages into the same
+directory, so the package path matches on every retry: this is the state *Try a different package*
+leads into. `ImportCheckpoint::is_settled()` already drew the line for `step()`, `Resume` and the
+Done screen; this was the one caller left out.
+
 **Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
 before they can render. The resume redirect used to `return null`: a blank admin page, on the
 first thing anybody sees.
@@ -517,6 +622,13 @@ already on disk; `/export/verify` re-reads every byte and runs **only when asked
 the check that protects anybody — checksums are taken as each volume closes and the destination
 re-verifies before it writes — so it is a button, not a minute per visit. Download-all stays
 enabled until a check has *actually failed*: unverified means unknown, not broken.
+
+**`/contents` shares the *Package* step**, the same way `/send` and `/download` share *Deliver*:
+choosing what goes in is part of packaging, not a step of its own, and it is reached from the
+Compatibility screen rather than sitting in everybody's way. The picker offers names, not sizes —
+a directory's size is a walk of the whole site, which is the expensive half of an export, and
+making somebody wait through most of one to decide what to leave out of it is a strange trade.
+Table sizes *are* shown, because `SHOW TABLE STATUS` is a single query.
 
 **The last source step is *Deliver*, and two screens share it.** `/send` hands the package over
 directly and `/download` is the fallback for a source the destination cannot reach; both render
@@ -788,6 +900,20 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - Nothing has been transferred through a host that buffers or rewrites `Range` responses, which is
   the failure the per-file checksum exists to catch and the one most likely to need a real site to
   find.
+- **The standing link degrading to the manual key has not been watched.** The link itself has now
+  run end to end between two real installs, through the browser and through `pull --linked`. What
+  is still untested: a destination whose pairing succeeded against an *older* source, so no token
+  was ever sent; and a source re-paired with a second destination while the first still holds a
+  token — the second pairing replaces the link, and the first destination's token then answers 404
+  forever with nothing saying why.
+- Database row filters are exercised end to end for revisions and transients. **Spam comments are
+  the same mechanism with a different clause and have never met an actual spam row** — the live
+  source had none, so the `WHERE` ran and excluded nothing. That is an argument, not a test.
+- **A rollback logs the administrator out of the destination.** Observed after the partial run: the
+  browser landed on `wp-login.php` with "Cookie check failed" on the screen that offers *Try a
+  different package*. `Fixups` re-issues the auth cookie for the merged user during the import, and
+  nothing re-issues one for the site's own user when the swap goes back. Not investigated further;
+  the CLI drove the rest of that test.
 
 ## Git Commits
 - Keep commit messages under one line, ~50 chars max

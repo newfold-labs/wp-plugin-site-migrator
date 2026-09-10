@@ -83,6 +83,13 @@ The first three are filterable through `nfd_sm_excluded_names`. Everything refus
 the manifest** — `skipped_paths` for directories, `skipped_links` for symlinks — because a package
 that is quietly missing something is worse than one that is honestly smaller.
 
+Everything above is refused on the plugin's own judgement. **A user may refuse more**: any part,
+any immediate child of one, whole extra database tables, and the row filters for post revisions,
+spam and trashed comments, and transients. Those choices are recorded in `contents` (below) and
+described on the destination's review screen, for the same reason — a package with no `uploads`
+part is indistinguishable from a site with no media unless it says so. The database itself always
+travels, and the tables WordPress cannot start without are never skippable.
+
 ## Large files
 
 Standard zip cannot append a single entry incrementally: a 2GB video cannot be written across
@@ -156,6 +163,15 @@ make each file fractionally larger. Everything else is deflated normally.
   "large": [
     { "path": "wp-content/uploads/2024/03/film.mp4", "bytes": 398…, "sha256": "…" }
   ],
+  "contents": {
+    "everything": false,
+    "selection": {
+      "parts": { "uploads": false },
+      "paths": { "plugins": [ "some-plugin" ] },
+      "database": { "skip_revisions": true, "skip_tables": [ "wp_acme_log" ] }
+    },
+    "parts": { "included": [ "plugins", "themes", "…" ], "excluded": [ "uploads" ] }
+  },
   "skipped_links": { "total": 2, "paths": [ "wp-content/uploads/shared-media" ] },
   "skipped_paths": { "total": 37, "paths": [ "wp-content/plugins/acme/vendor/x/.git" ] },
   "totals": { "bytes": 4021…, "files": 18422 }
@@ -165,7 +181,7 @@ make each file fractionally larger. Everything else is deflated normally.
 `skipped_links` and `skipped_paths` each carry a full count and a sample of at most 50 paths, so
 a site that symlinks a thousand things does not turn the manifest into a list of them.
 
-Five fields exist purely so the import half is not left guessing.
+Six fields exist purely so the import half is not left guessing.
 
 **`source.abspath`** cannot be derived from `content_dir`: the two are related by convention, and
 `WP_CONTENT_DIR` is precisely the constant people move. Import rewrites absolute paths out of the
@@ -189,6 +205,13 @@ does not read that version refuses the package outright rather than reading it a
 a shape change with the version left alone is worse than no version at all, because every lookup
 then silently returns its default and the gates report "indeterminate" instead of the real reason.
 
+**`contents`** is what the user chose to leave out, and is **absent on a package built before this
+existed** — which reads correctly as the whole site. It holds refusals only, never inclusions, so
+a part introduced in a later version is carried rather than dropped. `parts.excluded` names parts
+that are missing for any reason, including one that dropped out because every item inside it was
+refused. The destination reconstructs the description from `selection` with the same
+`Selection::describe()` the source uses, rather than writing a second account of it.
+
 **`wp_config`** is the read-only result of tokenising the source's `wp-config.php`. Credentials,
 salts, paths and the table prefix are dropped outright; anything whose name looks like a secret is
 recorded as a name with no value; the small remainder is offered to the user as a block of text to
@@ -204,6 +227,11 @@ recognised.
 Transient. Records the stage, the index of the part in progress, the byte offset into that part's
 list file, and — when a large file is being copied — the offset within it. Database progress is
 the four offsets `DatabaseBase::export()` already maintains by reference.
+
+It also carries the run's own copy of the **selection** (schema 4). `part_index` is a position in
+a list built from it, so a run has to keep the list it began with: changing what the site packages
+while an export is under way would otherwise shift the parts underneath the resume and finish a
+package whose manifest describes something else.
 
 It is written **after** the on-disk state it describes has been flushed, never before. A
 checkpoint therefore always points at or behind the true state: the worst case on resume is
