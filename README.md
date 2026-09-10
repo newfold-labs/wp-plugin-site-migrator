@@ -43,6 +43,13 @@ wherever they hide. One real site had a 129.8MB `.git` nine levels deep inside a
 dependency. Symlinks are never followed, because following one quietly packages somebody else's
 files. Everything skipped is named in the manifest, so "where did it go" always has an answer.
 
+**You choose what travels.** Everything goes unless you say otherwise, and the *Choose what to
+include* screen lets you say otherwise: whole parts, individual plugins, themes and upload folders,
+or the parts of the database nothing reads — post revisions, spam, cached transients, a log table
+that has grown to gigabytes. Whatever you leave out, the destination simply keeps what it already
+has in that place, and the package records the choice so the other site can tell "this site has no
+media" from "the media was deliberately left behind".
+
 **It survives your host.** Work happens in short, budgeted steps that checkpoint and return, so a
 30-second execution limit is an inconvenience rather than a wall. Close the tab. Come back
 tomorrow. It picks up mid-file.
@@ -73,6 +80,18 @@ already worthless.
 
 Present a wrong key and you get a **404**, not a 401. A 401 would cheerfully confirm that a
 WordPress site with this plugin lives at that address.
+
+**And you only ever carry one of them.** The two codes authenticate opposite directions and cannot
+be merged — but they share a moment. At the instant pairing succeeds both ends have proved
+themselves, so the source leaves a **link token** behind and the destination keeps it. Later, when
+the source presses *Offer it to the destination*, the other site simply asks whether anything is
+waiting and shows you a **Start the transfer** button. Nothing to copy the second time.
+
+The link is worth nothing on its own: presenting it asks one question, and until somebody on the
+source presses *Offer* the answer is the same 404 a stranger gets. The transfer key is minted at the
+moment it is claimed, not when it is offered, so the source still never stores anything but a hash —
+and the address that took it is shown on the source's own screen. Typing a key by hand still works,
+and is what happens automatically if the other site is running an older build.
 
 ---
 
@@ -145,45 +164,52 @@ The destination fetches the package straight from the source. Nothing goes throu
    WordPress version, free space and database capabilities directly from it.
 3. **Compatibility** shows what it found. Anything that would break the move blocks here — a check
    that could not run counts as a failure, not a pass.
-4. **Package.** The site is archived in resumable steps. You can close the tab; reopening picks up
+4. **Choose what to include** — optional, and reached from the Compatibility screen. Everything is
+   packaged unless you tick something off: whole parts, individual plugins, themes or upload
+   folders, and the database rows nothing reads. The screen warns about the choices that hurt, and
+   sums up what you are leaving out before you commit to it. Skip it and you get the whole site.
+5. **Package.** The site is archived in resumable steps. You can close the tab; reopening picks up
    where it stopped. Pause is safe.
-5. **Deliver → Generate a transfer key.** Copy the key and the address. The key is shown once.
+6. **Deliver → Offer it to the destination.** Nothing to copy: the destination already holds a token
+   from the pairing, and this tells it there is something to fetch. (*Generate a transfer key* is
+   still there beside it, for a destination that was never paired with this one.)
 
 **On the destination** — *Bring in a package → Fetch it from the source*
 
-6. Paste the address and the key. It starts pulling, checksumming each file as it lands. Close the
-   tab, come back, open a second tab — the progress is measured from the files on disk, so all
-   three agree.
-7. When it finishes it verifies every file, then **See what it would do**.
+7. The screen already says *"…is offering a package right now"*, with the size and what — if
+   anything — the source deliberately left out. Press **Start the transfer**. It pulls, checksumming
+   each file as it lands. Close the tab, come back, open a second tab — the progress is measured
+   from the files on disk, so all three agree.
+8. When it finishes it verifies every file, then **See what it would do**.
 
 **Both sites — the review**
 
-8. **Review** shows everything before anything is written: the URL rewrite, every account and what
-   it will sign in as, which plugins and themes arrive, and any `wp-config.php` settings the source
-   had that this site does not. Nothing is written to your `wp-config.php` — it prints them for you
-   to copy.
-9. Tick the box, **Import it**. Files land first, the database loads into staging tables the live
-   site never reads, and everything that can fail happens before the swap.
-10. **Finish.** Check the front page, a few posts, your images, and signing in. Then **Keep it**, or
+9. **Review** shows everything before anything is written: the URL rewrite, every account and what
+   it will sign in as, which plugins and themes arrive, anything the source left out of the package
+   on purpose, and any `wp-config.php` settings the source had that this site does not. Nothing is
+   written to your `wp-config.php` — it prints them for you to copy.
+10. Tick the box, **Import it**. Files land first, the database loads into staging tables the live
+    site never reads, and everything that can fail happens before the swap.
+11. **Finish.** Check the front page, a few posts, your images, and signing in. Then **Keep it**, or
     **Undo the import** and the old site comes straight back.
 
-> Until step 10, `Keep it` has not run and your old site is intact in `nfdold_` tables. After it,
+> Until step 11, `Keep it` has not run and your old site is intact in `nfdold_` tables. After it,
 > the old tables are dropped and the import cannot be undone.
 
 ---
 
 ### Flow B — Download and upload
 
-Identical up to step 4. Use this when the destination cannot reach the source.
+Identical up to step 5. Use this when the destination cannot reach the source.
 
-5. On **Deliver**, choose **Download the package instead**. Your browser asks for a folder and
+6. On **Deliver**, choose **Download the package instead**. Your browser asks for a folder and
    streams every file into it, subdirectories preserved — hand that folder straight to the
    destination's picker. If your browser doesn't support folder picking, files download
    individually instead.
-6. On the destination, *Bring in a package → **Choose the package folder***, and select the folder
+7. On the destination, *Bring in a package → **Choose the package folder***, and select the folder
    you just downloaded. Uploads go in small pieces and resume where they stopped, so a dropped
    connection is not a lost upload.
-7. Continue from step 7 above.
+8. Continue from step 8 above.
 
 ---
 
@@ -195,7 +221,7 @@ For very large sites, this is the quickest route and the one least likely to tim
 2. Copy the package directory to the destination by SSH, `rsync` or FTP. Anywhere works; inside
    `wp-content/uploads/nfd-site-migrator/` is tidiest.
 3. On the destination, *Bring in a package* lists it under **Already on this server**. Click
-   **Use this**, and continue from step 8 above.
+   **Use this**, and continue from step 9 above.
 
 ---
 
@@ -205,6 +231,7 @@ For sites where the browser is the wrong tool — a hundred thousand files, or t
 
 ```bash
 # on the source
+wp site-migrator contents                     # optional -- what to leave out (see below)
 wp site-migrator export                       # package this site
 wp site-migrator offer                        # prints an address and a transfer key
 
@@ -217,11 +244,50 @@ wp site-migrator confirm                      # keep it, drop the old tables
 wp site-migrator rollback                     # or put the old site back
 ```
 
+If the two sites have been paired, neither the address nor the key needs carrying:
+
+```bash
+wp site-migrator offer --link                 # on the source: mark it offered
+wp site-migrator pull --linked                # on the destination: take it, no arguments
+```
+
 `wp site-migrator cancel` abandons an import that has not yet swapped in — the live site is
 untouched either way. Add `--yes` to skip a confirmation.
 
 Mixing surfaces is fine. Package on the CLI, import in the browser; start a pull in the browser
 and finish it from a shell. Progress lives on disk, not in a session.
+
+### Choosing what goes in the package
+
+The selection is stored on the site, not passed to `export`, so a run started here and a run started
+in the browser package the same thing — and the *Choose what to include* screen shows whatever you
+set here.
+
+```bash
+wp site-migrator contents            # what the next export will leave out
+wp site-migrator contents --list     # the parts, and the names inside each one
+wp site-migrator contents --reset    # forget it; carry the whole site again
+
+echo '{"parts":{"uploads":false},
+       "paths":{"plugins":["akismet"]},
+       "database":{"skip_revisions":true,"skip_transients":true}}' \
+  | wp site-migrator contents --set=-
+```
+
+`--set` takes a JSON file, or `-` for standard input. It answers with what it understood:
+
+```
+leaving_out
+uploads (the media library)
+1 item from plugins (akismet)
+post revisions
+cached transients
+```
+
+**Anything it cannot honour is dropped rather than obeyed.** A path that climbs out of its part, and
+the tables WordPress cannot start without, are refused here and not merely hidden in the UI — the
+same check runs whichever surface asks. So `{"database":{"skip_tables":["wp_posts"]}}` is quietly
+ignored, and a package is never made unimportable by a typo.
 
 ### Looking before you leap
 
@@ -237,8 +303,8 @@ which on a large package is minutes rather than milliseconds. Both are read-only
 
 ### Scripting it
 
-Four commands report rather than act — `preflight`, `inspect`, `verify` and `offer` — and all four
-take `--format=table|json|csv|yaml`. **Data goes to stdout, everything else to stderr**, so the
+Five commands report rather than act — `preflight`, `contents`, `inspect`, `verify` and `offer` —
+and all five take `--format=table|json|csv|yaml`. **Data goes to stdout, everything else to stderr**, so the
 JSON is the only thing in the pipe:
 
 ```bash
