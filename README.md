@@ -267,15 +267,17 @@ set here.
 wp site-migrator contents            # what the next export will leave out
 wp site-migrator contents --list     # the parts, and the names inside each one
 wp site-migrator contents --reset    # forget it; carry the whole site again
-
-echo '{"parts":{"uploads":false},
-       "paths":{"plugins":["akismet"]},
-       "database":{"skip_revisions":true,"skip_transients":true}}' \
-  | wp site-migrator contents --set=-
+wp site-migrator contents --set=<json>
 ```
 
-`--set` takes a JSON file, or `-` for standard input. It answers with what it understood:
+`--set` takes **inline JSON, a path to a JSON file, or `-` for standard input**, and answers with
+what it understood:
 
+```bash
+wp site-migrator contents --set='{"parts":{"uploads":false},
+                                 "paths":{"plugins":["akismet"]},
+                                 "database":{"skip_revisions":true,"skip_transients":true}}'
+```
 ```
 leaving_out
 uploads (the media library)
@@ -284,10 +286,58 @@ post revisions
 cached transients
 ```
 
-**Anything it cannot honour is dropped rather than obeyed.** A path that climbs out of its part, and
-the tables WordPress cannot start without, are refused here and not merely hidden in the UI — the
-same check runs whichever surface asks. So `{"database":{"skip_tables":["wp_posts"]}}` is quietly
-ignored, and a package is never made unimportable by a typo.
+#### Everything you can put in it
+
+Three keys, all optional. **Everything is an exclusion** — a key you leave out is carried:
+
+```jsonc
+{
+  "parts":    { "<part>": false },              // leave a whole part behind
+  "paths":    { "<part>": ["<name>", "..."] },  // leave items inside a part behind
+  "database": {
+    "skip_revisions":  true,                    // every saved draft of every post
+    "skip_spam":       true,                    // comments marked as junk or trashed
+    "skip_transients": true,                    // WordPress's own cache rows
+    "skip_tables":     ["<table>", "..."]       // whole tables
+  }
+}
+```
+
+The seven part names, which `--list` prints along with what is inside each on your site:
+
+| part | what it is |
+|---|---|
+| `plugins` | `wp-content/plugins` |
+| `themes` | `wp-content/themes` |
+| `mu-plugins` | `wp-content/mu-plugins` |
+| `uploads` | `wp-content/uploads` — the media library |
+| `dropins` | `object-cache.php` and friends, in `wp-content` |
+| `content-other` | whatever in `wp-content` the parts above do not cover |
+| `root-extras` | `.htaccess`, `robots.txt` and the like at the site root |
+
+`paths` names items *inside* a part — a plugin directory, a theme, a year of uploads — using the
+names `--list` reports, relative to the part and never a full path:
+
+```bash
+wp site-migrator contents --set='{"paths":{"plugins":["akismet"],"uploads":["2019"]}}'
+```
+
+`skip_tables` takes table names with this site's prefix or without it.
+
+**What it refuses.** A path that climbs out of its part, and the twelve tables WordPress cannot
+start without — `posts`, `postmeta`, `options`, `users`, `usermeta`, `terms`, `termmeta`,
+`term_taxonomy`, `term_relationships`, `comments`, `commentmeta`, `links` — are dropped rather than
+obeyed. The check is server-side, so it runs whichever surface asks: `{"skip_tables":["wp_posts"]}`
+is quietly ignored, and no typo can produce a package that cannot be imported.
+
+**What it keeps but flags.** A part name this site does not have is stored rather than thinned —
+a selection may outlive a version, or have been written for a different site — but `contents` says
+so, because otherwise a typo like `"upload"` would be echoed back as though it had been honoured:
+
+```
+Warning: this site has no part called upload. It is stored, but nothing will be
+left out for it. Run --list for the names.
+```
 
 ### Looking before you leap
 

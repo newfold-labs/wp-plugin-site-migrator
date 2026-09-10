@@ -337,10 +337,11 @@ class Commands {
 	 * : Print the parts and what can be ticked off inside each of them, instead of the current
 	 * selection. These are the names `--set` expects.
 	 *
-	 * [--set=<file>]
-	 * : Read a selection from a JSON file and store it. `-` reads standard input. The shape is
-	 * `{"parts":{"uploads":false},"paths":{"plugins":["akismet"]},"database":{"skip_revisions":true}}`.
-	 * Anything unrecognised, and any choice that would break the destination, is dropped.
+	 * [--set=<json>]
+	 * : Store a selection. Takes inline JSON, a path to a JSON file, or `-` for standard input.
+	 * Everything is an exclusion: an untouched key is carried. A choice that would break the
+	 * destination is dropped rather than obeyed. A part name this site does not have is kept --
+	 * a selection may outlive a version or be written for another site -- but it is reported.
 	 *
 	 * [--reset]
 	 * : Forget the selection, so the next export carries the whole site.
@@ -348,11 +349,62 @@ class Commands {
 	 * [--format=<format>]
 	 * : table, json, csv or yaml. Defaults to table.
 	 *
+	 * ## THE SELECTION
+	 *
+	 * Three keys, all optional:
+	 *
+	 *     {
+	 *       "parts":    { "<part>": false },
+	 *       "paths":    { "<part>": [ "<name>", ... ] },
+	 *       "database": {
+	 *         "skip_revisions":  true,
+	 *         "skip_spam":       true,
+	 *         "skip_transients": true,
+	 *         "skip_tables":     [ "<table>", ... ]
+	 *       }
+	 *     }
+	 *
+	 * `parts` leaves a whole part behind. `false` excludes; `true` and any absent key are carried.
+	 * The seven part names, which `--list` prints with what is inside each:
+	 *
+	 *     plugins        wp-content/plugins
+	 *     themes         wp-content/themes
+	 *     mu-plugins     wp-content/mu-plugins
+	 *     uploads        wp-content/uploads
+	 *     dropins        object-cache.php and friends, in wp-content
+	 *     content-other  whatever in wp-content the parts above do not cover
+	 *     root-extras    .htaccess, robots.txt and the like at the site root
+	 *
+	 * `paths` leaves individual items inside a part behind — a plugin directory, a theme, a year
+	 * of uploads. Names are the ones `--list` reports, relative to the part, never a full path. A
+	 * name that climbs out of its part is dropped.
+	 *
+	 * `database` drops rows nothing reads. The three flags are `skip_revisions` (every saved draft
+	 * of every post), `skip_spam` (comments marked as junk or trashed) and `skip_transients`
+	 * (WordPress's own `_transient_` and `_site_transient_` cache rows, which it rebuilds by
+	 * itself). `skip_tables` leaves whole tables behind, named with this site's prefix or without
+	 * it. The twelve WordPress cannot start without are refused: posts, postmeta, options, users,
+	 * usermeta, terms, termmeta, term_taxonomy, term_relationships, comments, commentmeta, links.
+	 *
 	 * ## EXAMPLES
 	 *
+	 *     # what the next export will leave out
 	 *     wp site-migrator contents
+	 *
+	 *     # the parts, and the names inside each one
 	 *     wp site-migrator contents --list
+	 *
+	 *     # inline
+	 *     wp site-migrator contents --set='{"parts":{"uploads":false},"database":{"skip_revisions":true}}'
+	 *
+	 *     # from a file, or from a pipe
+	 *     wp site-migrator contents --set=selection.json
 	 *     echo '{"database":{"skip_revisions":true}}' | wp site-migrator contents --set=-
+	 *
+	 *     # a plugin and a year of media, but keep everything else
+	 *     wp site-migrator contents --set='{"paths":{"plugins":["akismet"],"uploads":["2019"]}}'
+	 *
+	 *     # carry the whole site again
 	 *     wp site-migrator contents --reset
 	 *
 	 * @param array $args       Positional arguments.
@@ -375,14 +427,28 @@ class Commands {
 		}
 
 		if ( isset( $assoc_args['set'] ) ) {
-			$raw = '-' === $assoc_args['set']
+			$given = (string) $assoc_args['set'];
+
+			// A leading brace can only be JSON: no file is named `{...}`. Reaching for the inline
+			// form first is the obvious thing to try, and reading it as a path answered "Could not
+			// read that file" about a string that was never meant to be one.
+			if ( 0 === \strncmp( \ltrim( $given ), '{', 1 ) ) {
+				$raw = $given;
+			} elseif ( '-' === $given ) {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions
-				? \file_get_contents( 'php://stdin' )
+				$raw = \file_get_contents( 'php://stdin' );
+			} elseif ( \is_readable( $given ) ) {
 				// phpcs:ignore WordPress.WP.AlternativeFunctions
-				: ( \is_readable( $assoc_args['set'] ) ? \file_get_contents( $assoc_args['set'] ) : false );
+				$raw = \file_get_contents( $given );
+			} else {
+				$raw = false;
+			}
 
 			if ( false === $raw ) {
-				Output::fail( 'Could not read that file.', Output::EXIT_FAILURE );
+				Output::fail(
+					'Could not read that. --set takes inline JSON, a path to a JSON file, or - for standard input.',
+					Output::EXIT_FAILURE
+				);
 
 				return;
 			}
@@ -390,12 +456,13 @@ class Commands {
 			$decoded = \json_decode( (string) $raw, true );
 
 			if ( ! \is_array( $decoded ) ) {
-				Output::fail( 'That file is not a JSON object.', Output::EXIT_FAILURE );
+				Output::fail( 'That is not a JSON object.', Output::EXIT_FAILURE );
 
 				return;
 			}
 
 			Selection::store( $decoded );
+			self::warn_unknown_parts( Selection::current() );
 		}
 
 		$selection = Selection::current();
@@ -419,6 +486,48 @@ class Commands {
 					$leaving
 				),
 			array( 'leaving_out' )
+		);
+	}
+
+	/**
+	 * Say so when a selection names a part this site does not have.
+	 *
+	 * A selection stores refusals by name and is deliberately *not* filtered against the current
+	 * part list -- a part added in a later version, or a selection written for another site, must
+	 * survive being read here rather than being silently thinned. The cost is that a typo survives
+	 * too, and `contents` would then report `leaving_out: upload` for an export that carries
+	 * `uploads` in full. The command's whole job is to say what the next export will leave behind,
+	 * so a name it cannot match is worth a word.
+	 *
+	 * Stored either way, and written to stderr, so the stdout payload stays exactly the selection.
+	 *
+	 * @param Selection $selection The selection just stored.
+	 *
+	 * @return void
+	 */
+	protected static function warn_unknown_parts( Selection $selection ) {
+		$known = array();
+
+		foreach ( PartSpecs::catalog( 0 ) as $part ) {
+			$known[] = $part['name'];
+		}
+
+		$stored  = $selection->to_array();
+		$named   = \array_merge(
+			\array_keys( (array) $stored['parts'] ),
+			\array_keys( (array) $stored['paths'] )
+		);
+		$unknown = \array_values( \array_unique( \array_diff( $named, $known ) ) );
+
+		if ( empty( $unknown ) ) {
+			return;
+		}
+
+		Output::progress(
+			\sprintf(
+				'Warning: this site has no part called %s. It is stored, but nothing will be left out for it. Run --list for the names.',
+				\implode( ', ', $unknown )
+			)
 		);
 	}
 
