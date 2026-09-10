@@ -17,6 +17,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use PHPUnit\Framework\TestCase;
 
@@ -350,6 +351,38 @@ class RegressionTest extends TestCase {
 			'rolled back' => array( 'rolled_back', true ),
 			'confirmed'   => array( 'confirmed_at', '2026-09-02T00:00:00+00:00' ),
 		);
+	}
+
+	/**
+	 * A rolled-back run does not block importing another package into the same directory.
+	 *
+	 * `is_complete()` guards the run that finished and has been neither undone nor kept, because
+	 * its backup tables are the only copy of the site as it was. A settled one is finished
+	 * business. Without the distinction the refusal fired after a rollback and said "roll it back
+	 * first" -- advice the user had already taken -- and a linked pull always stages into the same
+	 * directory, so the package path matched every time.
+	 *
+	 * @dataProvider settled_states
+	 *
+	 * @param string $key   Which decision was recorded.
+	 * @param mixed  $value What it was recorded as.
+	 */
+	public function test_a_settled_import_does_not_refuse_the_next_package( $key, $value ) {
+		$dir        = $this->dir . '/incoming';
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['stage']   = ImportCheckpoint::STAGE_DONE;
+		$state['package'] = $dir;
+		$checkpoint->save( $state );
+
+		// Undecided, the same package is refused: this is the case the guard exists for.
+		$this->assertTrue( ( new Importer( $dir ) )->is_complete() );
+
+		$state[ $key ] = $value;
+		$checkpoint->save( $state );
+
+		$this->assertFalse( ( new Importer( $dir ) )->is_complete() );
 	}
 
 	/**

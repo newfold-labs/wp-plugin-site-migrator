@@ -199,6 +199,13 @@ export const api = {
 			method: 'POST',
 			data: { paused },
 		} ),
+	exportContents: () => call( { path: `${ BASE }/export/contents` } ),
+	exportChoose: ( selection ) =>
+		call( {
+			path: `${ BASE }/export/contents`,
+			method: 'POST',
+			data: { selection },
+		} ),
 	exportManifest: () => call( { path: `${ BASE }/export/manifest` } ),
 	exportVerify: () => call( { path: `${ BASE }/export/verify` } ),
 	exportCancel: () =>
@@ -278,6 +285,12 @@ export const api = {
 
 			state: () => stableCall( 'import/pull/state' ),
 
+			// The standing link pairing left behind. `offer` only asks; `link` claims the key
+			// and connects in one request, because they are one decision.
+			offer: () => stableCall( 'import/pull/offer' ),
+
+			link: () => stableCall( 'import/pull/link', { method: 'POST' } ),
+
 			stop: () => stableCall( 'import/pull/stop', { method: 'POST' } ),
 		},
 	},
@@ -288,6 +301,13 @@ export const api = {
 		revoke: () =>
 			call( { path: `${ BASE }/transfer/key`, method: 'DELETE' } ),
 		status: () => call( { path: `${ BASE }/transfer/status` } ),
+
+		// The link, and the offer over it. No key is minted until the destination claims one.
+		link: () => call( { path: `${ BASE }/transfer/link` } ),
+		offer: () =>
+			call( { path: `${ BASE }/transfer/link`, method: 'POST' } ),
+		withdraw: () =>
+			call( { path: `${ BASE }/transfer/link`, method: 'DELETE' } ),
 	},
 
 	downloadUrl: ( file ) => restEndpoint( 'export/download', { file } ),

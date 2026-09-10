@@ -51,6 +51,19 @@ if ( ! defined( 'NFD_SM_TRANSFER_SOURCE_OPTION' ) ) {
 	define( 'NFD_SM_TRANSFER_SOURCE_OPTION', 'nfd_site_migrator_transfer_source' );
 }
 
+// The two halves of the standing link pairing leaves behind: the source keeps a hash of the
+// token it minted, the destination keeps the token itself. Both are credentials, which is why
+// they are named in NFD_SM_OPTIONS_LIST below -- that list is what the database dump leaves out,
+// and a link secret that travelled inside a package would be readable by whoever the package
+// reached.
+if ( ! defined( 'NFD_SM_LINK_OPTION' ) ) {
+	define( 'NFD_SM_LINK_OPTION', 'nfd_site_migrator_link' );
+}
+
+if ( ! defined( 'NFD_SM_LINKED_SOURCE_OPTION' ) ) {
+	define( 'NFD_SM_LINKED_SOURCE_OPTION', 'nfd_site_migrator_linked_source' );
+}
+
 if ( ! defined( 'NFD_SM_OPTIONS_LIST' ) ) {
 	define(
 		'NFD_SM_OPTIONS_LIST',
@@ -59,6 +72,8 @@ if ( ! defined( 'NFD_SM_OPTIONS_LIST' ) ) {
 			NFD_SM_PAUSED_OPTION,
 			NFD_SM_TRANSFER_KEY_OPTION,
 			NFD_SM_TRANSFER_SOURCE_OPTION,
+			NFD_SM_LINK_OPTION,
+			NFD_SM_LINKED_SOURCE_OPTION,
 		)
 	);
 }

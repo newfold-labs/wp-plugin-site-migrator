@@ -59,11 +59,18 @@ const ago = ( at ) => {
  * and no database read that hands somebody a working one — which is worth the cost of a user who
  * loses it having to press the button a second time.
  *
+ * When the two sites are already linked — which they are whenever pairing succeeded — none of that
+ * needs a person at all. *Offer* marks the package as available to that one site; the destination,
+ * which has held a token since pairing, sees it and asks for a key of its own accord. The key is
+ * still minted here and still shown to nobody. The manual path stays below it, because a link only
+ * exists if pairing happened and a destination on an older version keeps none.
+ *
  * @return {Element} The screen.
  */
 export const Send = () => {
 	const navigate = useNavigate();
 	const [ status, setStatus ] = useState( null );
+	const [ link, setLink ] = useState( null );
 	const [ key, setKey ] = useState( '' );
 	const [ busy, setBusy ] = useState( false );
 	const [ error, setError ] = useState( '' );
@@ -71,10 +78,17 @@ export const Send = () => {
 	const live = useRef( true );
 
 	const refresh = async () => {
-		const response = await api.transfer.status();
+		const [ response, linked ] = await Promise.all( [
+			api.transfer.status(),
+			api.transfer.link(),
+		] );
 
 		if ( live.current && ! response.failed ) {
 			setStatus( response );
+		}
+
+		if ( live.current && ! linked.failed ) {
+			setLink( linked );
 		}
 
 		return response;
@@ -109,6 +123,38 @@ export const Send = () => {
 		}
 
 		setKey( response.key );
+		refresh();
+	};
+
+	const offer = async () => {
+		setBusy( true );
+		setError( '' );
+
+		const response = await api.transfer.offer();
+
+		setBusy( false );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
+		refresh();
+	};
+
+	const unoffer = async () => {
+		setBusy( true );
+		setError( '' );
+
+		const response = await api.transfer.withdraw();
+
+		setBusy( false );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
 		refresh();
 	};
 
@@ -168,7 +214,7 @@ export const Send = () => {
 			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Send it to the destination', 'nfd-site-migrator' ) }
 			intro={ __(
-				'The destination fetches the package straight from here — nothing is downloaded to your computer. Generate a key, paste it on the other site, and leave both tabs open.',
+				'The destination fetches the package straight from here — nothing is downloaded to your computer. Offer it to the site you paired with, or generate a key to paste by hand, then leave both tabs open.',
 				'nfd-site-migrator'
 			) }
 			working={ reading }
@@ -194,10 +240,95 @@ export const Send = () => {
 				</div>
 			) }
 
+			{ status?.ready && link?.linked && (
+				<div className="nfd-sm-card" id="nfd-sm-link-offer">
+					<p className="nfd-sm-eyebrow">
+						{ __( 'Hand it over directly', 'nfd-site-migrator' ) }
+					</p>
+					<p className="nfd-sm-hint">
+						{ sprintf(
+							/* translators: 1: package size, 2: destination address. */
+							__(
+								'%1$s, ready for %2$s — the site you paired with. Nothing to copy: it already holds a token from that pairing, and pressing this tells it there is something to fetch.',
+								'nfd-site-migrator'
+							),
+							size( total ),
+							link.destination
+						) }
+					</p>
+
+					{ ! link.offered && (
+						<div className="nfd-sm-actions">
+							<button
+								type="button"
+								className="nfd-sm-btn nfd-sm-btn--primary"
+								id="nfd-sm-offer-package"
+								disabled={ busy }
+								onClick={ offer }
+							>
+								{ busy
+									? __( 'Offering…', 'nfd-site-migrator' )
+									: __(
+											'Offer it to the destination',
+											'nfd-site-migrator'
+									  ) }
+							</button>
+						</div>
+					) }
+
+					{ link.offered && ! link.handed_at && (
+						<>
+							<div className="nfd-sm-note nfd-sm-note--info">
+								{ __(
+									'Offered. Open Site Migrator on the destination — it will show this package waiting, with a button to start. Nothing has been handed over yet.',
+									'nfd-site-migrator'
+								) }
+							</div>
+							<div className="nfd-sm-actions">
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									disabled={ busy }
+									onClick={ unoffer }
+								>
+									{ __(
+										'Take the offer back',
+										'nfd-site-migrator'
+									) }
+								</button>
+							</div>
+						</>
+					) }
+
+					{ !! link.handed_at && (
+						<div className="nfd-sm-note nfd-sm-note--pass">
+							{ sprintf(
+								/* translators: 1: site address, 2: how long ago. */
+								__(
+									'Collected by %1$s, %2$s. If that is not the site you expected, withdraw the key below and offer it again.',
+									'nfd-site-migrator'
+								),
+								link.handed_to ||
+									__(
+										'a site that did not say who it was',
+										'nfd-site-migrator'
+									),
+								ago( link.handed_at )
+							) }
+						</div>
+					) }
+				</div>
+			) }
+
 			{ status?.ready && ! active && (
 				<div className="nfd-sm-card">
 					<p className="nfd-sm-eyebrow">
-						{ __( 'Ready to send', 'nfd-site-migrator' ) }
+						{ link?.linked
+							? __(
+									'Or carry a key yourself',
+									'nfd-site-migrator'
+							  )
+							: __( 'Ready to send', 'nfd-site-migrator' ) }
 					</p>
 					<p className="nfd-sm-hint">
 						{ sprintf(
@@ -212,7 +343,9 @@ export const Send = () => {
 					<div className="nfd-sm-actions">
 						<button
 							type="button"
-							className="nfd-sm-btn nfd-sm-btn--primary"
+							className={ `nfd-sm-btn${
+								link?.linked ? '' : ' nfd-sm-btn--primary'
+							}` }
 							id="nfd-sm-issue-transfer"
 							disabled={ busy }
 							onClick={ issue }

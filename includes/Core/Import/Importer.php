@@ -8,6 +8,7 @@
 namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Export\ConfigScanner;
+use NewfoldLabs\WP\SiteMigrator\Core\Export\Selection;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
@@ -130,7 +131,16 @@ class Importer {
 	}
 
 	/**
-	 * Whether this package has already been imported into this site.
+	 * Whether this package has already been imported and the result is still undecided.
+	 *
+	 * The run being guarded against is the one that finished and has been neither rolled back nor
+	 * kept: its `nfdold_` tables are the only copy of this site as it was, and importing over them
+	 * destroys the way back. A **settled** run makes no such claim — it is finished business, and
+	 * the same reason `step()` forgets one before it starts.
+	 *
+	 * Without that distinction the refusal fired on a rolled-back run and told the user to "roll it
+	 * back first", which they had just done. Found by pulling a second package after undoing the
+	 * first: a linked pull always stages into the same directory, so the path matched.
 	 *
 	 * @return bool
 	 */
@@ -141,7 +151,11 @@ class Importer {
 
 		$state = $this->checkpoint->load();
 
-		return $this->dir === $state['package'] && ImportCheckpoint::STAGE_DONE === $state['stage'];
+		if ( $this->dir !== $state['package'] || ImportCheckpoint::STAGE_DONE !== $state['stage'] ) {
+			return false;
+		}
+
+		return ! ImportCheckpoint::is_settled( $state );
 	}
 
 	/**
@@ -866,6 +880,26 @@ class Importer {
 					. '(they are credentials, salts, paths, or look like secrets): '
 					. \implode( ', ', (array) $config['redacted'] ) . '.',
 			);
+		}
+
+		// What the source deliberately did not send. The destination cannot work this out for
+		// itself — a package with no `uploads` part looks exactly like a site with no media —
+		// and the difference decides whether the screen of broken images that follows is a bug
+		// or the plan somebody made ten minutes earlier.
+		$contents = (array) $manifest->get( 'contents', array() );
+
+		if ( ! empty( $contents ) && empty( $contents['everything'] ) ) {
+			$left_out = new Selection( (array) \nfd_sm_data_get( $contents, 'selection', array() ) );
+			$said     = $left_out->describe();
+
+			if ( ! empty( $said ) ) {
+				$steps[] = array(
+					'id'    => 'contents',
+					'label' => 'The source left this out of the package on purpose: ' . \implode( '; ', $said )
+						. '. Whatever this site already has in those places is kept, and the database that '
+						. 'arrives will still refer to files the package did not carry.',
+				);
+			}
 		}
 
 		$their_server = isset( $source['server'] ) ? $source['server'] : '';

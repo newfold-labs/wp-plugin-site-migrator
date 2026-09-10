@@ -4,6 +4,7 @@ import { Navigate, useNavigate, useRoutes } from 'react-router-dom';
 import { Start } from './components/screens/Start';
 import { Pair } from './components/screens/Pair';
 import { Compatibility } from './components/screens/Compatibility';
+import { Contents } from './components/screens/Contents';
 import { Exporting } from './components/screens/Exporting';
 import { Download } from './components/screens/Download';
 import { Send } from './components/screens/Send';
@@ -136,6 +137,7 @@ export default function Routes() {
 				/>
 			),
 		},
+		{ path: '/contents', element: <Contents /> },
 		{ path: '/export', element: <Exporting /> },
 		{ path: '/download', element: <Download /> },
 		{ path: '/send', element: <Send /> },

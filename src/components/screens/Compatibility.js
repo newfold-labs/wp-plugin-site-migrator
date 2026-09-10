@@ -236,6 +236,15 @@ export const Compatibility = ( { result, onResult, request } ) => {
 				<button
 					type="button"
 					className="nfd-sm-btn"
+					id="nfd-sm-choose-contents"
+					onClick={ () => navigate( '/contents' ) }
+				>
+					{ __( 'Choose what to include', 'nfd-site-migrator' ) }
+				</button>
+
+				<button
+					type="button"
+					className="nfd-sm-btn"
 					disabled={ busy }
 					onClick={ recheck }
 				>

@@ -20,7 +20,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Package;
  */
 class Checkpoint {
 
-	const SCHEMA = 3;
+	const SCHEMA = 4;
 	const NAME   = 'checkpoint.json';
 
 	const STAGE_DATABASE = 'database';
@@ -61,6 +61,10 @@ class Checkpoint {
 		return array(
 			'schema'            => self::SCHEMA,
 			'stage'             => self::STAGE_DATABASE,
+			// The run's own copy of what the user chose to leave out, written before the first
+			// byte. `part_index` is a position in a list built from it, so a run has to keep the
+			// list it started with even if the site's saved selection changes underneath it.
+			'selection'         => array(),
 			'part_index'        => 0,
 			'list_offset'       => 0,
 			'volume'            => 1,

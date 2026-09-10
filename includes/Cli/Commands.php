@@ -8,6 +8,8 @@
 namespace NewfoldLabs\WP\SiteMigrator\Cli;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Exporter;
+use NewfoldLabs\WP\SiteMigrator\Core\Export\PartSpecs;
+use NewfoldLabs\WP\SiteMigrator\Core\Export\Selection;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
@@ -16,6 +18,8 @@ use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Checker;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\LinkedSource;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Offer;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Source;
@@ -48,6 +52,7 @@ class Commands {
 
 		\WP_CLI::add_command( 'site-migrator preflight', array( __CLASS__, 'preflight' ) );
 		\WP_CLI::add_command( 'site-migrator export', array( __CLASS__, 'export' ) );
+		\WP_CLI::add_command( 'site-migrator contents', array( __CLASS__, 'contents' ) );
 		\WP_CLI::add_command( 'site-migrator inspect', array( __CLASS__, 'inspect' ) );
 		\WP_CLI::add_command( 'site-migrator verify', array( __CLASS__, 'verify' ) );
 		\WP_CLI::add_command( 'site-migrator import', array( __CLASS__, 'import' ) );
@@ -230,6 +235,11 @@ class Commands {
 	 * : Give up the whole command after this long, leaving a checkpoint behind and exiting 3.
 	 * Run the same command again to continue. Defaults to running until it finishes.
 	 *
+	 * [--all]
+	 * : Package the whole site, ignoring what `wp site-migrator contents` has saved. Only
+	 * applies to a run that has not started: an interrupted export always resumes with the
+	 * choices it began with.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator export --to=/tmp/mysite
@@ -268,6 +278,13 @@ class Commands {
 		$exporter = new Exporter( $dir );
 		$exporter->set_progress( new CliProgressReporter() );
 
+		$selection = empty( $assoc_args['all'] ) ? Selection::current() : Selection::everything();
+		$exporter->set_selection( $selection );
+
+		if ( ! $selection->is_everything() ) {
+			Output::progress( 'Leaving out: ' . \implode( '; ', $selection->describe() ) . '.' );
+		}
+
 		if ( $exporter->is_resumable() ) {
 			Output::progress( 'Resuming an interrupted export.' );
 		}
@@ -305,6 +322,132 @@ class Commands {
 				\microtime( true ) - $started,
 				$exporter->dir()
 			)
+		);
+	}
+
+	/**
+	 * Choose what an export puts in the package.
+	 *
+	 * With no options it prints what the next export will leave out. The selection is stored on
+	 * the site, so a run started in the browser and a run started here package the same thing.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--list]
+	 * : Print the parts and what can be ticked off inside each of them, instead of the current
+	 * selection. These are the names `--set` expects.
+	 *
+	 * [--set=<file>]
+	 * : Read a selection from a JSON file and store it. `-` reads standard input. The shape is
+	 * `{"parts":{"uploads":false},"paths":{"plugins":["akismet"]},"database":{"skip_revisions":true}}`.
+	 * Anything unrecognised, and any choice that would break the destination, is dropped.
+	 *
+	 * [--reset]
+	 * : Forget the selection, so the next export carries the whole site.
+	 *
+	 * [--format=<format>]
+	 * : table, json, csv or yaml. Defaults to table.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp site-migrator contents
+	 *     wp site-migrator contents --list
+	 *     echo '{"database":{"skip_revisions":true}}' | wp site-migrator contents --set=-
+	 *     wp site-migrator contents --reset
+	 *
+	 * @param array $args       Positional arguments.
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	public static function contents( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
+		if ( ! empty( $assoc_args['reset'] ) ) {
+			Selection::forget();
+			Output::progress( 'Success: the next export will carry the whole site.' );
+
+			return;
+		}
+
+		if ( ! empty( $assoc_args['list'] ) ) {
+			self::contents_catalog( $assoc_args );
+
+			return;
+		}
+
+		if ( isset( $assoc_args['set'] ) ) {
+			$raw = '-' === $assoc_args['set']
+				// phpcs:ignore WordPress.WP.AlternativeFunctions
+				? \file_get_contents( 'php://stdin' )
+				// phpcs:ignore WordPress.WP.AlternativeFunctions
+				: ( \is_readable( $assoc_args['set'] ) ? \file_get_contents( $assoc_args['set'] ) : false );
+
+			if ( false === $raw ) {
+				Output::fail( 'Could not read that file.', Output::EXIT_FAILURE );
+
+				return;
+			}
+
+			$decoded = \json_decode( (string) $raw, true );
+
+			if ( ! \is_array( $decoded ) ) {
+				Output::fail( 'That file is not a JSON object.', Output::EXIT_FAILURE );
+
+				return;
+			}
+
+			Selection::store( $decoded );
+		}
+
+		$selection = Selection::current();
+		$leaving   = $selection->describe();
+
+		Output::emit(
+			$assoc_args,
+			\array_merge(
+				$selection->to_array(),
+				array(
+					'everything' => $selection->is_everything(),
+					'leaving'    => $leaving,
+				)
+			),
+			empty( $leaving )
+				? array( array( 'leaving_out' => 'nothing, the whole site is packaged' ) )
+				: \array_map(
+					function ( $phrase ) {
+						return array( 'leaving_out' => $phrase );
+					},
+					$leaving
+				),
+			array( 'leaving_out' )
+		);
+	}
+
+	/**
+	 * Print the choosable parts and their contents.
+	 *
+	 * @param array $assoc_args Associative arguments.
+	 *
+	 * @return void
+	 */
+	protected static function contents_catalog( array $assoc_args ) {
+		$rows = array();
+
+		foreach ( PartSpecs::catalog() as $part ) {
+			$rows[] = array(
+				'part'     => $part['name'],
+				'prefix'   => $part['prefix'],
+				'contains' => empty( $part['children'] )
+					? '-'
+					: \implode( ', ', \array_slice( $part['children'], 0, 12 ) )
+						. ( \count( $part['children'] ) > 12 ? ', …' : '' ),
+			);
+		}
+
+		Output::emit(
+			$assoc_args,
+			array( 'parts' => PartSpecs::catalog() ),
+			$rows,
+			array( 'part', 'prefix', 'contains' )
 		);
 	}
 
@@ -829,11 +972,16 @@ class Commands {
 	 *
 	 * ## OPTIONS
 	 *
+	 * [--link]
+	 * : Offer it to the destination this site paired with, instead of printing a key. Nothing is
+	 * minted and nothing is sent: the other site holds a token from the pairing, asks whether
+	 * there is anything for it, and is given a key when it takes this one up.
+	 *
 	 * [--status]
 	 * : Report on the outstanding key instead of issuing one.
 	 *
 	 * [--revoke]
-	 * : Withdraw the outstanding key.
+	 * : Withdraw the outstanding key, and any standing offer with it.
 	 *
 	 * [--format=<format>]
 	 * : table, json, csv or yaml, for --status. Defaults to table.
@@ -841,6 +989,7 @@ class Commands {
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator offer
+	 *     wp site-migrator offer --link
 	 *     wp site-migrator offer --status
 	 *
 	 * @param array $args       Positional arguments.
@@ -851,7 +1000,40 @@ class Commands {
 	public static function offer( $args, $assoc_args ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
 		if ( ! empty( $assoc_args['revoke'] ) ) {
 			TransferKey::revoke();
+			Link::withdraw();
 			\WP_CLI::success( 'Withdrawn. Nothing can fetch the package now.' );
+
+			return;
+		}
+
+		if ( ! empty( $assoc_args['link'] ) ) {
+			$offer = new Offer();
+
+			if ( ! $offer->is_ready() ) {
+				Output::fail(
+					'There is no finished package here to offer. Run `wp site-migrator export` first.',
+					Output::EXIT_INVALID_PACKAGE
+				);
+
+				return;
+			}
+
+			if ( ! Link::offer() ) {
+				Output::fail(
+					'This site is not linked to a destination. Pair with one first, or run this without --link to print a key.'
+				);
+
+				return;
+			}
+
+			$link = Link::status();
+
+			\WP_CLI::success(
+				\sprintf(
+					'Offered to %s. Run `wp site-migrator pull --linked` there, or open its import screen.',
+					'' !== $link['destination'] ? $link['destination'] : 'the paired destination'
+				)
+			);
 
 			return;
 		}
@@ -859,6 +1041,20 @@ class Commands {
 		$status = TransferKey::status();
 
 		if ( ! empty( $assoc_args['status'] ) ) {
+			$link = Link::status();
+
+			if ( ! empty( $link['linked'] ) ) {
+				Output::progress(
+					\sprintf(
+						'Linked to %s. %s',
+						'' !== $link['destination'] ? $link['destination'] : 'a paired destination',
+						empty( $link['offered'] )
+							? 'Nothing is on offer to it.'
+							: ( $link['handed_at'] > 0 ? 'It has collected a key.' : 'A package is on offer and has not been collected.' )
+					)
+				);
+			}
+
 			if ( empty( $status['active'] ) ) {
 				Output::emit(
 					$assoc_args,
@@ -961,6 +1157,10 @@ class Commands {
 	 * [<key>]
 	 * : The transfer key printed by `wp site-migrator offer` on the source.
 	 *
+	 * [--linked]
+	 * : Take the package the paired source is offering, with no address and no key. Needs
+	 * `wp site-migrator offer --link` to have been run there.
+	 *
 	 * [--budget=<seconds>]
 	 * : Stop after this many seconds per step. Defaults to no limit, which is right under
 	 * WP-CLI where max_execution_time is 0.
@@ -968,6 +1168,7 @@ class Commands {
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator pull https://old.example.com 2f52f7ce…
+	 *     wp site-migrator pull --linked
 	 *     wp site-migrator pull
 	 *
 	 * @param array $args       Positional arguments.
@@ -978,6 +1179,20 @@ class Commands {
 	public static function pull( $args, $assoc_args ) {
 		$puller = new Puller();
 		$budget = isset( $assoc_args['budget'] ) ? (float) $assoc_args['budget'] : 0;
+
+		// The link pairing left behind. Claiming is what mints the key on the source, so this is
+		// the same single-use handover the browser does — there is nothing to paste here either.
+		if ( ! empty( $assoc_args['linked'] ) && empty( $args[0] ) ) {
+			$claim = LinkedSource::claim();
+
+			if ( isset( $claim['error'] ) ) {
+				Output::fail( $claim['error'] );
+
+				return;
+			}
+
+			$args = array( $claim['url'], $claim['key'] );
+		}
 
 		if ( ! empty( $args[0] ) ) {
 			$result = $puller->connect( $args[0], isset( $args[1] ) ? $args[1] : '' );
@@ -1006,7 +1221,7 @@ class Commands {
 				)
 			);
 		} elseif ( empty( Source::load() ) ) {
-			Output::fail( 'Give me the source\'s address and a transfer key.' );
+			Output::fail( 'Give me the source\'s address and a transfer key, or --linked if this site is paired with one.' );
 
 			return;
 		}

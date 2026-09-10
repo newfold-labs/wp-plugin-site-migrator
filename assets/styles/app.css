@@ -441,6 +441,25 @@
     .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-ink mb-3 cursor-pointer }
     .nfd-sm-check input { @apply mt-1 }
 
+    /* Choosing what goes in the package.
+       A row per part: the tick and its name on one line, what it is underneath, and the things
+       inside it behind a disclosure — a site with 90 plugins would otherwise be a wall of
+       checkboxes on the screen whose job is to be quicker than packaging everything. */
+    .nfd-sm-pick { @apply border-b border-hair py-4 }
+    .nfd-sm-pick:last-child { @apply border-b-0 pb-0 }
+    .nfd-sm-pick .nfd-sm-check { @apply mb-0 }
+    .nfd-sm-pick strong { @apply block text-[14px] font-semibold text-ink }
+    .nfd-sm-pick-meta {
+        @apply ml-2 font-mono text-[11.5px] font-medium text-faint whitespace-nowrap
+    }
+    .nfd-sm-pick-blurb { @apply block mt-1 text-[13px] leading-[1.5] text-muted }
+    .nfd-sm-pick-sub {
+        @apply grid gap-x-6 mt-3 ml-[26px] pl-4 border-l border-edge-warm
+        sm:grid-cols-2 lg:grid-cols-3
+    }
+    .nfd-sm-pick-sub .nfd-sm-check { @apply mb-1.5 text-[13px] }
+    .nfd-sm-details + .nfd-sm-details { @apply mt-2 }
+
     .nfd-sm-block {
         @apply font-mono text-[12.5px] bg-ink text-canvas rounded-[7px] p-3.5
         overflow-x-auto whitespace-pre my-2
