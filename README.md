@@ -5,6 +5,8 @@
 Install it on both sites. The old one packs itself into a box. The new one opens the box — and
 shows you exactly what's inside before a single byte of your live site is touched.
 
+![The plugin's first screen in wp-admin. A five-step progress bar reads This site, Destination, Compatibility, Package, Deliver. Below it, the heading "Move this site, or bring one here" and two cards: "Send this site somewhere else" and "Receive a site here". A row of facts at the bottom lists the site's WordPress, PHP and database versions and its table prefix.](docs/images/01-start.png)
+
 > **Pre-release.** Not on wp.org yet, but the zip is real: every release carries one that CI has
 > installed into a clean WordPress and run before publishing. A full migration works today, from
 > wp-admin and from WP-CLI. The plan lives in
@@ -164,15 +166,21 @@ The destination fetches the package straight from the source. Nothing goes throu
    WordPress version, free space and database capabilities directly from it.
 3. **Compatibility** shows what it found. Anything that would break the move blocks here — a check
    that could not run counts as a failure, not a pass.
+
+   ![The Compatibility screen, badged "Ready to migrate". A panel headed "7 checks — 1 need attention, 6 fine" opens with an amber "heads up" about free space at the destination, then lists six passing checks: WordPress version, database schema, single sites, PHP version, text encoding, and support for an instant reversible switchover.](docs/images/02-compatibility.png)
 4. **Choose what to include** — optional, and reached from the Compatibility screen. Everything is
    packaged unless you tick something off: whole parts, individual plugins, themes or upload
    folders, and the database rows nothing reads. The screen warns about the choices that hurt, and
    sums up what you are leaving out before you commit to it. Skip it and you get the whole site.
+
+   ![The "Choose what to include" screen. The Plugins row is ticked and expanded into a three-column list of eighteen plugins shown by their real names — Advanced Hiive Configuration, Google Analytics for WordPress by MonsterInsights, WooCommerce, Yoast SEO and others — each with its own checkbox. One, NFD AI Auth Diagnostic, has been unticked.](docs/images/03-contents.png)
 5. **Package.** The site is archived in resumable steps. You can close the tab; reopening picks up
    where it stopped. Pause is safe.
 6. **Deliver → Offer it to the destination.** Nothing to copy: the destination already holds a token
    from the pairing, and this tells it there is something to fetch. (*Generate a transfer key* is
    still there beside it, for a destination that was never paired with this one.)
+
+   ![The Deliver screen offering three routes. "Hand it over directly" reports 200.2 MB ready for the paired destination with nothing to copy, and a green note saying the offer was already collected by that site. "Or carry a key yourself" offers a Generate a transfer key button. "Or move the files yourself" offers Download the package instead.](docs/images/04-deliver.png)
 
 **On the destination** — *Bring in a package → Fetch it from the source*
 
@@ -180,6 +188,8 @@ The destination fetches the package straight from the source. Nothing goes throu
    anything — the source deliberately left out. Press **Start the transfer**. It pulls, checksumming
    each file as it lands. Close the tab, come back, open a second tab — the progress is measured
    from the files on disk, so all three agree.
+
+   ![The destination's "Bring in a package" screen. A card headed "Fetch it from the source" reads that the source is offering a package right now, 200.2 MB, waiting for this site to take it, and that because the two were paired there is no key to carry. Below it, a "Fetch the waiting package" button.](docs/images/05-receive.png)
 8. When it finishes it verifies every file, then **See what it would do**.
 
 **Both sites — the review**
@@ -188,6 +198,8 @@ The destination fetches the package straight from the source. Nothing goes throu
    it will sign in as, which plugins and themes arrive, anything the source left out of the package
    on purpose, and any `wp-config.php` settings the source had that this site does not. Nothing is
    written to your `wp-config.php` — it prints them for you to copy.
+
+   ![The destination's Review screen, headed "Check this before you commit", with a safety strip reading "This is a preview. Nothing has been written to this site yet." A "What arrives" panel names the source site, 36,881 files totalling 200.2 MB, the WordPress version, and the table prefix mapping. A "What this replaces" panel warns that the site's own content does not survive, and that the replaced tables are kept so the import can be undone.](docs/images/06-review.png)
 10. Tick the box, **Import it**. Files land first, the database loads into staging tables the live
     site never reads, and everything that can fail happens before the swap.
 11. **Finish.** Check the front page, a few posts, your images, and signing in. Then **Keep it**, or
