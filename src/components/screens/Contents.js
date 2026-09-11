@@ -1,5 +1,5 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { useEffect, useState } from '@wordpress/element';
+import { Fragment, useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
@@ -102,6 +102,35 @@ const FLAGS = {
 			'nfd-site-migrator'
 		),
 	},
+};
+
+/**
+ * A table name that may break after its underscores.
+ *
+ * Browsers break at spaces and hyphens, and `wp_woocommerce_downloadable_product_permissions` has
+ * neither -- it is one word forty characters long. The CSS safety net wraps it anywhere rather
+ * than let it push its grid column out of the card, which stops the overflow but reads badly:
+ * `..._product_permi` / `ssions`. A `<wbr>` after each underscore gives the line breaker somewhere
+ * sensible to go first, so the split lands between words and the net is only reached by a name
+ * that has no underscores either.
+ *
+ * @param {string} name Table name.
+ * @return {Array} The name, with break opportunities in it.
+ */
+const breakable = ( name ) => {
+	const parts = name.split( '_' );
+
+	return parts.map( ( part, i ) => (
+		<Fragment key={ i }>
+			{ part }
+			{ i < parts.length - 1 && (
+				<>
+					_
+					<wbr />
+				</>
+			) }
+		</Fragment>
+	) );
 };
 
 const label = ( name ) => ( PARTS[ name ] ? PARTS[ name ].label : name );
@@ -483,7 +512,7 @@ export const Contents = () => {
 												}
 											/>
 											<span>
-												{ table.name }
+												{ breakable( table.name ) }
 												<span className="nfd-sm-pick-meta">
 													{ table.required
 														? __(

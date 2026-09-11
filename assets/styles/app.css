@@ -454,10 +454,25 @@
     }
     .nfd-sm-pick-blurb { @apply block mt-1 text-[13px] leading-[1.5] text-muted }
     .nfd-sm-pick-sub {
-        @apply grid gap-x-6 mt-3 ml-[26px] pl-4 border-l border-edge-warm
+        @apply grid gap-x-6 mt-3 ml-[26px] p-3.5 bg-sunk rounded-[8px]
         sm:grid-cols-2 lg:grid-cols-3
     }
-    .nfd-sm-pick-sub .nfd-sm-check { @apply mb-1.5 text-[13px] }
+
+    /* A grid item and a flex item both default to `min-width: auto`, which is "never shrink
+       below your longest word" -- and `wp_bh_payments_shipping_shippo_shipping_parcel_boxes` is
+       one word. So the track grew past its share, the columns overlapped each other, and the
+       right-hand one ran out of the card. Both levels need releasing: the item that is a grid
+       child, and the label inside it that is a flex child.
+
+       `overflow-wrap: anywhere` rather than Tailwind's `break-words`. They wrap identically, but
+       only `anywhere` also lowers the *min-content* contribution, and it is that number the grid
+       sizes its tracks from -- with `break-word` the text would wrap and the column would still
+       be too wide. No utility exists for it, hence the plain declaration. */
+    .nfd-sm-pick-sub .nfd-sm-check { @apply mb-1.5 text-[13px] min-w-0 }
+    .nfd-sm-pick-sub .nfd-sm-check > span {
+        @apply min-w-0;
+        overflow-wrap: anywhere;
+    }
     .nfd-sm-details + .nfd-sm-details { @apply mt-2 }
 
     .nfd-sm-block {
