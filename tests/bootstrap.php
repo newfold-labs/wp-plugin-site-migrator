@@ -485,6 +485,51 @@ class WPDB_Stub {
 	}
 }
 
+/**
+ * `DatabaseBase::prepare_table_values()` on its own, with no database behind it.
+ *
+ * That method turns one column value into the literal the dump writes, and it is pure -- it reads
+ * nothing but its two arguments. So the constructor is skipped deliberately rather than fed a fake
+ * `$wpdb`: connecting a stub handle would only prove the stub connects, and the nine abstract
+ * methods below exist to satisfy the class, not to be called.
+ */
+class DumpValues extends \NewfoldLabs\WP\SiteMigrator\Database\DatabaseBase {
+
+	public function __construct() {}
+
+	public function prepare( $input, $column_type ) {
+		return $this->prepare_table_values( $input, $column_type );
+	}
+
+	public function query( $input ) {}
+
+	public function escape( $input ) {
+		return \addslashes( (string) $input );
+	}
+
+	public function errno() {
+		return 0;
+	}
+
+	public function error() {
+		return '';
+	}
+
+	public function version() {
+		return '8.0.0';
+	}
+
+	public function fetch_assoc( $result ) {}
+
+	public function fetch_row( $result ) {}
+
+	public function num_rows( $result ) {
+		return 0;
+	}
+
+	public function free_result( $result ) {}
+}
+
 function wp_generate_password( $length = 12, $special = true, $extra = false ) {
 	return \substr( \str_repeat( 'abcdef0123456789', 8 ), 0, $length );
 }

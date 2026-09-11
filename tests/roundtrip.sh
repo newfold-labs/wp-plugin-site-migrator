@@ -231,6 +231,21 @@ if [ "$(src post list --post_type=revision --format=count)" = "0" ]; then
 	exit 1
 fi
 
+# A plugin-style table with a blob column, holding one empty value and one whose bytes are not
+# valid UTF-8. An empty blob dumps as a hex literal with no digits -- `0x` -- which MySQL reads as
+# an identifier, and a production import died at the first Wordfence row shaped like this.
+# Nothing downstream could catch it: the dump is hashed after it is written, so `verify` confirmed
+# the broken bytes had arrived intact.
+src db query "CREATE TABLE ${SRC_PREFIX}blobs (name VARCHAR(64) NOT NULL PRIMARY KEY, val LONGBLOB NOT NULL)" 2>/dev/null
+src db query "INSERT INTO ${SRC_PREFIX}blobs VALUES ('empty', ''), ('bytes', UNHEX('00FF10'))" 2>/dev/null
+
+# Guard the fixture: a `val` that is NULL rather than empty takes the NULL branch instead, and
+# the assertion after the import would pass without the bug ever having been reachable.
+if [ "$(src db query "SELECT LENGTH(val) FROM ${SRC_PREFIX}blobs WHERE name = 'empty'" --skip-column-names 2>/dev/null | tr -d '[:space:]')" != "0" ]; then
+	echo "The blob fixture is not an empty non-NULL value; the test itself is broken."
+	exit 1
+fi
+
 # A user who exists on both sides under the same login, and one unique to the source. The merge
 # has to keep the destination's password for the shared account and carry the other across.
 src user create shared shared@example.com --role=editor --user_pass=sourcepass --quiet
@@ -368,6 +383,13 @@ assert "its top-level URL was rewritten" "$DST_URL" \
 	"$(dst eval 'echo (string) nfd_sm_data_get( get_option( "nfd_test_serialized" ), "home", "" );')"
 assert "and so was the one nested inside it" "$DST_URL/page" \
 	"$(dst eval 'echo (string) nfd_sm_data_get( get_option( "nfd_test_serialized" ), "nested.link", "" );')"
+
+# A blob column, both ways round. The empty one is the literal that killed a production import;
+# the other proves the fix did not quietly turn every blob into a string.
+assert "the empty blob survived the round trip" "0" \
+	"$(dst db query "SELECT LENGTH(val) FROM ${DST_PREFIX}blobs WHERE name = 'empty'" --skip-column-names 2>/dev/null | tr -d '[:space:]')"
+assert "and the binary one arrived byte for byte" "00FF10" \
+	"$(dst db query "SELECT HEX(val) FROM ${DST_PREFIX}blobs WHERE name = 'bytes'" --skip-column-names 2>/dev/null | tr -d '[:space:]')"
 
 assert "the upload arrived byte for byte" "$UPLOAD_SUM" \
 	"$(shasum -a 256 "$DST/wp-content/uploads/2026/01/asset.bin" | cut -d' ' -f1)"

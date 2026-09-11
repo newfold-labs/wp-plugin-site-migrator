@@ -483,4 +483,30 @@ class RegressionTest extends TestCase {
 		$this->assertDirectoryDoesNotExist( $purged );
 		\restore_current_blog();
 	}
+
+	/**
+	 * An empty blob dumped as `0x`, which is not a hex literal.
+	 *
+	 * A production import stopped at `INSERT INTO ... VALUES ('bannedURLs',0x,'yes')` with
+	 * "Unknown column '0x' in 'field list'" -- MySQL reads a hex literal with no digits as an
+	 * identifier. Wordfence keeps its configuration in a longblob and leaves unset settings
+	 * empty, so a site running it dumps a row like this for every option it has never written,
+	 * and the dump is refused at the first one. Nothing downstream could catch it: the package
+	 * was hashed after the dump was written, so `verify` confirmed the broken bytes arrived
+	 * intact.
+	 */
+	public function test_empty_blob_is_not_dumped_as_a_bare_hex_prefix() {
+		$db = new \DumpValues();
+
+		foreach ( array( 'blob', 'longblob', 'mediumblob', 'tinyblob', 'binary(16)', 'varbinary(255)' ) as $type ) {
+			$this->assertSame( "''", $db->prepare( '', $type ), $type . ' with an empty value' );
+		}
+
+		// The non-empty case is the one that has always worked, and has to keep working.
+		$this->assertSame( '0x00ff', $db->prepare( "\x00\xff", 'longblob' ) );
+
+		// A NULL is still a NULL, not an empty string -- Wordfence's `val` is NOT NULL, but
+		// other plugins' blobs are not, and collapsing the two loses a real distinction.
+		$this->assertSame( 'NULL', $db->prepare( null, 'longblob' ) );
+	}
 }

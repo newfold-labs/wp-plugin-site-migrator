@@ -1914,6 +1914,16 @@ abstract class DatabaseBase {
 			case stripos( $column_type, 'mediumblob' ) === 0:
 			case stripos( $column_type, 'longblob' ) === 0:
 			case stripos( $column_type, 'blob' ) === 0:
+				// An empty blob has no hex digits, and `0x` on its own is not a hex literal --
+				// MySQL parses it as an identifier and the import dies on "Unknown column '0x'
+				// in 'field list'", having written nothing. Wordfence keeps its entire
+				// configuration in a longblob and leaves unset settings empty, so this was
+				// every option it had never been told a value for: 38 rows across
+				// `wp_wfconfig` and `wp_wfls_settings` on the site that found it.
+				if ( '' === $input ) {
+					return "''";
+				}
+
 				return '0x' . bin2hex( $input );
 
 			default:
