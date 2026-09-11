@@ -110,8 +110,19 @@ assert "and the font licences shipped" "2" \
 	"$(find "$SITE/wp-content/plugins/$SLUG/assets/fonts" -name '*LICENSE*' 2>/dev/null | wc -l | tr -d ' ')"
 
 # It has to actually run, not merely sit there.
-assert "the commands register from the installed copy" "10" \
-	"$(site site-migrator 2>&1 | grep -cE '^(usage|   or): wp site-migrator')"
+#
+# Checked against the names `Cli\Commands::register()` declares rather than a number written here.
+# A literal count went stale the moment a command was added -- silently, because the check still
+# ran and still looked like a check -- and "expected 10, got 11" does not name the command that
+# failed to register, which is the only thing this assertion exists to tell anyone. Comparing the
+# installed copy's own output against the source's list is also the stronger question: not "are
+# there N of them" but "did every command the plugin declares survive being zipped and installed".
+EXPECTED_COMMANDS="$(grep -oE "add_command\( 'site-migrator [a-z-]+'" "$ROOT/includes/Cli/Commands.php" \
+	| sed "s/.*site-migrator //; s/'//" | sort | tr '\n' ' ')"
+ACTUAL_COMMANDS="$(site site-migrator 2>&1 \
+	| grep -oE '^(usage|   or): wp site-migrator [a-z-]+' | awk '{print $NF}' | sort | tr '\n' ' ')"
+
+assert "the commands register from the installed copy" "$EXPECTED_COMMANDS" "$ACTUAL_COMMANDS"
 assert "preflight runs and reports itself ok" "True" \
 	"$(site site-migrator preflight --format=json 2>/dev/null | "$PHP_BIN" -r 'echo json_decode(file_get_contents("php://stdin"),true)["local"]["ok"] ? "True" : "False";')"
 
