@@ -104,16 +104,16 @@ class DatabaseExporter {
 			return $tables;
 		}
 
-		$skip = $this->selection->skipped_tables();
-
 		foreach ( $rows as $table ) {
 			if ( 0 !== \strpos( $table, $prefix ) ) {
 				continue;
 			}
 
 			// `Selection` has already refused to skip anything the site cannot run without, so
-			// this list only ever names extras: a plugin's log table, an analytics archive.
-			if ( \in_array( $table, $skip, true ) ) {
+			// this list only ever names extras: a plugin's log table, an analytics archive. It
+			// answers the question itself rather than being compared to, because a name may or
+			// may not carry the prefix depending on which surface sent it.
+			if ( $this->selection->skips_table( $table ) ) {
 				continue;
 			}
 

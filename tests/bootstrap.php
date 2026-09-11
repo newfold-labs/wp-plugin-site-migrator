@@ -79,6 +79,13 @@ class Fixture {
 	public static $transients = array();
 
 	/**
+	 * What `SHOW TABLES` answers.
+	 *
+	 * @var array
+	 */
+	public static $tables = array();
+
+	/**
 	 * Where `wp_get_upload_dir()` points.
 	 *
 	 * @var string
@@ -168,6 +175,7 @@ class Fixture {
 	public static function reset() {
 		self::$options    = array();
 		self::$transients = array();
+		self::$tables     = array();
 		self::$site_url   = 'http://source.test';
 		self::$current_user_id = 1;
 		self::$filters    = array();
@@ -455,6 +463,12 @@ class WPDB_Stub {
 	}
 
 	public function get_col( $query, $column = 0 ) {
+		// `SHOW TABLES` is answered from a fixture because the export's table list is built from
+		// it, and a stub that always says "no tables" cannot show a filter dropping the wrong one.
+		if ( 0 === \stripos( \ltrim( (string) $query ), 'SHOW TABLES' ) ) {
+			return \Fixture::$tables;
+		}
+
 		return array();
 	}
 

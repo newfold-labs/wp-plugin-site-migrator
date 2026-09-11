@@ -240,14 +240,63 @@ class Selection {
 	 * @return bool
 	 */
 	public static function is_required_table( $table ) {
+		return \in_array( \strtolower( self::unprefixed( $table ) ), self::$required_tables, true );
+	}
+
+	/**
+	 * A table name with this site's prefix taken off, if it is wearing one.
+	 *
+	 * The one place that decides `wp_posts` and `posts` are the same answer. A name that does not
+	 * start with the prefix is returned untouched — on a site prefixed `wp7_` that is what keeps
+	 * another install's `wp_posts` a skippable extra rather than a core table.
+	 *
+	 * @param string $table Table name, with or without the prefix.
+	 *
+	 * @return string
+	 */
+	protected static function unprefixed( $table ) {
 		$prefix = \nfd_sm_table_prefix();
 		$table  = (string) $table;
 
 		if ( '' !== $prefix && 0 === \strpos( $table, $prefix ) ) {
-			$table = \substr( $table, \strlen( $prefix ) );
+			return \substr( $table, \strlen( $prefix ) );
 		}
 
-		return \in_array( \strtolower( $table ), self::$required_tables, true );
+		return $table;
+	}
+
+	/**
+	 * Whether the dump leaves this table out.
+	 *
+	 * Both sides are compared with the prefix off, for the reason `is_required_table()` does it:
+	 * somebody naming a table means the same table whether they type `acme_log` or `wp_acme_log`,
+	 * and the two surfaces disagree about which they send. The picker lists what `SHOW TABLE
+	 * STATUS` returned, so it sends the prefixed form; a person writing `--set` by hand reads the
+	 * prefix off their own site and usually does not. Matching on the raw string honoured the
+	 * first and silently ignored the second, which is a refusal that packages the table anyway.
+	 *
+	 * Normalising here rather than in `sanitize()` is deliberate. A selection is stored, and it
+	 * travels in the manifest for the destination to describe — so baking *this* site's prefix
+	 * into it would write a source's `wp_` into data a `wp7_` destination reads back.
+	 *
+	 * @param string $table Table name, with or without the prefix.
+	 *
+	 * @return bool
+	 */
+	public function skips_table( $table ) {
+		$needle = self::unprefixed( $table );
+
+		if ( '' === $needle ) {
+			return false;
+		}
+
+		foreach ( $this->skipped_tables() as $skipped ) {
+			if ( self::unprefixed( $skipped ) === $needle ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

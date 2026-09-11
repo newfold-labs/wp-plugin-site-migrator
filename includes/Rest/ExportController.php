@@ -170,6 +170,9 @@ class ExportController extends Controller {
 			array(
 				'parts'     => $this->labelled_parts(),
 				'tables'    => $this->tables(),
+				// The screen needs it to tell `acme_log` and `wp_acme_log` apart the same way
+				// `Selection::skips_table()` does — a selection saved from the CLI may hold either.
+				'prefix'    => \nfd_sm_table_prefix(),
 				'flags'     => Selection::database_flags(),
 				'selection' => $selection->to_array(),
 				'leaving'   => $selection->describe(),

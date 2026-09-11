@@ -127,6 +127,32 @@ const namedChildren = ( part ) =>
 		);
 
 /**
+ * A table name with the site's prefix taken off, if it is wearing one.
+ *
+ * @param {string} name   Table name.
+ * @param {string} prefix This site's table prefix.
+ * @return {string} The name without it.
+ */
+const bareTable = ( name, prefix ) =>
+	prefix && name.startsWith( prefix ) ? name.slice( prefix.length ) : name;
+
+/**
+ * Whether two table names mean the same table.
+ *
+ * This screen always holds the prefixed name, because it lists what `SHOW TABLE STATUS` returned.
+ * A selection saved from the CLI may hold the bare one — the README says either will do, and
+ * `Selection::skips_table()` decides it the same way server-side. Comparing raw strings here would
+ * draw a table as carried while the export left it out, and then drop the refusal on the next save.
+ *
+ * @param {string} a      One name.
+ * @param {string} b      The other.
+ * @param {string} prefix This site's table prefix.
+ * @return {boolean} Whether they are the same table.
+ */
+const sameTable = ( a, b, prefix ) =>
+	bareTable( a, prefix ) === bareTable( b, prefix );
+
+/**
  * A table name that may break after its underscores.
  *
  * Browsers break at spaces and hyphens, and `wp_woocommerce_downloadable_product_permissions` has
@@ -261,15 +287,20 @@ export const Contents = () => {
 		} );
 
 	const wantsTable = ( name ) =>
-		! ( selection.database.skip_tables || [] ).includes( name );
+		! ( selection.database.skip_tables || [] ).some( ( one ) =>
+			sameTable( one, name, data?.prefix )
+		);
 
 	const toggleTable = ( name ) =>
 		setSelection( ( current ) => {
 			const database = { ...current.database };
 			const list = database.skip_tables || [];
+			const prefix = data?.prefix;
 
-			if ( list.includes( name ) ) {
-				const left = list.filter( ( one ) => one !== name );
+			if ( list.some( ( one ) => sameTable( one, name, prefix ) ) ) {
+				const left = list.filter(
+					( one ) => ! sameTable( one, name, prefix )
+				);
 
 				if ( left.length ) {
 					database.skip_tables = left;
@@ -277,6 +308,8 @@ export const Contents = () => {
 					delete database.skip_tables;
 				}
 			} else {
+				// Stored as this screen knows it — prefixed. Saving from a surface that knows the
+				// prefix is the right moment to settle on one spelling.
 				database.skip_tables = [ ...list, name ];
 			}
 
