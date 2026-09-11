@@ -68,7 +68,20 @@ class PackageReader {
 		$problems = array();
 
 		if ( null === $this->manifest ) {
-			$problems[] = 'No manifest.json: this directory does not hold a finished package.';
+			// Absent and unreadable are different failures with different cures, and saying
+			// "No manifest.json" for both sent somebody looking for a missing file that was
+			// sitting right there. A manifest is written last, so absent means the package
+			// never finished; present but unparseable means something wrote over it -- a
+			// resumed transfer appending to a file it should have replaced, most likely -- and
+			// the cure is to clear the directory rather than to fetch the rest of it.
+			$path = $this->dir . DIRECTORY_SEPARATOR . 'manifest.json';
+
+			$problems[] = \is_file( $path )
+				? \sprintf(
+					'manifest.json is here (%d bytes) but is not readable as JSON, so this directory holds no usable package. Clear it and fetch the package again.',
+					(int) \filesize( $path )
+				)
+				: 'No manifest.json: this directory does not hold a finished package.';
 
 			return $problems;
 		}

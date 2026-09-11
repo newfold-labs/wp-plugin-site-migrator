@@ -103,6 +103,28 @@ export const Pull = () => {
 	const [ cleared, setCleared ] = useState( 0 );
 	const [ verifying, setVerifying ] = useState( false );
 	const [ problems, setProblems ] = useState( null );
+	const [ discarding, setDiscarding ] = useState( false );
+
+	// `Puller::disconnect()` deliberately keeps the bytes -- they are the expensive part and a
+	// dropped connection is not a reason to throw away a transfer. It says the way to remove
+	// them is `Upload::reset()` "on the same screen", and until now that control did not exist
+	// on this screen at all: a staging directory holding the wrong bytes could be neither
+	// imported nor emptied without a shell.
+	const discardFetched = async () => {
+		setDiscarding( true );
+
+		const response = await api.import.uploadReset();
+
+		setDiscarding( false );
+
+		if ( response.failed ) {
+			setFormError( response.error );
+			return;
+		}
+
+		setProblems( null );
+		window.location.reload();
+	};
 
 	// A transfer that finished while this tab was away still has to be checked before it is
 	// handed to the import, and the check is the one thing here that cannot be split across
@@ -552,6 +574,27 @@ export const Pull = () => {
 							<li key={ p }>{ p }</li>
 						) ) }
 					</ul>
+					<p>
+						{ __(
+							'A transfer continues from the bytes already on disk, so a directory holding part of another package is never replaced by fetching again. Clear it and the next fetch starts from nothing.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<div className="nfd-sm-actions">
+						<button
+							type="button"
+							className="nfd-sm-btn"
+							onClick={ discardFetched }
+							disabled={ discarding }
+						>
+							{ discarding
+								? __( 'Clearing…', 'nfd-site-migrator' )
+								: __(
+										'Clear what was fetched and start again',
+										'nfd-site-migrator'
+								  ) }
+						</button>
+					</div>
 				</div>
 			) }
 
