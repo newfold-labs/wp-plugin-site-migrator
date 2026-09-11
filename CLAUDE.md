@@ -630,6 +630,22 @@ a directory's size is a walk of the whole site, which is the expensive half of a
 making somebody wait through most of one to decide what to leave out of it is a strange trade.
 Table sizes *are* shown, because `SHOW TABLE STATUS` is a single query.
 
+**The picker draws names and stores slugs.** A directory name is the identity — it is what a
+`Selection` refuses, what the manifest records and what `--set` takes — but `advanced-hiive-config`
+is not what anybody calls that plugin, so `/export/contents` sends a `labels` map beside each
+part's children and the screen falls back to the slug when there is nothing to show. The map is
+built in `ExportController`, not `PartSpecs`, because `get_plugins()` is a wp-admin function and
+`Core/` may not reach for one: `nfd_sm_content_labels()` in `functions.php` is the seam. The CLI
+keeps listing slugs on purpose — a slug is what you type back at it. Sorting by the *label* happens
+in `Contents.js` for the same split reason.
+
+**And it pins its own checkbox size.** wp-admin grows every checkbox to 1.5625rem below 782px, and
+the tick inside it to 1.875rem, so a finger has something to hit. Every row here is already a
+`<label>`, so the whole line is the touch target and the extra nine pixels only cost the alignment
+— a 25px box beside 13px text in a three-column grid is mostly box. `.nfd-sm-check
+input[type="checkbox"]` puts both back. Restore the box without the `:checked::before` and the
+checkmark hangs out of it: core sizes the tick SVG and its negative margins in one rule.
+
 **The last source step is *Deliver*, and two screens share it.** `/send` hands the package over
 directly and `/download` is the fallback for a source the destination cannot reach; both render
 with `step="deliver"`, because they are two ways through one step of one journey rather than two
