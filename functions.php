@@ -679,3 +679,109 @@ function nfd_sm_plugin_dirname() {
 
 	return false === $slash ? $basename : substr( $basename, 0, $slash );
 }
+
+/**
+ * Human names for the things inside a part, keyed by the slug the selection stores.
+ *
+ * The picker lists directory names, because a directory name is the identity a `Selection`
+ * refuses and the string `--set` takes. `advanced-hiive-config` is not what anybody calls that
+ * plugin, though, so the screen shows the name from the plugin's own header and keeps the slug
+ * underneath it. Only plugins and themes have a name to give: a directory in `mu-plugins` is not
+ * a registered plugin, and an uploads year is already the word for itself.
+ *
+ * This lives here rather than in `PartSpecs` because `get_plugins()` is a wp-admin function and
+ * `Core/` may not reach for one — the catalog stays transport-agnostic and this decorates it.
+ *
+ * @return array Part name => array of slug => label. Parts with nothing to add are absent.
+ */
+function nfd_sm_content_labels() {
+	$labels = array();
+
+	foreach ( \NewfoldLabs\WP\SiteMigrator\Core\Export\PartSpecs::all() as $spec ) {
+		$name = $spec->name();
+
+		if ( 'plugins' === $name ) {
+			$found = nfd_sm_plugin_labels();
+		} elseif ( 0 === strpos( $name, 'themes' ) ) {
+			$found = nfd_sm_theme_labels( $spec->root() );
+		} else {
+			continue;
+		}
+
+		if ( ! empty( $found ) ) {
+			$labels[ $name ] = $found;
+		}
+	}
+
+	return $labels;
+}
+
+/**
+ * Plugin directory names mapped to the names in their headers.
+ *
+ * A single-file plugin is skipped: the picker only ever offers directories, so there is no
+ * `hello.php` row for a label to belong to. A directory holding more than one plugin file keeps
+ * the first, which `get_plugins()` has already sorted by name.
+ *
+ * @return array
+ */
+function nfd_sm_plugin_labels() {
+	if ( ! function_exists( 'get_plugins' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	}
+
+	$labels = array();
+
+	foreach ( get_plugins() as $file => $data ) {
+		$slash = strpos( $file, '/' );
+
+		if ( false === $slash ) {
+			continue;
+		}
+
+		$slug = substr( $file, 0, $slash );
+		$name = isset( $data['Name'] ) ? trim( wp_strip_all_tags( $data['Name'] ) ) : '';
+
+		if ( '' !== $name && ! isset( $labels[ $slug ] ) ) {
+			$labels[ $slug ] = $name;
+		}
+	}
+
+	return $labels;
+}
+
+/**
+ * Theme directory names mapped to the names in their headers, for one theme root.
+ *
+ * `errors => null` asks for broken themes too, because a theme with a missing parent is still a
+ * directory the package carries and still has a name. `WP_Theme` falls back to the directory name
+ * when it cannot read a header, so a label identical to the slug is dropped rather than shown
+ * twice.
+ *
+ * @param string $root Absolute path to a theme root.
+ *
+ * @return array
+ */
+function nfd_sm_theme_labels( $root ) {
+	if ( ! function_exists( 'wp_get_themes' ) ) {
+		return array();
+	}
+
+	$labels = array();
+	$themes = wp_get_themes(
+		array(
+			'errors'     => null,
+			'theme_root' => $root,
+		)
+	);
+
+	foreach ( $themes as $slug => $theme ) {
+		$name = trim( wp_strip_all_tags( (string) $theme->get( 'Name' ) ) );
+
+		if ( '' !== $name && $name !== $slug ) {
+			$labels[ $slug ] = $name;
+		}
+	}
+
+	return $labels;
+}

@@ -441,6 +441,54 @@
     .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-ink mb-3 cursor-pointer }
     .nfd-sm-check input { @apply mt-1 }
 
+    /* wp-admin grows every checkbox to 1.5625rem below 782px, and the tick drawn inside it to
+       1.875rem, so that a finger has something to hit. Every checkbox here is already wrapped
+       in its own `<label>`, so the whole row -- box, name and all -- is the touch target, and
+       the extra nine pixels buy nothing while costing the alignment: a 25px box beside 13px
+       text in a three-column grid is mostly box. Pin both back to their desktop sizes at every
+       width. The tick is a background SVG sized in the same rule as its margins, so restoring
+       one without the other leaves a checkmark hanging out of its box. */
+    .nfd-sm-check input[type="checkbox"] { @apply shrink-0 w-4 h-4 }
+    .nfd-sm-check input[type="checkbox"]:checked::before {
+        width: 1.3125rem;
+        height: 1.3125rem;
+        margin: -0.1875rem 0 0 -0.25rem;
+    }
+
+    /* Choosing what goes in the package.
+       A row per part: the tick and its name on one line, what it is underneath, and the things
+       inside it behind a disclosure — a site with 90 plugins would otherwise be a wall of
+       checkboxes on the screen whose job is to be quicker than packaging everything. */
+    .nfd-sm-pick { @apply border-b border-hair py-4 }
+    .nfd-sm-pick:last-child { @apply border-b-0 pb-0 }
+    .nfd-sm-pick .nfd-sm-check { @apply mb-0 }
+    .nfd-sm-pick strong { @apply block text-[14px] font-semibold text-ink }
+    .nfd-sm-pick-meta {
+        @apply ml-2 font-mono text-[11.5px] font-medium text-faint whitespace-nowrap
+    }
+    .nfd-sm-pick-blurb { @apply block mt-1 text-[13px] leading-[1.5] text-muted }
+    .nfd-sm-pick-sub {
+        @apply grid gap-x-6 mt-3 ml-[26px] p-3.5 bg-sunk rounded-[8px]
+        sm:grid-cols-2 lg:grid-cols-3
+    }
+
+    /* A grid item and a flex item both default to `min-width: auto`, which is "never shrink
+       below your longest word" -- and `wp_bh_payments_shipping_shippo_shipping_parcel_boxes` is
+       one word. So the track grew past its share, the columns overlapped each other, and the
+       right-hand one ran out of the card. Both levels need releasing: the item that is a grid
+       child, and the label inside it that is a flex child.
+
+       `overflow-wrap: anywhere` rather than Tailwind's `break-words`. They wrap identically, but
+       only `anywhere` also lowers the *min-content* contribution, and it is that number the grid
+       sizes its tracks from -- with `break-word` the text would wrap and the column would still
+       be too wide. No utility exists for it, hence the plain declaration. */
+    .nfd-sm-pick-sub .nfd-sm-check { @apply mb-1.5 text-[13px] min-w-0 }
+    .nfd-sm-pick-sub .nfd-sm-check > span {
+        @apply min-w-0;
+        overflow-wrap: anywhere;
+    }
+    .nfd-sm-details + .nfd-sm-details { @apply mt-2 }
+
     .nfd-sm-block {
         @apply font-mono text-[12.5px] bg-ink text-canvas rounded-[7px] p-3.5
         overflow-x-auto whitespace-pre my-2

@@ -5,6 +5,10 @@
 Companion to [`code-analysis.md`](./code-analysis.md). That document says what is wrong; this
 one says what to build instead, in what order, and what "done" means for each step.
 
+> **Phases 0–8 are done.** Work after them is planned in its own document rather than by
+> extending this one: see [`phase-9-plan.md`](./phase-9-plan.md) for choosable package contents
+> and the standing link that removes the second copy-paste from a direct transfer.
+
 > **Revision note.** v1 of this plan was CLI-first with the UI as a secondary adapter. That is
 > now inverted: the browser UI is the primary interface for v1, and WP-CLI moves to a later
 > release. The architecture is unchanged by this — a transport-agnostic core with thin

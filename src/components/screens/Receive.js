@@ -98,6 +98,12 @@ export const Receive = () => {
 							'nfd-site-migrator'
 						) }
 					</p>
+					<p className="nfd-sm-hint">
+						{ __(
+							'It also saves you the trip back. Once the two sites have been introduced, the source can offer the finished package straight to this one, and the import screen here will show it waiting — with nothing else to copy.',
+							'nfd-site-migrator'
+						) }
+					</p>
 
 					<div className="nfd-sm-actions">
 						<button

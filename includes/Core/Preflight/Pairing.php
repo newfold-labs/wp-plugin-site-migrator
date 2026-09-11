@@ -7,6 +7,8 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Preflight;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
+
 /**
  * Issues and redeems the single-use code that lets a source read a destination's profile.
  *
@@ -149,19 +151,38 @@ class Pairing {
 			return array( 'error' => 'Give me the destination\'s address.' );
 		}
 
-		$last = array( 'error' => 'The destination did not answer with a profile.' );
+		// The one moment both ends have proved themselves: somebody stood on the destination to
+		// mint the code, and somebody stood here to type it. A token minted now is what lets the
+		// destination ask this site for the package later without a second code being carried
+		// back. It is offered, not required — a destination running an older version ignores the
+		// header, says nothing about it, and the migration falls back to the pasted key.
+		$token = Link::issue( $url );
+		$last  = array( 'error' => 'The destination did not answer with a profile.' );
 
 		foreach ( self::endpoints( $url ) as $endpoint ) {
-			$attempt = self::ask( $endpoint, $code );
+			$attempt = self::ask( $endpoint, $code, $token );
 
 			if ( isset( $attempt['profile'] ) || ! empty( $attempt['final'] ) ) {
 				unset( $attempt['final'] );
+
+				// Kept only if the other end says it kept its half. A destination on an older
+				// version ignores the header and answers without `linked`, and a source holding a
+				// token nothing can present would show an Offer button for a handover that could
+				// never happen — worse than not offering it, because the failure is silent and
+				// on the other site.
+				if ( empty( $attempt['linked'] ) ) {
+					Link::revoke();
+				}
 
 				return $attempt;
 			}
 
 			$last = $attempt;
 		}
+
+		// Nothing was paired, so nothing should be left holding a token for a site that never
+		// took it.
+		Link::revoke();
 
 		unset( $last['final'] );
 
@@ -268,10 +289,11 @@ class Pairing {
 	 *
 	 * @param string $endpoint Absolute URL.
 	 * @param string $code     Pairing code.
+	 * @param string $token    Link token to leave behind, when the destination will keep one.
 	 *
 	 * @return array `profile` on success, or `error` plus `final`.
 	 */
-	protected static function ask( $endpoint, $code ) {
+	protected static function ask( $endpoint, $code, $token = '' ) {
 		$response = \wp_remote_get(
 			$endpoint,
 			array(
@@ -282,6 +304,7 @@ class Pairing {
 				'headers'   => array(
 					'X-NFD-SM-Pairing' => \trim( (string) $code ),
 					'X-NFD-SM-From'    => \get_site_url(),
+					Link::HEADER       => (string) $token,
 				),
 			)
 		);
@@ -320,6 +343,12 @@ class Pairing {
 			);
 		}
 
-		return array( 'profile' => new SiteProfile( $body['profile'] ) );
+		return array(
+			'profile' => new SiteProfile( $body['profile'] ),
+			// Whether the other end kept the token. An older destination simply does not say,
+			// which reads as false and sends the user down the manual path — the right answer
+			// for a site that cannot be asked anything later.
+			'linked'  => ! empty( $body['linked'] ),
+		);
 	}
 }

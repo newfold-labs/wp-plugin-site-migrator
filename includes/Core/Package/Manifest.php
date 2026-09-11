@@ -83,6 +83,7 @@ class Manifest {
 				// mean parsing megabytes of SQL to answer a question the source already knows.
 				'users'          => self::site_users(),
 				'database'       => array(),
+				'contents'       => array(),
 				'parts'          => array(),
 				'large'          => array(),
 				'totals'         => array(
@@ -256,6 +257,34 @@ class Manifest {
 		$this->data['skipped_paths'] = array(
 			'total' => (int) $total,
 			'paths' => $paths,
+		);
+	}
+
+	/**
+	 * Record what the user chose to leave out of this package.
+	 *
+	 * Additive, and absent means "everything": a package built before this existed reads as a
+	 * complete site, which is what it is. This is the only record of the choice that travels —
+	 * the destination has no other way to tell a site with no media from a site whose media was
+	 * deliberately left behind, and the difference decides whether a screen of broken images is a
+	 * bug or the plan.
+	 *
+	 * @param array $selection The selection as stored, from `Selection::to_array()`.
+	 * @param array $included  Part names actually written.
+	 * @param array $excluded  Part names left out.
+	 *
+	 * @return void
+	 */
+	public function set_contents( array $selection, array $included, array $excluded ) {
+		$this->data['contents'] = array(
+			'everything' => empty( $excluded )
+				&& empty( $selection['paths'] )
+				&& empty( $selection['database'] ),
+			'selection'  => $selection,
+			'parts'      => array(
+				'included' => \array_values( $included ),
+				'excluded' => \array_values( $excluded ),
+			),
 		);
 	}
 

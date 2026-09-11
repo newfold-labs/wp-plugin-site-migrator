@@ -172,6 +172,32 @@ export function usePull() {
 	}, [] );
 
 	/**
+	 * Take up the offer the paired source is making.
+	 *
+	 * The same absorb as `connect`, deliberately: the server claims the key and connects in one
+	 * request, so what comes back is the same snapshot, and a screen that called the route
+	 * directly would start stepping against a state that still said "not connected".
+	 *
+	 * @return {Promise<Object>} The server's answer.
+	 */
+	const claim = useCallback( async () => {
+		const response = await api.import.pull.link();
+
+		if ( ! response.failed ) {
+			setState( ( s ) =>
+				absorb( response, {
+					...s,
+					notes: [],
+					startedAt: 0,
+					baseBytes: 0,
+				} )
+			);
+		}
+
+		return response;
+	}, [] );
+
+	/**
 	 * Forget the source, keeping what has already arrived.
 	 */
 	const disconnect = useCallback( async () => {
@@ -186,5 +212,5 @@ export function usePull() {
 		);
 	}, [] );
 
-	return { state, connect, disconnect, run, halt, hydrate };
+	return { state, connect, claim, disconnect, run, halt, hydrate };
 }

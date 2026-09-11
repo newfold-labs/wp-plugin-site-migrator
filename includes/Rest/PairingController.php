@@ -9,6 +9,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Rest;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\LinkedSource;
 
 /**
  * Issue a code here; let a paired source read this site's profile.
@@ -124,8 +125,20 @@ class PairingController extends Controller {
 			return $this->not_found();
 		}
 
+		// Kept only now, after the code has been redeemed. The token is worth nothing by itself
+		// — presenting it to the source asks one question and gets a 404 until somebody there
+		// offers a package — but a route that stored one for any caller would let a stranger
+		// point this site at a source of their choosing, and the whole design of pairing is that
+		// neither half of a migration can be started from outside.
+		$linked = LinkedSource::remember( $from, (string) $request->get_header( 'x-nfd-sm-link' ) );
+
 		return \rest_ensure_response(
-			array( 'profile' => SiteProfile::gather()->to_array() )
+			array(
+				'profile' => SiteProfile::gather()->to_array(),
+				// So the source knows whether it can offer the package directly or has to show a
+				// key to carry. An older destination omits this, which reads as false.
+				'linked'  => $linked,
+			)
 		);
 	}
 }

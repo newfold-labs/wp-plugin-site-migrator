@@ -48,6 +48,7 @@ export const Choose = () => {
 	// the disk, and the sentence explaining that has nowhere to go in a native prompt.
 	const [ confirming, setConfirming ] = useState( '' );
 	const [ discarding, setDiscarding ] = useState( '' );
+	const [ waiting, setWaiting ] = useState( null );
 
 	// Directory selection is not a React property, and the two attributes that enable it differ
 	// by browser. Set on the node itself so neither is dropped on the way through JSX.
@@ -59,6 +60,23 @@ export const Choose = () => {
 			node.setAttribute( 'directory', '' );
 			node.setAttribute( 'mozdirectory', '' );
 		}
+	}, [] );
+
+	// Asked once, not polled: this screen is a fork in the road rather than a waiting room. If a
+	// package is already on offer, saying so here saves the user choosing between two routes when
+	// one of them is visibly ready.
+	useEffect( () => {
+		let live = true;
+
+		api.import.pull.offer().then( ( response ) => {
+			if ( live && ! response.failed && response.offered ) {
+				setWaiting( response );
+			}
+		} );
+
+		return () => {
+			live = false;
+		};
 	}, [] );
 
 	useEffect( () => {
@@ -253,10 +271,20 @@ export const Choose = () => {
 					{ __( 'Fetch it from the source', 'nfd-site-migrator' ) }
 				</p>
 				<p className="nfd-sm-hint">
-					{ __(
-						'If the site you are moving from can be reached over the internet, this site downloads the package straight from it — nothing goes through your computer, and an interrupted transfer picks up where it stopped. Generate a transfer key there first.',
-						'nfd-site-migrator'
-					) }
+					{ waiting
+						? sprintf(
+								/* translators: 1: source address, 2: package size. */
+								__(
+									'%1$s is offering a package right now — %2$s, waiting for this site to take it. It was paired with this one, so there is no key to carry.',
+									'nfd-site-migrator'
+								),
+								waiting.site_url || waiting.url,
+								size( waiting.bytes || 0 )
+						  )
+						: __(
+								'If the site you are moving from can be reached over the internet, this site downloads the package straight from it — nothing goes through your computer, and an interrupted transfer picks up where it stopped. Generate a transfer key there first.',
+								'nfd-site-migrator'
+						  ) }
 				</p>
 				<div className="nfd-sm-actions">
 					<button
@@ -265,7 +293,15 @@ export const Choose = () => {
 						id="nfd-sm-go-pull"
 						onClick={ () => navigate( '/import/pull' ) }
 					>
-						{ __( 'Fetch from the source', 'nfd-site-migrator' ) }
+						{ waiting
+							? __(
+									'Fetch the waiting package',
+									'nfd-site-migrator'
+							  )
+							: __(
+									'Fetch from the source',
+									'nfd-site-migrator'
+							  ) }
 					</button>
 				</div>
 			</div>

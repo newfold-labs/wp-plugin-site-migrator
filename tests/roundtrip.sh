@@ -211,6 +211,26 @@ for i in $(seq 1 "${NFD_BULK_FILES:-1200}"); do
 	printf 'file %s\n' "$i" > "$SRC/wp-content/uploads/bulk/f$i.txt"
 done
 
+# A plugin the selection test will leave behind, and a post revision for the database filter to
+# drop. Both are asserted present in the full package first, so "it is not in the smaller one"
+# cannot pass because it was never there.
+mkdir -p "$SRC/wp-content/plugins/skipme"
+printf '<?php\n/**\n * Plugin Name: Skip Me\n */\n' > "$SRC/wp-content/plugins/skipme/skipme.php"
+
+# Its own post, revised twice. Reaching for "the most recent post" instead would pick up the
+# block fixture created just above and overwrite the escaped-slash attributes inside it — which
+# is exactly what happened the first time this was written, and it took the round trip on two real
+# installs to say so.
+REV_POST=$(src post create --post_title="Revised repeatedly" --post_status=publish --post_name=revised \
+	--post_author="$SRC_ADMIN" --post_content="first draft" --porcelain)
+src post update "$REV_POST" --post_content="second draft" --quiet
+src post update "$REV_POST" --post_content="third draft" --quiet
+
+if [ "$(src post list --post_type=revision --format=count)" = "0" ]; then
+	echo "The source has no post revisions; the contents test would pass for the wrong reason."
+	exit 1
+fi
+
 # A user who exists on both sides under the same login, and one unique to the source. The merge
 # has to keep the destination's password for the shared account and carry the other across.
 src user create shared shared@example.com --role=editor --user_pass=sourcepass --quiet
@@ -259,6 +279,55 @@ assert "verify exits 0 on a good package" "0" "$?"
 src site-migrator inspect "$PKG" --format=json >"$WORK/inspect.json" 2>/dev/null
 assert "inspect names the source" "$SRC_URL" \
 	"$(python3 -c "import json;print(json.load(open('$WORK/inspect.json'))['source']['site_url'])")"
+
+# --------------------------------------------------------------------------------------------
+say "Choosing what goes in the package"
+
+PKG_SOME="$WORK/package-some"
+
+# The whole-site package is the control: whatever the narrowed one is missing has to be in here,
+# or the assertions below are measuring nothing.
+assert "the full package carries the plugin" "1" \
+	"$(find "$PKG/parts" -name 'plugins*.zip' -exec unzip -l {} \; 2>/dev/null | grep -c 'skipme/skipme.php')"
+assert "and the full dump carries revisions" "1" \
+	"$([ "$(grep -c "'revision'" "$PKG/database.sql")" -gt 0 ] && echo 1 || echo 0)"
+
+printf '{"paths":{"plugins":["skipme"]},"database":{"skip_revisions":true}}' \
+	| src site-migrator contents --set=- >/dev/null 2>&1
+assert "contents accepts a selection" "0" "$?"
+
+assert "and says what it will leave out" "1" \
+	"$(src site-migrator contents --format=json 2>/dev/null | grep -c 'post revisions')"
+
+src site-migrator export --to="$PKG_SOME" >/dev/null 2>&1
+assert "a narrowed export exits 0" "0" "$?"
+
+src site-migrator verify "$PKG_SOME" >/dev/null 2>&1
+assert "and its package verifies" "0" "$?"
+
+assert "the refused plugin is not in the package" "0" \
+	"$(find "$PKG_SOME/parts" -name 'plugins*.zip' -exec unzip -l {} \; 2>/dev/null | grep -c 'skipme/skipme.php')"
+assert "the other plugins still are" "1" \
+	"$([ "$(find "$PKG_SOME/parts" -name 'plugins*.zip' -exec unzip -l {} \; 2>/dev/null | grep -c 'hello')" -gt 0 ] && echo 1 || echo 0)"
+assert "and the dump carries no revisions" "0" \
+	"$(grep -c "'revision'" "$PKG_SOME/database.sql")"
+
+# What was left out has to travel with the package: the destination cannot tell a site with no
+# revisions from a package that dropped them.
+assert "the manifest records that this is not the whole site" "False" \
+	"$(python3 -c "import json;print(json.load(open('$PKG_SOME/manifest.json'))['contents']['everything'])")"
+assert "and names the refused path" "skipme" \
+	"$(python3 -c "import json;print(json.load(open('$PKG_SOME/manifest.json'))['contents']['selection']['paths']['plugins'][0])")"
+
+# A part cannot be dropped out from under an import: what the destination is handed still restores.
+dst site-migrator verify "$PKG_SOME" >/dev/null 2>&1
+assert "the destination accepts the narrowed package too" "0" "$?"
+
+src site-migrator contents --reset >/dev/null 2>&1
+assert "the selection can be put back" "1" \
+	"$(src site-migrator contents --format=json 2>/dev/null | grep -c '"everything":true')"
+
+rm -rf "$PKG_SOME"
 
 # --------------------------------------------------------------------------------------------
 say "Fault injection: a package that does not match its manifest"

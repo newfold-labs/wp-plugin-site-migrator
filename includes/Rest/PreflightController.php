@@ -12,6 +12,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Destination;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
 
 /**
  * Can this site export, and can that site receive it?
@@ -169,6 +170,11 @@ class PreflightController extends Controller {
 	 */
 	public function forget_destination() {
 		Destination::forget();
+
+		// The link is a credential for that destination and nothing else. Keeping it past the
+		// site it belongs to would leave an Offer button pointing at a pairing the user has just
+		// said they are done with.
+		Link::revoke();
 
 		return \rest_ensure_response( array( 'saved' => false ) );
 	}

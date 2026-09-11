@@ -23,6 +23,13 @@ define( 'MINUTE_IN_SECONDS', 60 );
 
 // `$wpdb` result-format constants. WordPress defines these globally, and `SiteProfile` passes
 // ARRAY_A to get_row(); without them PHP resolves the bare name inside the class's namespace.
+// The directory layout `PartSpecs` reads. Real WordPress defines these in wp-settings.php; the
+// unit suite needs them because the part list — and therefore what an export packages — is
+// derived from where these actually point.
+define( 'WP_CONTENT_DIR', \rtrim( ABSPATH, '/' ) . '/wp-content' );
+define( 'WP_PLUGIN_DIR', WP_CONTENT_DIR . '/plugins' );
+define( 'WPMU_PLUGIN_DIR', WP_CONTENT_DIR . '/mu-plugins' );
+
 define( 'OBJECT', 'OBJECT' );
 define( 'ARRAY_A', 'ARRAY_A' );
 define( 'ARRAY_N', 'ARRAY_N' );
@@ -72,6 +79,13 @@ class Fixture {
 	public static $transients = array();
 
 	/**
+	 * What `SHOW TABLES` answers.
+	 *
+	 * @var array
+	 */
+	public static $tables = array();
+
+	/**
 	 * Where `wp_get_upload_dir()` points.
 	 *
 	 * @var string
@@ -84,6 +98,13 @@ class Fixture {
 	 * @var string
 	 */
 	public static $site_url = 'http://source.test';
+
+	/**
+	 * What `get_current_user_id()` answers.
+	 *
+	 * @var int
+	 */
+	public static $current_user_id = 1;
 
 	/**
 	 * Filters registered during a test, keyed by hook.
@@ -154,7 +175,9 @@ class Fixture {
 	public static function reset() {
 		self::$options    = array();
 		self::$transients = array();
+		self::$tables     = array();
 		self::$site_url   = 'http://source.test';
+		self::$current_user_id = 1;
 		self::$filters    = array();
 		self::$http       = array();
 		self::$sites         = array();
@@ -394,6 +417,10 @@ function current_user_can( $capability ) {
 	return true;
 }
 
+function get_current_user_id() {
+	return \Fixture::$current_user_id;
+}
+
 function status_header( $code ) {}
 
 // --- Site facts --------------------------------------------------------------------------
@@ -417,6 +444,9 @@ function get_bloginfo( $show = '' ) {
 class WPDB_Stub {
 
 	public $prefix    = 'wp_';
+	// Real `$wpdb` has both, and `nfd_sm_table_prefix()` reads the base one. A stub missing a
+	// property the code under test reads is a stub that fails as a fatal rather than as a test.
+	public $base_prefix = 'wp_';
 	public $dbname    = 'nfd_sm_tests';
 	public $users     = 'wp_users';
 	public $usermeta  = 'wp_usermeta';
@@ -433,6 +463,12 @@ class WPDB_Stub {
 	}
 
 	public function get_col( $query, $column = 0 ) {
+		// `SHOW TABLES` is answered from a fixture because the export's table list is built from
+		// it, and a stub that always says "no tables" cannot show a filter dropping the wrong one.
+		if ( 0 === \stripos( \ltrim( (string) $query ), 'SHOW TABLES' ) ) {
+			return \Fixture::$tables;
+		}
+
 		return array();
 	}
 
@@ -451,6 +487,32 @@ class WPDB_Stub {
 
 function wp_generate_password( $length = 12, $special = true, $extra = false ) {
 	return \substr( \str_repeat( 'abcdef0123456789', 8 ), 0, $length );
+}
+
+/**
+ * The theme roots, in the shape `nfd_sm_themes_dir()` expects.
+ *
+ * WordPress returns one entry per theme with its root beside it, and the helper reduces that to
+ * the distinct roots — so a stub returning the root directly would be testing a function that
+ * does not exist.
+ */
+function search_theme_directories() {
+	$root  = WP_CONTENT_DIR . '/themes';
+	$found = array();
+
+	if ( ! \is_dir( $root ) ) {
+		return $found;
+	}
+
+	foreach ( (array) \scandir( $root ) as $name ) {
+		if ( '.' === $name || '..' === $name || ! \is_dir( $root . '/' . $name ) ) {
+			continue;
+		}
+
+		$found[ $name ] = array( 'theme_root' => $root );
+	}
+
+	return $found;
 }
 
 function wp_upload_dir() {

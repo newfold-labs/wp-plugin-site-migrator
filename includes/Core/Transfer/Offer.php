@@ -107,6 +107,19 @@ class Offer {
 	}
 
 	/**
+	 * What the source chose to leave out of this package.
+	 *
+	 * Offered before the transfer starts rather than discovered from the manifest afterwards: the
+	 * destination is about to spend hours fetching, and "this package has no media in it" is
+	 * worth knowing at the start of that rather than the end.
+	 *
+	 * @return array Empty for a package that carries everything, or was built before this existed.
+	 */
+	public function contents() {
+		return (array) \nfd_sm_data_get( $this->reader->inspect(), 'contents', array() );
+	}
+
+	/**
 	 * How the transfer describes itself before a single byte moves.
 	 *
 	 * @return array

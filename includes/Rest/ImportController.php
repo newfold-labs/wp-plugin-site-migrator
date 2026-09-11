@@ -13,6 +13,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Loader;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\UserMerger;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\LinkedSource;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Puller;
 
 /**
@@ -52,6 +53,8 @@ class ImportController extends Controller {
 			'/import/upload/verify' => array( \WP_REST_Server::CREATABLE, 'upload_verify', $admin ),
 			'/import/upload/reset'  => array( \WP_REST_Server::CREATABLE, 'upload_reset', $admin ),
 			'/import/pull/connect'  => array( \WP_REST_Server::CREATABLE, 'pull_connect', $admin ),
+			'/import/pull/offer'    => array( \WP_REST_Server::READABLE, 'pull_offer', $admin ),
+			'/import/pull/link'     => array( \WP_REST_Server::CREATABLE, 'pull_link', $admin ),
 			'/import/pull/step'     => array( \WP_REST_Server::CREATABLE, 'pull_step', $admin ),
 			'/import/pull/state'    => array( \WP_REST_Server::READABLE, 'pull_state', $admin ),
 			'/import/pull/stop'     => array( \WP_REST_Server::CREATABLE, 'pull_stop', $admin ),
@@ -306,6 +309,67 @@ class ImportController extends Controller {
 					'ok'      => true,
 					// Said out loud rather than done quietly: this is the one place a
 					// connection throws away bytes somebody waited for.
+					'cleared' => (int) $result['cleared'],
+				),
+				$puller->snapshot()
+			)
+		);
+	}
+
+	/**
+	 * Ask the source this site paired with whether it is offering a package.
+	 *
+	 * Nothing is claimed and nothing is started: this is the question the screen asks while it
+	 * waits, so that the moment somebody presses Offer on the source, a button appears here.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function pull_offer() {
+		if ( ! LinkedSource::exists() ) {
+			return \rest_ensure_response(
+				array(
+					'linked'  => false,
+					'offered' => false,
+				)
+			);
+		}
+
+		return \rest_ensure_response(
+			\array_merge(
+				array( 'linked' => true ),
+				LinkedSource::status(),
+				LinkedSource::ask()
+			)
+		);
+	}
+
+	/**
+	 * Claim the offer and connect to it.
+	 *
+	 * Two hops in one request, because they are one decision: the person pressing this is saying
+	 * "fetch that package", and a key that was minted and then not used would sit on the source
+	 * looking like a transfer that had stalled.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function pull_link() {
+		$claim = LinkedSource::claim();
+
+		if ( isset( $claim['error'] ) ) {
+			return new \WP_Error( 'nfd_sm_claim_failed', $claim['error'], array( 'status' => 400 ) );
+		}
+
+		$puller = new Puller();
+		$result = $puller->connect( $claim['url'], $claim['key'] );
+
+		if ( isset( $result['error'] ) ) {
+			return new \WP_Error( 'nfd_sm_connect_failed', $result['error'], array( 'status' => 400 ) );
+		}
+
+		return \rest_ensure_response(
+			\array_merge(
+				array(
+					'ok'      => true,
 					'cleared' => (int) $result['cleared'],
 				),
 				$puller->snapshot()

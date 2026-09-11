@@ -85,9 +85,24 @@ class PartSpecs {
 	/**
 	 * Build the ordered list of parts.
 	 *
+	 * **The default is the whole site, and that is load-bearing.** This is not only the export's
+	 * part list: `PathMap` calls it on the *destination* to learn where plugins, themes and
+	 * uploads live there. A destination that happens to have its own saved selection — because
+	 * somebody exported from it once — would otherwise map fewer directories than the package
+	 * carries and refuse the files that fall outside them. Only the export passes a selection in.
+	 *
+	 * The full list is built first and narrowed afterwards, which is also load-bearing.
+	 * `content-other` excludes whatever the other parts already cover, so a `$covered` list built
+	 * from the *surviving* parts would let a deselected `uploads` be swept straight back up by
+	 * `content-other` — a "leave the media behind" that packages the media.
+	 *
+	 * @param Selection $selection What to leave out, or null for everything.
+	 *
 	 * @return array List of PartSpec.
 	 */
-	public static function all() {
+	public static function all( $selection = null ) {
+		$selection = ( $selection instanceof Selection ) ? $selection : Selection::everything();
+
 		$content = \rtrim( WP_CONTENT_DIR, '/\\' );
 		$specs   = array();
 		$covered = array();
@@ -167,6 +182,8 @@ class PartSpecs {
 		 */
 		$names = (array) \apply_filters( 'nfd_sm_excluded_names', self::$excluded_names );
 
+		$chosen = array();
+
 		foreach ( $specs as $spec ) {
 			$spec->exclude_names( $names );
 			$spec->exclude_dirs(
@@ -176,14 +193,159 @@ class PartSpecs {
 					)
 				)
 			);
+
+			if ( ! $selection->wants_part( $spec->name() ) ) {
+				continue;
+			}
+
+			if ( ! self::refuse( $spec, $selection->refused_paths( $spec->name() ) ) ) {
+				continue;
+			}
+
+			$chosen[] = $spec;
 		}
 
 		/**
 		 * Filter the parts a package is built from.
 		 *
-		 * @param array $specs List of PartSpec.
+		 * @param array     $specs     List of PartSpec.
+		 * @param Selection $selection What the user chose to leave out.
 		 */
-		return \apply_filters( 'nfd_sm_part_specs', $specs );
+		return \apply_filters( 'nfd_sm_part_specs', $chosen, $selection );
+	}
+
+	/**
+	 * The parts, and what can be ticked off inside each of them.
+	 *
+	 * Deliberately cheap: one `scandir` per part root and nothing below it. Measuring what each
+	 * item weighs would mean walking the whole site — the same walk the export itself does, which
+	 * on a large site is minutes — so the picker offers names and the user's own knowledge of
+	 * their site rather than a number that cost half an export to produce.
+	 *
+	 * The list is always the *whole* site's parts, with the current refusals marked rather than
+	 * removed: a screen has to be able to put back what a previous visit turned off.
+	 *
+	 * @param int $limit Most children reported per part.
+	 *
+	 * @return array One entry per part: `name`, `prefix`, `children`, `truncated`.
+	 */
+	public static function catalog( $limit = 500 ) {
+		$catalog = array();
+
+		foreach ( self::all() as $spec ) {
+			$children = self::children( $spec );
+
+			$catalog[] = array(
+				'name'      => $spec->name(),
+				'prefix'    => $spec->prefix(),
+				'children'  => \array_slice( $children, 0, $limit ),
+				'truncated' => \count( $children ) > $limit,
+			);
+		}
+
+		return $catalog;
+	}
+
+	/**
+	 * What sits directly inside one part, as things a user might refuse.
+	 *
+	 * Directories for a recursive part — a plugin, a theme, an uploads year — and the permitted
+	 * names for an allowlisted one. Symlinks are left out because the export refuses them anyway,
+	 * and offering a choice about something that is never carried is a lie.
+	 *
+	 * @param PartSpec $spec Part description.
+	 *
+	 * @return array Names relative to the part root, sorted.
+	 */
+	protected static function children( PartSpec $spec ) {
+		$root = $spec->root();
+
+		if ( ! \is_dir( $root ) ) {
+			return array();
+		}
+
+		if ( $spec->is_allowlisted() ) {
+			$present = array();
+
+			foreach ( $spec->allowlist() as $name ) {
+				$path = $root . DIRECTORY_SEPARATOR . $name;
+
+				if ( \is_file( $path ) && ! \is_link( $path ) ) {
+					$present[] = $name;
+				}
+			}
+
+			return $present;
+		}
+
+		$items   = \scandir( $root );
+		$names   = $spec->excluded_names();
+		$dirs    = $spec->excluded_dirs();
+		$results = array();
+
+		if ( false === $items ) {
+			return array();
+		}
+
+		foreach ( $items as $name ) {
+			if ( '.' === $name || '..' === $name || \in_array( $name, $names, true ) || \in_array( $name, $dirs, true ) ) {
+				continue;
+			}
+
+			$path = $root . DIRECTORY_SEPARATOR . $name;
+
+			if ( \is_dir( $path ) && ! \is_link( $path ) ) {
+				$results[] = $name;
+			}
+		}
+
+		\sort( $results );
+
+		return $results;
+	}
+
+	/**
+	 * Take the user's refusals out of one part.
+	 *
+	 * A refused path is added to both lists rather than to the one that matches what is on disk
+	 * today: `excluded_dirs` is consulted for directories and `excluded_files` for files, both by
+	 * the same relative path, and a selection saved last week should not start carrying a plugin
+	 * again because somebody replaced its directory with a single file. An allowlisted part —
+	 * drop-ins, the root extras — is narrowed by filtering the allowlist itself, since its walk
+	 * never consults either list.
+	 *
+	 * An allowlisted part whose allowlist is emptied is **dropped**, not narrowed to nothing.
+	 * `PartSpec::only( array() )` leaves `is_allowlisted()` false and the walk falls back to the
+	 * shallow one — which for `root-extras` means scanning the WordPress root and packaging
+	 * `wp-config.php`, the exact shape of finding 2.4. Refusing every drop-in is a request to
+	 * carry no drop-ins, not a request to collect the directory some other way.
+	 *
+	 * @param PartSpec $spec  Part to narrow, modified in place.
+	 * @param array    $paths Paths relative to the part's root.
+	 *
+	 * @return bool False when nothing is left of the part and it should not be exported at all.
+	 */
+	protected static function refuse( PartSpec $spec, array $paths ) {
+		if ( empty( $paths ) ) {
+			return true;
+		}
+
+		if ( $spec->is_allowlisted() ) {
+			$left = \array_values( \array_diff( $spec->allowlist(), $paths ) );
+
+			if ( empty( $left ) ) {
+				return false;
+			}
+
+			$spec->only( $left );
+
+			return true;
+		}
+
+		$spec->exclude_dirs( \array_values( \array_unique( \array_merge( $spec->excluded_dirs(), $paths ) ) ) );
+		$spec->exclude_files( \array_values( \array_unique( \array_merge( $spec->excluded_files(), $paths ) ) ) );
+
+		return true;
 	}
 
 	/**

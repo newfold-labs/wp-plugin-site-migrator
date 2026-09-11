@@ -18,6 +18,30 @@ const size = ( bytes ) => {
 };
 
 /**
+ * The manual url-and-key form, open or folded away.
+ *
+ * A plain `<details>` rather than state of its own: the browser remembers nothing across a render,
+ * which is what is wanted — the form should be open exactly when it is the only way through, and
+ * `open` is decided by whether a package is being offered.
+ *
+ * @param {Object}  props          Props.
+ * @param {boolean} props.open     Whether to render it expanded.
+ * @param {Object}  props.children The form.
+ * @return {Object} The form, wrapped when it is not the main path.
+ */
+const Manual = ( { open, children } ) =>
+	open ? (
+		children
+	) : (
+		<details className="nfd-sm-details">
+			<summary>
+				{ __( 'Enter a key by hand', 'nfd-site-migrator' ) }
+			</summary>
+			{ children }
+		</details>
+	);
+
+/**
  * Seconds left, from the rate this tab has actually seen.
  *
  * @param {Object} state Transfer state.
@@ -60,14 +84,20 @@ const remaining = ( state ) => {
  * time it is asked for. So closing this tab does not lose the transfer, opening a second one does
  * not double it, and resuming after a dropped connection needs nothing to have been written down.
  *
+ * If this site was paired with the source, there is nothing to type at all: the token pairing left
+ * behind lets this screen ask whether a package is on offer, and the answer arrives as a button.
+ * The form stays underneath for every other case — no pairing, an older source, a package coming
+ * from a site this one has never spoken to.
+ *
  * @return {Element} The screen.
  */
 export const Pull = () => {
 	const navigate = useNavigate();
-	const { state, connect, disconnect, run, halt } = usePull();
+	const { state, connect, claim, disconnect, run, halt } = usePull();
 
 	const [ url, setUrl ] = useState( '' );
 	const [ key, setKey ] = useState( '' );
+	const [ waiting, setWaiting ] = useState( null );
 	const [ busy, setBusy ] = useState( false );
 	const [ formError, setFormError ] = useState( '' );
 	const [ cleared, setCleared ] = useState( 0 );
@@ -91,6 +121,53 @@ export const Pull = () => {
 			);
 		} );
 	}, [ state.done, verifying, problems ] );
+
+	// The other half of "no second code". Pairing left a token here, so this screen can ask the
+	// source whether anything is being offered — a question that costs the source nothing and
+	// returns no credential. It is polled rather than asked once, because the usual sequence is
+	// two tabs side by side: this one open, waiting, while somebody presses Offer on the other.
+	useEffect( () => {
+		if ( ! state.hydrated || state.connected ) {
+			return undefined;
+		}
+
+		let live = true;
+
+		const look = () => {
+			api.import.pull.offer().then( ( response ) => {
+				if ( live && ! response.failed ) {
+					setWaiting( response );
+				}
+			} );
+		};
+
+		look();
+
+		const timer = window.setInterval( look, 5000 );
+
+		return () => {
+			live = false;
+			window.clearInterval( timer );
+		};
+	}, [ state.hydrated, state.connected ] );
+
+	const accept = async () => {
+		setBusy( true );
+		setFormError( '' );
+		setProblems( null );
+
+		const response = await claim();
+
+		setBusy( false );
+
+		if ( response.failed ) {
+			setFormError( response.error );
+			return;
+		}
+
+		setCleared( response.cleared || 0 );
+		run();
+	};
 
 	const submit = async ( event ) => {
 		event.preventDefault();
@@ -186,76 +263,174 @@ export const Pull = () => {
 				</div>
 			) }
 
-			{ state.hydrated && ! state.connected && (
-				<div className="nfd-sm-card">
-					<form className="nfd-sm-form" onSubmit={ submit }>
-						<label htmlFor="nfd-sm-source-url">
-							{ __(
-								'The source site’s address',
-								'nfd-site-migrator'
-							) }
-						</label>
-						<input
-							id="nfd-sm-source-url"
-							className="nfd-sm-input"
-							type="url"
-							required
-							placeholder="https://example.com"
-							value={ url }
-							onChange={ ( e ) => setUrl( e.target.value ) }
-						/>
-
-						<label htmlFor="nfd-sm-transfer-key-input">
-							{ __( 'Transfer key', 'nfd-site-migrator' ) }
-						</label>
-						<input
-							id="nfd-sm-transfer-key-input"
-							className="nfd-sm-input"
-							type="text"
-							required
-							spellCheck="false"
-							autoComplete="off"
-							placeholder={ __(
-								'48 characters, from the source’s send screen',
-								'nfd-site-migrator'
-							) }
-							value={ key }
-							onChange={ ( e ) => setKey( e.target.value ) }
-						/>
-
-						<div className="nfd-sm-actions">
-							<button
-								type="submit"
-								className="nfd-sm-btn nfd-sm-btn--primary"
-								id="nfd-sm-pull-connect"
-								disabled={ busy }
-							>
-								{ busy
-									? __( 'Connecting…', 'nfd-site-migrator' )
-									: __(
-											'Start the transfer',
-											'nfd-site-migrator'
-									  ) }
-							</button>
-							<button
-								type="button"
-								className="nfd-sm-btn"
-								onClick={ () => navigate( '/import' ) }
-							>
-								{ __(
-									'Use a package I already have',
-									'nfd-site-migrator'
-								) }
-							</button>
-						</div>
-					</form>
-
+			{ state.hydrated && ! state.connected && waiting?.offered && (
+				<div className="nfd-sm-card" id="nfd-sm-pull-offer">
+					<p className="nfd-sm-eyebrow">
+						{ __( 'A package is waiting', 'nfd-site-migrator' ) }
+					</p>
 					<p className="nfd-sm-hint">
-						{ __(
-							'Generate the key on the source, under Package ready → Send it to the destination. It is read-only, works for this site alone once used, and can be withdrawn there at any time.',
-							'nfd-site-migrator'
+						{ sprintf(
+							/* translators: 1: source address, 2: package size, 3: number of files. */
+							__(
+								'%1$s is offering a package: %2$s across %3$d files. It was paired with this site, so there is no key to carry — press start and this site fetches it.',
+								'nfd-site-migrator'
+							),
+							waiting.site_url || waiting.url,
+							size( waiting.bytes || 0 ),
+							waiting.count || 0
 						) }
 					</p>
+
+					{ waiting.contents &&
+						false === waiting.contents.everything && (
+							<div className="nfd-sm-note nfd-sm-note--warn">
+								{ sprintf(
+									/* translators: %s: comma-separated list of parts. */
+									__(
+										'The source left things out of this package on purpose: %s. Whatever this site already has in those places is kept.',
+										'nfd-site-migrator'
+									),
+									(
+										waiting.contents.parts?.excluded || []
+									).join( ', ' ) ||
+										__(
+											'some of its content',
+											'nfd-site-migrator'
+										)
+								) }
+							</div>
+						) }
+
+					<div className="nfd-sm-actions">
+						<button
+							type="button"
+							className="nfd-sm-btn nfd-sm-btn--primary"
+							id="nfd-sm-pull-accept"
+							disabled={ busy }
+							onClick={ accept }
+						>
+							{ busy
+								? __( 'Connecting…', 'nfd-site-migrator' )
+								: __(
+										'Start the transfer',
+										'nfd-site-migrator'
+								  ) }
+						</button>
+						<button
+							type="button"
+							className="nfd-sm-btn"
+							onClick={ () => navigate( '/import' ) }
+						>
+							{ __(
+								'Use a package I already have',
+								'nfd-site-migrator'
+							) }
+						</button>
+					</div>
+				</div>
+			) }
+
+			{ state.hydrated &&
+				! state.connected &&
+				waiting?.linked &&
+				! waiting?.offered && (
+					<div className="nfd-sm-note nfd-sm-note--info">
+						{ sprintf(
+							/* translators: %s: the source's address. */
+							__(
+								'Paired with %s. Nothing is being offered yet — finish the export there and press “Offer it to the destination”, and this page will pick it up. Or enter a key below.',
+								'nfd-site-migrator'
+							),
+							waiting.url
+						) }
+						{ /* A transport failure is not the same as "nothing on offer", and reading
+						    one as the other is exactly how a screen ends up quietly reassuring
+						    somebody about a site it cannot reach. */ }
+						{ waiting.error && <p>{ waiting.error }</p> }
+					</div>
+				) }
+
+			{ /* When a package is on offer the button that takes it is above, and this form is the
+			    fallback nobody needs — left expanded it put a second identical "Start the
+			    transfer" on the screen, so which one to press became a question. Collapsed, it is
+			    still one click away for the case it exists for: an offer from a site this one was
+			    never paired with. With nothing offered it is the only way through, and stays
+			    open. */ }
+			{ state.hydrated && ! state.connected && (
+				<div className="nfd-sm-card">
+					<Manual open={ ! waiting?.offered }>
+						<form className="nfd-sm-form" onSubmit={ submit }>
+							<label htmlFor="nfd-sm-source-url">
+								{ __(
+									'The source site’s address',
+									'nfd-site-migrator'
+								) }
+							</label>
+							<input
+								id="nfd-sm-source-url"
+								className="nfd-sm-input"
+								type="url"
+								required
+								placeholder="https://example.com"
+								value={ url }
+								onChange={ ( e ) => setUrl( e.target.value ) }
+							/>
+
+							<label htmlFor="nfd-sm-transfer-key-input">
+								{ __( 'Transfer key', 'nfd-site-migrator' ) }
+							</label>
+							<input
+								id="nfd-sm-transfer-key-input"
+								className="nfd-sm-input"
+								type="text"
+								required
+								spellCheck="false"
+								autoComplete="off"
+								placeholder={ __(
+									'48 characters, from the source’s send screen',
+									'nfd-site-migrator'
+								) }
+								value={ key }
+								onChange={ ( e ) => setKey( e.target.value ) }
+							/>
+
+							<div className="nfd-sm-actions">
+								<button
+									type="submit"
+									className="nfd-sm-btn nfd-sm-btn--primary"
+									id="nfd-sm-pull-connect"
+									disabled={ busy }
+								>
+									{ busy
+										? __(
+												'Connecting…',
+												'nfd-site-migrator'
+										  )
+										: __(
+												'Start the transfer',
+												'nfd-site-migrator'
+										  ) }
+								</button>
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									onClick={ () => navigate( '/import' ) }
+								>
+									{ __(
+										'Use a package I already have',
+										'nfd-site-migrator'
+									) }
+								</button>
+							</div>
+						</form>
+
+						<p className="nfd-sm-hint">
+							{ __(
+								'Generate the key on the source, under Package ready → Send it to the destination. It is read-only, works for this site alone once used, and can be withdrawn there at any time.',
+								'nfd-site-migrator'
+							) }
+						</p>
+					</Manual>
 				</div>
 			) }
 

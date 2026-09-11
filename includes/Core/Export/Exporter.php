@@ -12,6 +12,8 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Progress\NullProgressReporter;
 use NewfoldLabs\WP\SiteMigrator\Core\Progress\ProgressReporter;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\TransferKey;
 
 /**
  * Drives an export, one bounded step at a time.
@@ -72,11 +74,18 @@ class Exporter {
 	protected $progress;
 
 	/**
-	 * Part descriptions.
+	 * Part descriptions, resolved once per request.
 	 *
-	 * @var array
+	 * @var array|null
 	 */
-	protected $specs;
+	protected $specs = null;
+
+	/**
+	 * The selection a run that has not started yet would use.
+	 *
+	 * @var Selection|null
+	 */
+	protected $selection = null;
 
 	/**
 	 * Constructor.
@@ -87,7 +96,63 @@ class Exporter {
 		$this->package    = new PackageWriter( $dir );
 		$this->checkpoint = new Checkpoint( $dir );
 		$this->progress   = new NullProgressReporter();
-		$this->specs      = PartSpecs::all();
+	}
+
+	/**
+	 * Export with a selection other than the one this site has saved.
+	 *
+	 * Only a run that has not written anything yet can be given one. Once a checkpoint exists it
+	 * carries the selection the run started with, and that is the one every step of it uses —
+	 * `part_index` is a position in the part list, so a list that changed underneath a resume
+	 * would restart the wrong part and finish a package that does not match its own manifest.
+	 *
+	 * @param Selection $selection What to leave out.
+	 *
+	 * @return Exporter
+	 */
+	public function set_selection( Selection $selection ) {
+		$this->selection = $selection;
+		$this->specs     = null;
+
+		return $this;
+	}
+
+	/**
+	 * The parts this run is built from.
+	 *
+	 * @param array $state Run state.
+	 *
+	 * @return array List of PartSpec.
+	 */
+	protected function specs( array $state ) {
+		if ( null === $this->specs ) {
+			$this->specs = PartSpecs::all( $this->selection( $state ) );
+		}
+
+		return $this->specs;
+	}
+
+	/**
+	 * The selection in force: the running package's own, or the one this site has saved.
+	 *
+	 * @param array $state Run state.
+	 *
+	 * @return Selection
+	 */
+	protected function selection( array $state ) {
+		// `empty` rather than `isset`: the checkpoint's own default for this key is an empty
+		// array, meaning "this run has not decided yet". A run that decided on everything still
+		// writes the three empty lists `Selection::to_array()` always produces, so the two states
+		// are distinguishable and a fresh run correctly falls through to the site's saved choice.
+		if ( ! empty( $state['selection'] ) && \is_array( $state['selection'] ) ) {
+			return new Selection( $state['selection'] );
+		}
+
+		if ( null === $this->selection ) {
+			$this->selection = Selection::current();
+		}
+
+		return $this->selection;
 	}
 
 	/**
@@ -194,6 +259,21 @@ class Exporter {
 		// on the directory, because a resumed export must find its parts exactly where it left
 		// them — see `PackageWriter::reset()`.
 		if ( $this->is_fresh( $state ) ) {
+			// Written down before the first byte, because this is the run's own copy: changing
+			// the selection later changes the next export, never this one.
+			$state['selection'] = $this->selection( array() )->to_array();
+			$this->specs        = null;
+
+			// A credential minted for the last package does not carry over to this one. The
+			// sizes and checksums it was handed out against are about to stop existing, so a
+			// destination still holding it would be fetching a different site under a key it was
+			// given for another — and the source's own screen would draw the old transfer's
+			// bytes against the new package's total, which is where this was noticed.
+			// `withdraw()` rather than `revoke()`: the pairing survives, only the offer ends, so
+			// the user can offer the new package without carrying a code again.
+			TransferKey::revoke();
+			Link::withdraw();
+
 			$this->package->reset();
 		}
 
@@ -292,7 +372,7 @@ class Exporter {
 	protected function step_database( array &$state, $deadline ) {
 		$this->progress->start( Checkpoint::STAGE_DATABASE );
 
-		$exporter = new DatabaseExporter();
+		$exporter = new DatabaseExporter( $this->selection( $state ) );
 		$target   = $this->package->path( DatabaseExporter::FILE );
 
 		$complete = $exporter->step( $target, $state['database'], $deadline );
@@ -325,10 +405,11 @@ class Exporter {
 			$this->volume_limit()
 		);
 
-		$total = \count( $this->specs );
+		$specs = $this->specs( $state );
+		$total = \count( $specs );
 
 		while ( $state['part_index'] < $total ) {
-			$spec = $this->specs[ $state['part_index'] ];
+			$spec = $specs[ $state['part_index'] ];
 			$list = $this->package->list_path( $spec->name() );
 
 			if ( ! \file_exists( $list ) ) {
@@ -394,6 +475,18 @@ class Exporter {
 
 		$manifest = Manifest::for_this_site();
 
+		$selection = $this->selection( $state );
+		$included  = $this->part_names( $this->specs( $state ) );
+
+		$manifest->set_contents(
+			$selection->to_array(),
+			$included,
+			// Named against the whole site's part list rather than against the refusals the user
+			// typed, so a part that dropped out because every item inside it was refused is
+			// reported as missing too.
+			\array_values( \array_diff( $this->part_names( PartSpecs::all() ), $included ) )
+		);
+
 		$database = DatabaseExporter::FILE;
 		$manifest->set_database(
 			$database,
@@ -458,8 +551,9 @@ class Exporter {
 	 * @return array
 	 */
 	protected function report( array $state, $done, $status = '' ) {
-		$part = isset( $this->specs[ $state['part_index'] ] ) ? $this->specs[ $state['part_index'] ]->name() : '';
-		$plan = isset( $state['plan'] ) ? (array) $state['plan'] : array();
+		$specs = $this->specs( $state );
+		$part  = isset( $specs[ $state['part_index'] ] ) ? $specs[ $state['part_index'] ]->name() : '';
+		$plan  = isset( $state['plan'] ) ? (array) $state['plan'] : array();
 
 		// Everything the walk has counted so far, plus what is still unwalked expressed as a
 		// count of parts. Deliberately not a single invented percentage: parts are walked as
@@ -479,10 +573,10 @@ class Exporter {
 			'stage'         => $state['stage'],
 			'part'          => $part,
 			'part_index'    => (int) $state['part_index'],
-			'part_count'    => \count( $this->specs ),
+			'part_count'    => \count( $specs ),
 			// The parts in the order they will be walked, so the screen can show what is done
 			// and what is still queued rather than only what is happening now.
-			'parts'         => $this->part_names(),
+			'parts'         => $this->part_names( $specs ),
 			// And the last few volumes actually written, which is the only honest form an
 			// activity log can take here: these are files on disk, with the sizes recorded as
 			// each one closed.
@@ -500,12 +594,14 @@ class Exporter {
 	/**
 	 * Every part's name, in walk order.
 	 *
+	 * @param array $specs List of PartSpec.
+	 *
 	 * @return array
 	 */
-	protected function part_names() {
+	protected function part_names( array $specs ) {
 		$names = array();
 
-		foreach ( $this->specs as $spec ) {
+		foreach ( $specs as $spec ) {
 			$names[] = $spec->name();
 		}
 

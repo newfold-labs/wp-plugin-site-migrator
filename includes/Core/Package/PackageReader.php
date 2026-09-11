@@ -175,6 +175,9 @@ class PackageReader {
 			'schema_version' => $this->manifest->get( 'schema_version' ),
 			'created_at'     => $this->manifest->get( 'created_at' ),
 			'source'         => $this->manifest->get( 'source', array() ),
+			// Absent on a package built before contents could be chosen, which reads correctly
+			// as "the whole site".
+			'contents'       => (array) $this->manifest->get( 'contents', array() ),
 			'database'       => $this->manifest->get( 'database', array() ),
 			'parts'          => $parts,
 			'large'          => (array) $this->manifest->get( 'large', array() ),

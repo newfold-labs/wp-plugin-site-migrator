@@ -1,6 +1,6 @@
 {
   "name": "nfd-site-migrator",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Move a WordPress site between hosts. Export this site to a package, or import one exported from elsewhere.",
   "private": true,
   "main": "webpack.config.js",
