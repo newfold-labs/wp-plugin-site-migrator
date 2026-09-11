@@ -17,6 +17,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\CodeCompatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
@@ -719,5 +720,103 @@ class RegressionTest extends TestCase {
 
 		$this->assertSame( 'block', $collation['status'] );
 		$this->assertSame( array( 'latin2_general_ci' ), $collation['context']['missing'] );
+	}
+	/**
+	 * Reduce findings to the symbols they name.
+	 *
+	 * @param string $source  PHP source.
+	 * @param string $version PHP version to judge against.
+	 *
+	 * @return array
+	 */
+	protected function removals( $source, $version = '8.0' ) {
+		$checker  = new CodeCompatibility( '' );
+		$symbols  = array();
+
+		foreach ( $checker->inspect( '<?php ' . $source, $version ) as $finding ) {
+			$symbols[] = $finding['symbol'];
+		}
+
+		\sort( $symbols );
+
+		return $symbols;
+	}
+
+	/**
+	 * The two lines that took a production site down after a successful migration.
+	 *
+	 * Both came across in a theme, which declares no `Requires PHP` for the header gate to
+	 * read, and the version comparison called 7.4 to 8.5 a "heads up". The import verified,
+	 * swapped, and left a site that fatals in `wp-settings.php` on every request -- including
+	 * the REST call the screen offering to undo it depends on.
+	 */
+	public function test_the_two_removals_that_bricked_a_real_site() {
+		$this->assertSame(
+			array( 'create_function()' ),
+			$this->removals( 'add_action( "widgets_init", create_function( "", "return 1;" ) );' )
+		);
+
+		// The constructor case does not name itself at runtime: the class simply inherits its
+		// parent's constructor, and PHP blames `WP_Widget::__construct()` inside core.
+		$this->assertSame(
+			array( 'web_login::web_login() as a constructor' ),
+			$this->removals( 'class web_login extends WP_Widget { function web_login() { parent::__construct( "a", "b" ); } }' )
+		);
+	}
+
+	/**
+	 * And neither is reported on the version that still has them.
+	 */
+	public function test_nothing_is_removed_on_the_version_that_has_it() {
+		$this->assertSame(
+			array(),
+			$this->removals( 'add_action( "widgets_init", create_function( "", "return 1;" ) );', '7.4' )
+		);
+
+		$this->assertSame(
+			array(),
+			$this->removals( 'class web_login { function web_login() {} }', '7.4' )
+		);
+	}
+
+	/**
+	 * The false positives a regex pass produces, none of which are findings.
+	 *
+	 * Checked against a real theme first: matching `each` with a regex reported thirty-seven
+	 * hits in one theme and every one was wrong -- `_.each(` is Underscore and `$.each(` is
+	 * jQuery, both sitting inside PHP strings that render JavaScript templates, and a global
+	 * helper function named after a class is not that class's constructor. A check that cries
+	 * wolf on somebody's theme is worse than no check, because the habit it teaches is to press
+	 * on regardless.
+	 */
+	public function test_what_looks_like_a_removal_and_is_not() {
+		$cases = array(
+			'underscore in a template'  => '?><# _.each( data.items, function ( i ) { #><li></li><# } ); #><?php ',
+			'jquery in inline script'   => 'echo "<script>$.each( things, function () {} );</script>";',
+			'a method of the same name' => 'class Basket { public function each( $fn ) {} } $b = new Basket(); $b->each( "trim" );',
+			'a static of the same name' => 'Collection::each( $items );',
+			'somebody declaring it'     => 'function each( $thing ) { return $thing; }',
+			'a bare word, not a call'   => '$options = array( "each" => true ); echo $options["each"];',
+			'a modern constructor'      => 'class Widget { function __construct() {} }',
+			'a namespaced same name'    => 'namespace Vendor\\Pkg; class Thing { function Thing() {} }',
+			'an anonymous class'        => '$x = new class { function nope() {} };',
+		);
+
+		foreach ( $cases as $why => $source ) {
+			$this->assertSame( array(), $this->removals( $source ), $why );
+		}
+	}
+
+	/**
+	 * A same-named method in a plain class is still caught when it follows a namespaced one.
+	 *
+	 * The namespace check is per file and bails on the whole of it, which is right -- a file
+	 * with a namespace declaration has no PHP 4 constructors anywhere in it.
+	 */
+	public function test_a_removed_call_is_still_found_in_a_namespaced_file() {
+		$this->assertSame(
+			array( 'create_function()' ),
+			$this->removals( 'namespace A\\B; $f = create_function( "", "return 1;" );' )
+		);
 	}
 }

@@ -225,6 +225,15 @@ class Importer {
 		$manifest = $this->package->manifest();
 		$report   = $this->compatibility( $manifest );
 
+		// Version numbers and plugin headers between them missed the failure that actually
+		// happened: a theme calling `create_function()`, which PHP 8.0 removed. A theme
+		// declares no `Requires PHP` for the header gate to read, and comparing 7.4 to 8.5 only
+		// ever produced a "heads up". Read on the destination rather than recorded at export,
+		// so a package built before this existed is still checked -- including one already
+		// sitting on a server.
+		$code = new CodeCompatibility( $this->dir, $manifest );
+		$code->check( $report );
+
 		return array(
 			'ok'         => ! $report->is_blocked(),
 			'problems'   => array(),
