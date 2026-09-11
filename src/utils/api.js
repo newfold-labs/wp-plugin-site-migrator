@@ -214,10 +214,10 @@ export const api = {
 	import: {
 		sources: () => stableCall( 'import/sources' ),
 
-		uploadState: ( files ) =>
+		uploadState: ( files, manifest ) =>
 			stableCall( 'import/upload/state', {
 				method: 'POST',
-				data: { files },
+				data: { files, manifest },
 			} ),
 
 		uploadReset: () =>

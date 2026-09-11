@@ -7,6 +7,7 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 
@@ -97,6 +98,229 @@ class Upload {
 	 */
 	public static function reset() {
 		\nfd_sm_delete_directory( self::dir() );
+		self::clear_stamp();
+	}
+
+	/**
+	 * What identifies the package a staging directory holds.
+	 *
+	 * Built from the manifest's declared contents rather than from how it describes itself,
+	 * because the case this exists for is two packages that describe themselves identically. A
+	 * re-exported site keeps its `site_url`, and a package corrected in place keeps its
+	 * `created_at` and its `totals` -- what moves is a checksum. So every declared file's path,
+	 * size and hash goes in, sorted, so that the order the writer happened to emit them in is
+	 * not part of the identity.
+	 *
+	 * @param array $manifest Parsed manifest.
+	 *
+	 * @return string A hash, or '' when the manifest declares nothing to identify it by.
+	 */
+	public static function fingerprint( array $manifest ) {
+		$entries = array();
+
+		$declared = \array_merge(
+			array( \nfd_sm_data_get( $manifest, 'database', array() ) ),
+			(array) \nfd_sm_data_get( $manifest, 'parts', array() ),
+			(array) \nfd_sm_data_get( $manifest, 'large', array() )
+		);
+
+		foreach ( $declared as $entry ) {
+			if ( ! \is_array( $entry ) || empty( $entry['file'] ) ) {
+				continue;
+			}
+
+			$entries[] = \sprintf(
+				'%s:%d:%s',
+				(string) $entry['file'],
+				isset( $entry['bytes'] ) ? (int) $entry['bytes'] : 0,
+				isset( $entry['sha256'] ) ? (string) $entry['sha256'] : ''
+			);
+		}
+
+		if ( empty( $entries ) ) {
+			return '';
+		}
+
+		\sort( $entries );
+
+		\array_unshift(
+			$entries,
+			(string) \nfd_sm_data_get( $manifest, 'source.site_url', '' ),
+			(string) \nfd_sm_data_get( $manifest, 'created_at', '' )
+		);
+
+		return \hash( 'sha256', \implode( "\n", $entries ) );
+	}
+
+	/**
+	 * Make sure what is staged belongs to the package about to be sent.
+	 *
+	 * An upload resumes from the bytes already on disk -- that is what makes a dropped
+	 * connection survivable, and it is also what silently merges two packages when the thing
+	 * being uploaded has changed since. A file whose size did not move is skipped outright, so
+	 * a package corrected in place is the worst case: the corrected bytes are never sent, and
+	 * the manifest that would have caught it is itself appended to rather than replaced.
+	 *
+	 * `Puller::reconcile()` has made this check on the transfer side from the start. This is
+	 * the same rule for the same directory, arrived at from the other door.
+	 *
+	 * @param array $manifest The manifest of the package about to be uploaded.
+	 *
+	 * @return int Bytes discarded, 0 when nothing needed clearing.
+	 *
+	 * @throws \RuntimeException If an unsettled import is staged here.
+	 */
+	public static function reconcile( array $manifest ) {
+		$incoming = self::fingerprint( $manifest );
+
+		if ( '' === $incoming ) {
+			return 0;
+		}
+
+		$staged = self::staged_fingerprint();
+
+		if ( $staged === $incoming ) {
+			return 0;
+		}
+
+		$existing = self::staged_bytes();
+
+		if ( $existing <= 0 ) {
+			self::write_stamp( $incoming );
+
+			return 0;
+		}
+
+		// The same refusal `Upload::discard()` and `Puller::reconcile()` make, for the same
+		// reason: an import that has run and has not been kept or undone is still the only
+		// account of what this site looked like, and its package is what the checkpoint names.
+		$checkpoint = new ImportCheckpoint();
+		$state      = $checkpoint->load();
+		$recorded   = \realpath( \rtrim( (string) \nfd_sm_data_get( $state, 'package', '' ), '/\\' ) );
+		$here       = \realpath( self::dir() );
+
+		if ( false !== $here && $here === $recorded && ! ImportCheckpoint::is_settled( $state ) ) {
+			throw new \RuntimeException(
+				'An import from the package staged here has not been kept or undone yet. Finish it, undo it, or cancel it before uploading a different package.'
+			);
+		}
+
+		self::reset();
+		self::write_stamp( $incoming );
+
+		return (int) $existing;
+	}
+
+	/**
+	 * The identity of what is staged now.
+	 *
+	 * The stamp is the answer when there is one. Falling back to the staged manifest matters
+	 * more than it looks: `expectedFiles()` sends `manifest.json` first, so an upload
+	 * interrupted anywhere after its first few kilobytes has a readable one, and an upload that
+	 * finished certainly does. What is left -- an upload cut off inside the manifest itself, or
+	 * one begun by a version that did not stamp -- is a few kilobytes in, and starting those
+	 * again costs nothing worth protecting.
+	 *
+	 * @return string A hash, or '' when nothing here can be identified.
+	 */
+	protected static function staged_fingerprint() {
+		$stamped = self::read_stamp();
+
+		if ( '' !== $stamped ) {
+			return $stamped;
+		}
+
+		$manifest = Manifest::read( self::dir() );
+
+		return null === $manifest ? '' : self::fingerprint( $manifest->to_array() );
+	}
+
+	/**
+	 * How much is sitting in the staging directory.
+	 *
+	 * @return int Bytes.
+	 */
+	protected static function staged_bytes() {
+		$dir = self::dir();
+
+		if ( ! \is_dir( $dir ) ) {
+			return 0;
+		}
+
+		$bytes = 0;
+
+		$files = new \RecursiveIteratorIterator(
+			new \RecursiveDirectoryIterator( $dir, \FilesystemIterator::SKIP_DOTS )
+		);
+
+		foreach ( $files as $file ) {
+			if ( $file->isFile() ) {
+				$bytes += (int) $file->getSize();
+			}
+		}
+
+		return $bytes;
+	}
+
+	/**
+	 * Where the staged package's identity is recorded.
+	 *
+	 * Beside the staging directory rather than inside it, like the transfer's refetch counts:
+	 * `reset()` deletes that directory whole, and a marker that says what used to be there
+	 * cannot live in the thing being removed. It is also not a file a package contains, and
+	 * `incoming/` becomes a package the moment the last byte lands.
+	 *
+	 * @return string
+	 */
+	protected static function stamp_path() {
+		return \rtrim( \nfd_sm_storage_path(), '/\\' ) . DIRECTORY_SEPARATOR . 'upload-stamp.json';
+	}
+
+	/**
+	 * Record which package the staging directory is being filled with.
+	 *
+	 * @param string $fingerprint Identity of that package.
+	 *
+	 * @return void
+	 */
+	protected static function write_stamp( $fingerprint ) {
+		\file_put_contents( // phpcs:ignore WordPress.WP.AlternativeFunctions
+			self::stamp_path(),
+			(string) \wp_json_encode( array( 'fingerprint' => (string) $fingerprint ) ),
+			LOCK_EX
+		);
+	}
+
+	/**
+	 * The recorded identity, if there is one.
+	 *
+	 * @return string
+	 */
+	protected static function read_stamp() {
+		$path = self::stamp_path();
+
+		if ( ! \is_readable( $path ) ) {
+			return '';
+		}
+
+		$decoded = \json_decode( (string) \file_get_contents( $path ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		return \is_array( $decoded ) && isset( $decoded['fingerprint'] )
+			? (string) $decoded['fingerprint']
+			: '';
+	}
+
+	/**
+	 * Forget which package was being staged.
+	 *
+	 * @return void
+	 */
+	protected static function clear_stamp() {
+		$path = self::stamp_path();
+
+		if ( \is_readable( $path ) ) {
+			\unlink( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
 	}
 
 	/**

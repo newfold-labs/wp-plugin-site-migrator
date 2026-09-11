@@ -18,6 +18,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use PHPUnit\Framework\TestCase;
 
@@ -508,5 +509,108 @@ class RegressionTest extends TestCase {
 		// A NULL is still a NULL, not an empty string -- Wordfence's `val` is NOT NULL, but
 		// other plugins' blobs are not, and collapsing the two loses a real distinction.
 		$this->assertSame( 'NULL', $db->prepare( null, 'longblob' ) );
+	}
+	/**
+	 * Build a manifest for a package whose dump hashes to `$sha`.
+	 *
+	 * @param string $sha Checksum the manifest declares for database.sql.
+	 *
+	 * @return array
+	 */
+	protected function package_manifest( $sha ) {
+		return array(
+			'schema_version' => 1,
+			'created_at'     => '2026-09-11T14:45:56+00:00',
+			'source'         => array( 'site_url' => 'https://source.test' ),
+			'database'       => array(
+				'file'   => 'database.sql',
+				'bytes'  => 4096,
+				'sha256' => $sha,
+			),
+			'parts'          => array(
+				array(
+					'file'   => 'parts/uploads.zip',
+					'bytes'  => 2048,
+					'sha256' => 'bb',
+				),
+			),
+			'totals'         => array(
+				'bytes' => 6144,
+				'files' => 2,
+			),
+		);
+	}
+
+	/**
+	 * Stage a package in the upload directory, as a part-finished upload leaves it.
+	 *
+	 * @param array $manifest Manifest to write.
+	 *
+	 * @return string The staging directory.
+	 */
+	protected function stage_upload( array $manifest ) {
+		$dir = Upload::dir();
+
+		\file_put_contents( $dir . '/manifest.json', \wp_json_encode( $manifest ) );
+		\file_put_contents( $dir . '/database.sql', \str_repeat( 'a', 4096 ) );
+
+		return $dir;
+	}
+
+	/**
+	 * A re-upload resuming into the package already staged.
+	 *
+	 * An upload resumes from the bytes on disk, which is what survives a dropped connection. A
+	 * package corrected in place is the case that breaks it: every file keeps its size, so each
+	 * one is skipped as already complete and the corrected bytes are never sent, while
+	 * `manifest.json` -- the one file whose size did move -- is appended to rather than
+	 * replaced, leaving JSON that will not parse. That is what happened on a real destination,
+	 * and the error it produced ("No manifest.json") named the only file that had actually
+	 * arrived.
+	 */
+	public function test_uploading_a_different_package_does_not_resume_into_the_old_one() {
+		$staged = $this->stage_upload( $this->package_manifest( 'aa' ) );
+
+		// Same source, same moment, same totals -- a dump corrected in place moves nothing but
+		// its checksum, so an identity built from how a package describes itself would miss it.
+		$cleared = Upload::reconcile( $this->package_manifest( 'cc' ) );
+
+		$this->assertGreaterThan( 0, $cleared, 'the stale bytes are reported as discarded' );
+		$this->assertFileDoesNotExist( $staged . '/database.sql' );
+		$this->assertFileDoesNotExist( $staged . '/manifest.json' );
+	}
+
+	/**
+	 * And the same package still resumes, which is the whole point of staging bytes at all.
+	 */
+	public function test_the_same_package_still_resumes() {
+		$manifest = $this->package_manifest( 'aa' );
+		$staged   = $this->stage_upload( $manifest );
+
+		$this->assertSame( 0, Upload::reconcile( $manifest ) );
+		$this->assertFileExists( $staged . '/database.sql' );
+		$this->assertSame( 4096, (int) \filesize( $staged . '/database.sql' ) );
+	}
+
+	/**
+	 * A finished-but-undecided import is not something a new upload may quietly discard.
+	 *
+	 * The same refusal `Upload::discard()` and `Puller::reconcile()` make, against the same
+	 * directory: its backup tables are the only copy of the site as it was.
+	 */
+	public function test_an_unsettled_import_blocks_the_clear() {
+		$staged = $this->stage_upload( $this->package_manifest( 'aa' ) );
+
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['package'] = $staged;
+		$state['stage']   = 'database';
+
+		$checkpoint->save( $state );
+
+		$this->expectException( \RuntimeException::class );
+
+		Upload::reconcile( $this->package_manifest( 'cc' ) );
 	}
 }

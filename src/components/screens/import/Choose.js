@@ -195,6 +195,7 @@ export const Choose = () => {
 
 		const result = await uploadPackage( {
 			files: selected.files,
+			manifest: selected.manifest,
 			chunkSize: sources?.chunk_size || 1048576,
 			stop: stop.current,
 			onProgress: setProgress,

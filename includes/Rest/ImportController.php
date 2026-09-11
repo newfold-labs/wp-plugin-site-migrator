@@ -202,12 +202,31 @@ class ImportController extends Controller {
 	 * @return \WP_REST_Response
 	 */
 	public function upload_state( $request ) {
-		$files = (array) $request->get_param( 'files' );
+		$files    = (array) $request->get_param( 'files' );
+		$manifest = (array) $request->get_param( 'manifest' );
+		$cleared  = 0;
+
+		// Asked before any offset is handed back, because the offsets are the answer: a resume
+		// into a directory holding a different package is how two packages become one file.
+		// A client that sends no manifest is an older one, and gets the old behaviour rather
+		// than having its upload cleared by a check it does not know about.
+		if ( ! empty( $manifest ) ) {
+			try {
+				$cleared = Upload::reconcile( $manifest );
+			} catch ( \Exception $e ) {
+				return new \WP_Error(
+					'nfd_sm_upload_staged',
+					$e->getMessage(),
+					array( 'status' => 409 )
+				);
+			}
+		}
 
 		return \rest_ensure_response(
 			array(
 				'chunk_size' => Upload::chunk_size(),
 				'received'   => Upload::received( \array_map( 'strval', $files ) ),
+				'cleared'    => $cleared,
 			)
 		);
 	}
