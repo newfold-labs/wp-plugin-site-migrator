@@ -11,7 +11,7 @@
  * Plugin Name:       Site Migrator
  * Plugin URI:        https://github.com/newfold-labs/wp-plugin-site-migrator
  * Description:       Move a WordPress site between hosts. Export this site to a package, or import one exported from elsewhere.
- * Version:           0.1.1
+ * Version:           0.2.0
  * Requires PHP:      7.4
  * Requires at least: 5.8
  * Author:            Newfold Labs
