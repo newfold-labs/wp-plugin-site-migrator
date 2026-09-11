@@ -168,7 +168,7 @@ class ExportController extends Controller {
 
 		return \rest_ensure_response(
 			array(
-				'parts'     => PartSpecs::catalog(),
+				'parts'     => $this->labelled_parts(),
 				'tables'    => $this->tables(),
 				'flags'     => Selection::database_flags(),
 				'selection' => $selection->to_array(),
@@ -176,6 +176,29 @@ class ExportController extends Controller {
 				'locked'    => $this->run_in_progress(),
 			)
 		);
+	}
+
+	/**
+	 * The catalog, with a human name beside each slug where one exists.
+	 *
+	 * Additive and keyed by slug, because the slug stays the identity: it is what the `Selection`
+	 * refuses, what the manifest records and what `--set` takes. The label is only what the screen
+	 * draws, so a part with nothing to add carries an empty map and the screen falls back to the
+	 * slug by itself.
+	 *
+	 * @return array
+	 */
+	protected function labelled_parts() {
+		$parts  = PartSpecs::catalog();
+		$labels = \nfd_sm_content_labels();
+
+		foreach ( $parts as $index => $part ) {
+			$parts[ $index ]['labels'] = isset( $labels[ $part['name'] ] )
+				? $labels[ $part['name'] ]
+				: array();
+		}
+
+		return $parts;
 	}
 
 	/**

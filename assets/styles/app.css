@@ -441,6 +441,20 @@
     .nfd-sm-check { @apply flex gap-2.5 items-start text-[14px] text-ink mb-3 cursor-pointer }
     .nfd-sm-check input { @apply mt-1 }
 
+    /* wp-admin grows every checkbox to 1.5625rem below 782px, and the tick drawn inside it to
+       1.875rem, so that a finger has something to hit. Every checkbox here is already wrapped
+       in its own `<label>`, so the whole row -- box, name and all -- is the touch target, and
+       the extra nine pixels buy nothing while costing the alignment: a 25px box beside 13px
+       text in a three-column grid is mostly box. Pin both back to their desktop sizes at every
+       width. The tick is a background SVG sized in the same rule as its margins, so restoring
+       one without the other leaves a checkmark hanging out of its box. */
+    .nfd-sm-check input[type="checkbox"] { @apply shrink-0 w-4 h-4 }
+    .nfd-sm-check input[type="checkbox"]:checked::before {
+        width: 1.3125rem;
+        height: 1.3125rem;
+        margin: -0.1875rem 0 0 -0.25rem;
+    }
+
     /* Choosing what goes in the package.
        A row per part: the tick and its name on one line, what it is underneath, and the things
        inside it behind a disclosure — a site with 90 plugins would otherwise be a wall of

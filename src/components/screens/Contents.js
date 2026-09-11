@@ -105,6 +105,28 @@ const FLAGS = {
 };
 
 /**
+ * The things inside a part, as the screen shows them: named, and in that order.
+ *
+ * A directory name is the identity — it is what the selection refuses and what `--set` takes —
+ * but `advanced-hiive-config` is not what anybody calls that plugin, so the server sends the name
+ * out of each plugin's or theme's own header beside its slug. Sorting happens here rather than on
+ * the server because the server sorts by slug, which is right for the CLI and wrong for a list
+ * somebody is reading: `nfd-site-migrator` belongs under S for Site Migrator.
+ *
+ * @param {Object} part One entry of the contents catalog.
+ * @return {Array} `{ slug, label }` pairs, sorted by what is drawn.
+ */
+const namedChildren = ( part ) =>
+	part.children
+		.map( ( slug ) => ( {
+			slug,
+			label: part.labels?.[ slug ] || slug,
+		} ) )
+		.sort( ( a, b ) =>
+			a.label.localeCompare( b.label, undefined, { sensitivity: 'base' } )
+		);
+
+/**
  * A table name that may break after its underscores.
  *
  * Browsers break at spaces and hyphens, and `wp_woocommerce_downloadable_product_permissions` has
@@ -396,27 +418,29 @@ export const Contents = () => {
 											<summary>
 												{ sprintf(
 													/* translators: %d: number of items inside a part. */
-													__(
+													_n(
+														'%d thing inside — leave it out',
 														'%d things inside — leave some of them out',
+														part.children.length,
 														'nfd-site-migrator'
 													),
 													part.children.length
 												) }
 											</summary>
 											<div className="nfd-sm-pick-sub">
-												{ part.children.map(
+												{ namedChildren( part ).map(
 													( child ) => (
 														<label
 															className="nfd-sm-check"
-															key={ child }
-															htmlFor={ `nfd-sm-path-${ part.name }-${ child }` }
+															key={ child.slug }
+															htmlFor={ `nfd-sm-path-${ part.name }-${ child.slug }` }
 														>
 															<input
-																id={ `nfd-sm-path-${ part.name }-${ child }` }
+																id={ `nfd-sm-path-${ part.name }-${ child.slug }` }
 																type="checkbox"
 																checked={ wantsPath(
 																	part.name,
-																	child
+																	child.slug
 																) }
 																disabled={
 																	locked
@@ -424,12 +448,12 @@ export const Contents = () => {
 																onChange={ () =>
 																	togglePath(
 																		part.name,
-																		child
+																		child.slug
 																	)
 																}
 															/>
 															<span>
-																{ child }
+																{ child.label }
 															</span>
 														</label>
 													)
