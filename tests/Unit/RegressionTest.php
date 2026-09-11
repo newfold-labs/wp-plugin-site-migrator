@@ -19,6 +19,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\CodeCompatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\PluginPresence;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
@@ -817,6 +818,72 @@ class RegressionTest extends TestCase {
 		$this->assertSame(
 			array( 'create_function()' ),
 			$this->removals( 'namespace A\\B; $f = create_function( "", "return 1;" );' )
+		);
+	}
+	/**
+	 * A package without the plugins leaves a database that still expects them.
+	 *
+	 * Observed on a real destination: the header rendered five banners stacked instead of one,
+	 * and a page printed `[ninja_forms id=3]` as text. Nothing had failed -- `sidebars_widgets`
+	 * really does list five widgets and the page really does contain that shortcode. What was
+	 * missing was the code that reduces the first to one and turns the second into a form.
+	 * `Fixups::drop_missing_plugins()` deactivated twenty-one entries without comment, and the
+	 * review screen's only warning had been a part name.
+	 */
+	public function test_active_plugins_the_package_will_not_bring() {
+		$active = array(
+			'jetpack/jetpack.php',
+			'ninja-forms/ninja-forms.php',
+			'siteorigin-panels/siteorigin-panels.php',
+			'jobget-s2s.php',
+		);
+
+		// The destination already has one of them, and the package carries another.
+		$missing = PluginPresence::missing(
+			$active,
+			array( 'siteorigin-panels' ),
+			array( 'ninja-forms', 'index.php' )
+		);
+
+		$this->assertSame(
+			array( 'jetpack/jetpack.php', 'jobget-s2s.php' ),
+			$missing
+		);
+	}
+
+	/**
+	 * A plugin that is one loose file is not skipped as malformed.
+	 *
+	 * `jobget-s2s.php` has no directory, and it is exactly the kind that cannot be fetched from
+	 * wordpress.org afterwards -- so of the whole list it is the one that must not be dropped
+	 * by a parser expecting `slug/file.php`.
+	 */
+	public function test_a_loose_single_file_plugin_still_counts() {
+		$this->assertSame(
+			array( 'jobget-s2s.php' ),
+			PluginPresence::missing( array( 'jobget-s2s.php' ), array(), array() )
+		);
+
+		$this->assertSame(
+			array(),
+			PluginPresence::missing( array( 'jobget-s2s.php' ), array(), array( 'jobget-s2s.php' ) )
+		);
+	}
+
+	/**
+	 * The option is read out of the dump, where it is escaped for MySQL rather than for PHP.
+	 *
+	 * Unserializing would mean undoing that escaping exactly right first, on input from a
+	 * package this site did not build. Reading the strings out is enough and cannot be made to
+	 * do anything.
+	 */
+	public function test_reading_active_plugins_out_of_a_dump_line() {
+		$line = 'INSERT INTO `wp_options` VALUES (99,\'active_plugins\',\'a:2:{i:0;s:19:\\"jetpack/jetpack.php\\";'
+			. 'i:1;s:14:\\"jobget-s2s.php\\";}\',\'yes\');';
+
+		$this->assertSame(
+			array( 'jetpack/jetpack.php', 'jobget-s2s.php' ),
+			PluginPresence::parse_serialized_strings( $line )
 		);
 	}
 }

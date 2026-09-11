@@ -234,6 +234,12 @@ class Importer {
 		$code = new CodeCompatibility( $this->dir, $manifest );
 		$code->check( $report );
 
+		// And what the database switches on that will not be here to run. Said in plugin names
+		// rather than in part names, because "uploads and plugins were left out" does not read
+		// as "the contact form and the page layouts will be gone".
+		$plugins = new PluginPresence( $this->dir, $manifest );
+		$plugins->check( $report );
+
 		return array(
 			'ok'         => ! $report->is_blocked(),
 			'problems'   => array(),
