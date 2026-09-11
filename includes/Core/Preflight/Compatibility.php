@@ -208,6 +208,26 @@ class Compatibility {
 	}
 
 	/**
+	 * One spelling for a collation that has two.
+	 *
+	 * `utf8` has been a deprecated alias for `utf8mb3` since MySQL 8.0, and the two servers on
+	 * either side of a migration rarely agree on which name to use. Only the exact `utf8_`
+	 * prefix is rewritten -- `utf8mb4_` is a different character set and must not be folded
+	 * into the three-byte one.
+	 *
+	 * @param string $collation Collation name.
+	 *
+	 * @return string
+	 */
+	protected static function canonical_collation( $collation ) {
+		$collation = (string) $collation;
+
+		return 0 === \strpos( $collation, 'utf8_' )
+			? 'utf8mb3_' . \substr( $collation, 5 )
+			: $collation;
+	}
+
+	/**
 	 * Text encoding.
 	 *
 	 * The commonest hard failure when moving between hosts of different vintage: a collation
@@ -228,7 +248,31 @@ class Compatibility {
 			return;
 		}
 
-		$missing = \array_values( \array_diff( $needed, $available ) );
+		// Compared under canonical names, because the same collation has two of them. MySQL 8.0
+		// renamed the three-byte `utf8` character set to `utf8mb3` and stopped listing the old
+		// spellings, while still accepting them in DDL -- so a 5.7 source using
+		// `utf8_general_ci` looks unsupported on an 8.0 destination that supports it perfectly
+		// well under the other name. That is a 5.7-to-8.0 move, which is most of the migrations
+		// this plugin exists for, blocked by a rename.
+		$canonical = array();
+
+		foreach ( $needed as $collation ) {
+			$canonical[ self::canonical_collation( $collation ) ] = (string) $collation;
+		}
+
+		$supported = array();
+
+		foreach ( $available as $collation ) {
+			$supported[] = self::canonical_collation( $collation );
+		}
+
+		// Reported under the names the *source* used, since those are the ones its tables carry
+		// and the ones a person would go looking for.
+		$missing = array();
+
+		foreach ( \array_diff( \array_keys( $canonical ), $supported ) as $name ) {
+			$missing[] = $canonical[ $name ];
+		}
 
 		if ( empty( $missing ) ) {
 			$report->pass( 'collation', 'Text encoding is supported on the destination.' );

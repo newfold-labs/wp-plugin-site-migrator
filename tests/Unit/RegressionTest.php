@@ -19,7 +19,9 @@ use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
 use PHPUnit\Framework\TestCase;
 
 class RegressionTest extends TestCase {
@@ -612,5 +614,110 @@ class RegressionTest extends TestCase {
 		$this->expectException( \RuntimeException::class );
 
 		Upload::reconcile( $this->package_manifest( 'cc' ) );
+	}
+	/**
+	 * A 5.7 source refused by an 8.0 destination over a rename.
+	 *
+	 * MySQL 8.0 renamed the three-byte `utf8` character set to `utf8mb3` and stopped listing
+	 * the old spellings in `SHOW COLLATION`, while still accepting them in DDL. So a source on
+	 * 5.7 whose tables are `utf8_general_ci` looked, to a destination on 8.0, like it needed a
+	 * collation that does not exist there -- and the gate blocks rather than warns, because a
+	 * missing collation really does kill an import partway with "Unknown collation". A real
+	 * localhost import was refused with "The destination does not support this site's text
+	 * encoding" by a server that supports every one of them.
+	 */
+	public function test_utf8_and_utf8mb3_are_the_same_collation() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array(
+						'utf8mb4_unicode_520_ci',
+						'utf8_general_ci',
+						'latin1_swedish_ci',
+						'utf8mb4_general_ci',
+					),
+				),
+			)
+		);
+
+		// What MySQL 8.0.35 actually answers: no `utf8_general_ci`, only the mb3 spelling.
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array(
+						'utf8mb4_unicode_520_ci',
+						'utf8mb3_general_ci',
+						'latin1_swedish_ci',
+						'utf8mb4_general_ci',
+						'utf8mb4_unicode_ci',
+					),
+				),
+			)
+		);
+
+		// Asserted on the collation check alone rather than on the whole report: these profiles
+		// carry nothing else, so every other gate is indeterminate, and indeterminate blocks.
+		$compatibility = new Compatibility( $source, $destination );
+		$collation     = $compatibility->check()->get( 'collation' );
+
+		$this->assertSame( 'pass', $collation['status'], 'a rename is not an incompatibility' );
+
+		// And the reverse move, which is the same rename read the other way round: an 8.0 source
+		// whose tables report `utf8mb3_general_ci`, onto a 5.7 destination that only ever calls
+		// it `utf8_general_ci`.
+		$newer = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'utf8mb3_general_ci' ),
+				),
+			)
+		);
+
+		$older = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array( 'utf8_general_ci', 'utf8mb4_general_ci' ),
+				),
+			)
+		);
+
+		$back = new Compatibility( $newer, $older );
+
+		$this->assertSame( 'pass', $back->check()->get( 'collation' )['status'] );
+	}
+
+	/**
+	 * A collation that is genuinely absent still blocks.
+	 *
+	 * The guard against curing the false refusal by never refusing at all.
+	 */
+	public function test_a_collation_that_really_is_missing_still_blocks() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'latin2_general_ci' ),
+				),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array( 'utf8mb4_general_ci', 'utf8mb3_general_ci' ),
+				),
+			)
+		);
+
+		$compatibility = new Compatibility( $source, $destination );
+		$collation     = $compatibility->check()->get( 'collation' );
+
+		$this->assertSame( 'block', $collation['status'] );
+		$this->assertSame( array( 'latin2_general_ci' ), $collation['context']['missing'] );
 	}
 }
