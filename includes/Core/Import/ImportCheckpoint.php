@@ -154,6 +154,12 @@ class ImportCheckpoint extends Checkpoint {
 			'code_added'       => array(),
 			'code_removed'     => array(),
 
+			// Safe syntax fixes: whether they were chosen, the entries precheck found fixable, and
+			// the changes made to each as it was written.
+			'fix_php'          => false,
+			'php_fixes'        => array(),
+			'php_fixed'        => array(),
+
 			// Database load.
 			'query_offset'     => 0,
 			'statements'       => 0,

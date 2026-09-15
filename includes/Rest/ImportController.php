@@ -495,6 +495,8 @@ class ImportController extends Controller {
 			$importer->restart();
 		}
 
+		$importer->choose_fixes( \rest_sanitize_boolean( $request->get_param( 'fix_php' ) ) );
+
 		$claim = $importer->begin( \get_current_user_id() );
 
 		return \rest_ensure_response(
@@ -698,6 +700,7 @@ class ImportController extends Controller {
 	protected function importer( $request ) {
 		$requested = (string) $request->get_param( 'mode' );
 		$mode      = UserMerger::MODE_REPLACE === $requested ? UserMerger::MODE_REPLACE : UserMerger::MODE_MERGE;
+		$fix       = $request->get_param( 'fix_php' );
 
 		return new Importer(
 			$this->dir( $request ),
@@ -705,6 +708,8 @@ class ImportController extends Controller {
 				'mode'        => $mode,
 				'acting_user' => \get_current_user_id(),
 				'keep_backup' => true,
+				// Absent on a step, which then follows what `start` recorded.
+				'fix_php'     => null === $fix ? null : \rest_sanitize_boolean( $fix ),
 			)
 		);
 	}

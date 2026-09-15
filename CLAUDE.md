@@ -397,6 +397,66 @@ to bet the running importer on a package it did not build. String comparison aga
 once, because it runs per entry. `UserMerger` is the one table that merges rather than replaces
 (plan §9.4). `Swap` also handles rollback and the backup tables.
 
+**The review screen reads the package's PHP, and blocks on code this server cannot run.**
+`CodeCompatibility` runs in `Importer::preview()` — the review screen and the CLI's pre-confirm —
+and does not rewrite anything by itself: it names the file and line, and the fix is made on the
+source unless somebody opts into the safe fixes below. It
+finds three kinds of thing. Functions PHP removed (`create_function`, `each`, `mysql_*`) and PHP 4
+constructors, from tokens. Anything the running PHP will not **parse**, by `token_get_all( $source,
+TOKEN_PARSE )` — `$str{0}`, `(real)`, a keyword used as a name, or PHP 8 syntax carried to 7.4 —
+with no list to maintain, because the PHP that will run the code is the one answering. And the two
+PHP 8.0 removals the parser accepts and only the compiler refuses, the `(unset)` cast and an
+unparenthesised nested ternary, from tokens again. The ternary detector agrees with `php -l` on every
+labelled case and on the whole corpus below, and neither can be compiled from inside a request to find out:
+`opcache_compile_file()` would take the request down with the file.
+
+Everything about how it decides was measured on 27,839 real plugin files, and three rules came out
+of that. **Directories named `tests`, `fixtures`, `stubs` or `examples` are not read**: parsed as
+PHP 8.5 those files produced 813 parse failures and 126 removals, every one inside a vendored
+PHP_CodeSniffer whose fixtures are broken on purpose, and outside them nothing at all. **A file that
+does not parse blocks only when this PHP is newer than the source's** (`source.php_version`); on the
+same version or older it warns, because the source could not have been loading it either —
+WooCommerce 11.0 declares PHP 7.4 and ships 46 files of PHP 8 syntax. **Code that supports an old
+PHP is not a removal**: a call to a function the same file names in `function_exists()` or
+`is_callable()` (MetaSlider's HTMLPurifier did this, and the check refused the Local test site
+over it), and a same-named method in a class that also declares `__construct()` (core's `rss.php`).
+Catch `\Throwable`, never `\ParseError`: one odd file must not take down the review screen. A scan
+that hits the read budget warns rather than passing — it used to return what it had, which read as
+a pass for code nobody looked at — and the budget is 256MB because the same site's plugins held
+120MB of PHP outside their tests, so the old 64MB would have hedged on every WooCommerce site. Test
+directories are skipped before they are read, so they cost no budget. The file list reaches the browser
+through `context.missing`, which `Gate.js` and the review screen render for every report that sets
+it — they rendered for none until this, so the collation and missing-plugin lists were never on
+screen either.
+
+**Three of those removals can be fixed as the files land, and only if somebody asks.** `SyntaxFixer`
+rewrites `$str{0}` as `$str[0]`, `(real)` as `(float)`, and `a ? b : c ? d : e` as
+`(a ? b : c) ? d : e` — the grouping PHP 7 actually ran, since the ternary associated left. Each is a
+spelling, not a meaning, which is the whole selection rule: `each()`, `create_function()`, `(unset)`
+and PHP 4 constructors need a replacement that depends on the code around them, and a guess there
+changes behaviour silently, so they still block. Nothing is assumed to have worked. A file is fixed
+whole or not at all: the result must parse on this PHP, pass `inspect()` again for *every* removal,
+and have the same token stream as the original once parentheses, `{}`/`[]` and the float cast's
+spelling are set aside. The ternary parentheses come from `CodeCompatibility::ternary_sites()`, the
+same scan that refuses them, so a fix can only touch what the check found; where the chain starts
+is the one new thing it tracks, and a wrong start produces a file that does not parse and is
+refused. Measured: 10,365 real plugin files with every offset turned into `{}` and every `(float)`
+into `(real)` came back byte for byte, no clean file was ever touched, and 8,121 random ternary
+chains in assignments, closures, `if` bodies, array items, `and` and `case` gave identical results
+on PHP 7.4 before and after — a check that does catch parentheses put on the right.
+
+It is opt-in on both surfaces — a checkbox on the review screen, which asks `preview` again with
+`fix_php` so the gate turns from a block into a warning only for the files it can fix, and
+`import --fix-php`. The browser's steps carry only the package, so `start` records the choice in
+the checkpoint (`Importer::choose_fixes()`), and precheck recomputes the file list from the package
+rather than trusting the screen. `FileRestorer` writes the package's bytes first and fixes after,
+saving the original under `import/php-originals/<entry name>` and renaming the fixed copy over the
+file, so an interrupted step leaves either the package's file or a checked fix. The originals keep
+their `.php` names on purpose — every one is code this PHP refused to compile, so requesting one
+runs nothing, where a `.txt` would serve the source to anyone on a server that ignores
+`.htaccess`. They are cleared as the next migration begins, with the previous import's tables, and
+the Done screen's notes say how many files changed and where the originals are.
+
 **A destination does not need PHP's zip extension.** Hosts ship without it, and every file in a
 package is inside a zip part, so an import used to be impossible there — and the bootstrap's
 requirement check deactivated the plugin before anyone got that far. `Core/Package/ZipReader` is

@@ -54,15 +54,40 @@ class FileRestorer {
 	protected $refused = array();
 
 	/**
+	 * Entries to run `SyntaxFixer` on as they are written.
+	 *
+	 * @var array Entry names as keys.
+	 */
+	protected $fixes = array();
+
+	/**
+	 * What `SyntaxFixer` changed during this run.
+	 *
+	 * @var array
+	 */
+	protected $fixed = array();
+
+	/**
 	 * Constructor.
 	 *
 	 * @param string   $dir      Absolute package directory.
 	 * @param Manifest $manifest Package manifest.
+	 * @param array    $fixes    Entry names, as keys, to apply safe syntax fixes to.
 	 */
-	public function __construct( $dir, Manifest $manifest ) {
+	public function __construct( $dir, Manifest $manifest, array $fixes = array() ) {
 		$this->dir      = \rtrim( $dir, '/\\' );
 		$this->manifest = $manifest;
 		$this->map      = new PathMap();
+		$this->fixes    = $fixes;
+	}
+
+	/**
+	 * Files fixed during this run.
+	 *
+	 * @return array Each with `file`, `changes` and `backup`.
+	 */
+	public function fixed() {
+		return $this->fixed;
 	}
 
 	/**
@@ -228,6 +253,16 @@ class FileRestorer {
 
 		++$state['files_done'];
 		$state['bytes_done'] += $bytes;
+
+		// Only a file the review found fixable, and only because somebody chose it. Written first
+		// and fixed after, so what is on disk is only ever the package's bytes or a checked fix.
+		if ( isset( $this->fixes[ $name ] ) ) {
+			$record = ( new SyntaxFixer() )->apply( $path, $name );
+
+			if ( null !== $record ) {
+				$this->fixed[] = $record;
+			}
+		}
 	}
 
 	/**

@@ -29,17 +29,28 @@ use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Report;
  * carry JavaScript inside PHP strings, and `_.each(` and `$.each(` are Underscore and jQuery.
  * A regex pass over one real theme reported thirty-seven findings of which every single one
  * was a false positive.
+ *
+ * Every file is also parsed by the PHP that will run it (`TOKEN_PARSE`), which finds syntax a
+ * version no longer accepts -- `$str{0}`, `(real)`, a keyword used as a name -- without a list
+ * to keep. Two PHP 8.0 removals the parser still accepts and only the compiler refuses, the
+ * `(unset)` cast and an unparenthesised nested ternary, are found from tokens. A file that does
+ * not parse only blocks when this PHP is newer than the source's; see `check()`. Directories of
+ * tests, fixtures, stubs and examples are not read at all: a real site carried 813 deliberately
+ * broken PHP_CodeSniffer fixtures and 126 removals inside them, and none of them ever run.
  */
 class CodeCompatibility {
 
 	/**
 	 * Largest amount of PHP to read out of one package.
 	 *
-	 * A preview is a screen somebody is waiting on, not a linter. The parts that hold code are
-	 * small next to the uploads this skips entirely, so in practice nothing reaches this -- it
-	 * is here so that a hostile or strange package cannot make the review screen hang.
+	 * A preview is a screen somebody is waiting on, not a linter, so there is a limit -- a hostile
+	 * or strange package must not make the review screen hang. It was 64MB, and a real site's
+	 * plugins held 120MB of PHP outside their tests, WooCommerce and its vendored libraries most
+	 * of it: every such site would have been told only part of its code was checked. Reading and
+	 * parsing costs about half a second per 15MB, and the same preview has already hashed every
+	 * byte of the package, so 256MB is a few seconds on top of work many times larger.
 	 */
-	const MAX_BYTES = 67108864;
+	const MAX_BYTES = 268435456;
 
 	/**
 	 * Findings to report before saying "and more".
@@ -132,6 +143,20 @@ class CodeCompatibility {
 	protected $manifest = null;
 
 	/**
+	 * Whether the last scan read all of the package's code.
+	 *
+	 * @var bool
+	 */
+	protected $complete = true;
+
+	/**
+	 * Files from the last scan that `SyntaxFixer` can make clean, with how many changes each needs.
+	 *
+	 * @var array
+	 */
+	protected $fixable = array();
+
+	/**
 	 * Constructor.
 	 *
 	 * @param string        $dir      Package directory.
@@ -147,10 +172,11 @@ class CodeCompatibility {
 	 *
 	 * @param Report $report  Report to add to.
 	 * @param string $version PHP version to judge against. Defaults to this server's.
+	 * @param bool   $fix     Whether safe syntax fixes will be applied as the files are written.
 	 *
 	 * @return void
 	 */
-	public function check( Report $report, $version = '' ) {
+	public function check( Report $report, $version = '', $fix = false ) {
 		$version = '' !== $version ? $version : PHP_VERSION;
 
 		$findings = $this->scan( $version );
@@ -169,26 +195,171 @@ class CodeCompatibility {
 			return;
 		}
 
-		if ( empty( $findings ) ) {
-			$report->pass( 'php_code', \sprintf( 'The package\'s code uses nothing PHP %s has removed.', $this->short( $version ) ) );
+		list( $refused, $unparsed ) = $this->split( $findings, $version );
 
-			return;
+		// A file is fixable when `SyntaxFixer` removed every refusal in it and the result checked
+		// clean. With fixes chosen, those files stop being refusals and become a notice; whatever
+		// is left still blocks on its own.
+		$fixable = array();
+		$fixing  = array();
+
+		foreach ( $refused as $finding ) {
+			if ( isset( $this->fixable[ $finding['file'] ] ) ) {
+				$fixable[ $finding['file'] ] = true;
+			}
 		}
 
-		$report->block(
-			'php_code',
-			\sprintf(
-				'The package contains code that PHP %s cannot run.',
-				$this->short( $version )
-			),
-			array(
-				'missing' => $this->describe( $findings ),
+		if ( $fix && ! empty( $fixable ) ) {
+			$left = array();
+
+			foreach ( $refused as $finding ) {
+				if ( isset( $fixable[ $finding['file'] ] ) ) {
+					$fixing[] = $finding;
+				} else {
+					$left[] = $finding;
+				}
+			}
+
+			$refused = $left;
+		}
+
+		$php = $this->short( $version );
+
+		if ( ! empty( $refused ) ) {
+			$files   = \count( \array_unique( \array_column( $refused, 'file' ) ) );
+			$context = array(
+				'missing' => $this->describe( $refused, $version ),
 				'detail'  => 'These are removals, not deprecations: the site would fatal on every request after the switch, '
 					. 'including the screen that offers to undo it. Fix them on the source and export again, or move to a '
 					. 'server running the PHP version the site came from.',
 				'fix'     => 'Each one is a small edit in the file named.',
-			)
-		);
+				'fixable' => \count( $fixable ),
+				'php'     => $php,
+			);
+
+			if ( ! empty( $fixing ) ) {
+				$context['fix'] = \sprintf( 'The other %d file(s) will be fixed as they are imported; these need an edit in the file named.', \count( $fixable ) );
+			} elseif ( \count( $fixable ) === $files ) {
+				$context['fix'] = 'All of these can be fixed automatically as they are imported, keeping the originals.';
+			} elseif ( ! empty( $fixable ) ) {
+				$context['fix'] = \sprintf( '%d of these files can be fixed automatically, keeping the originals. The rest need an edit in the file named.', \count( $fixable ) );
+			}
+
+			$report->block( 'php_code', \sprintf( 'The package contains code that PHP %s cannot run.', $php ), $context );
+
+			return;
+		}
+
+		if ( ! empty( $fixing ) ) {
+			$report->warn(
+				'php_code',
+				\sprintf( '%d file(s) use syntax PHP %s no longer accepts, and will be fixed as they are imported.', \count( $fixable ), $php ),
+				array(
+					'missing' => $this->describe( $fixing, $version ),
+					'detail'  => 'Only syntax with an exact replacement is changed, and every fixed file is parsed and checked again before '
+						. 'it is written. The original of each one is kept with this import\'s records.',
+					'fixable' => \count( $fixable ),
+					'php'     => $php,
+				)
+			);
+
+			return;
+		}
+
+		if ( ! empty( $unparsed ) ) {
+			$report->warn(
+				'php_code',
+				\sprintf( 'Some of the package\'s PHP does not parse on PHP %s.', $this->short( $version ) ),
+				array(
+					'missing' => $this->describe( $unparsed, $version ),
+					'detail'  => \sprintf(
+						'The site came from PHP %s, so this is not refused: plugins often ship code for a newer PHP and load it only there. '
+						. 'If WordPress does load one of these files, the page that loads it will fail.',
+						$this->short( $this->source_version() )
+					),
+				)
+			);
+
+			return;
+		}
+
+		if ( ! $this->complete ) {
+			$report->warn(
+				'php_code',
+				'The package holds more PHP than this check reads, so only part of it was checked.',
+				array( 'detail' => \sprintf( 'Nothing in the first %dMB of code would fail on PHP %s.', (int) ( static::MAX_BYTES / 1048576 ), $this->short( $version ) ) )
+			);
+
+			return;
+		}
+
+		$report->pass( 'php_code', \sprintf( 'The package\'s code parses on PHP %s and uses nothing it has removed.', $this->short( $version ) ) );
+	}
+
+	/**
+	 * The files a safe fix would make runnable here, for the import to fix as it writes them.
+	 *
+	 * The same scan and the same refusals as `check()`, so precheck can only ever fix what the
+	 * review screen said it would.
+	 *
+	 * @param string $version PHP version to judge against. Defaults to this server's.
+	 *
+	 * @return array Entry names.
+	 */
+	public function fixable_files( $version = '' ) {
+		$version  = '' !== $version ? $version : PHP_VERSION;
+		$findings = $this->scan( $version );
+
+		if ( null === $findings ) {
+			return array();
+		}
+
+		list( $refused ) = $this->split( $findings, $version );
+
+		$files = array();
+
+		foreach ( $refused as $finding ) {
+			if ( isset( $this->fixable[ $finding['file'] ] ) ) {
+				$files[ $finding['file'] ] = true;
+			}
+		}
+
+		return \array_keys( $files );
+	}
+
+	/**
+	 * Findings that refuse the import, and parse failures that only warn.
+	 *
+	 * A file this PHP cannot parse is this migration's doing only when this PHP is newer than the
+	 * one the site ran on: the syntax it relies on was removed on the way up. On the same version
+	 * or an older one, the source could not have been loading it either -- plugins ship code for a
+	 * newer PHP than they require and load it only there. WooCommerce 11.0 declares PHP 7.4 and
+	 * carries 46 files of PHP 8 syntax; blocking on those would refuse a site that runs perfectly
+	 * well.
+	 *
+	 * @param array  $findings Findings from `scan()`.
+	 * @param string $version  PHP version they were judged against.
+	 *
+	 * @return array Refusals, then parse failures that only warn.
+	 */
+	protected function split( array $findings, $version ) {
+		$refused  = array();
+		$unparsed = array();
+
+		foreach ( $findings as $finding ) {
+			if ( 'parse' === $finding['kind'] ) {
+				$unparsed[] = $finding;
+			} else {
+				$refused[] = $finding;
+			}
+		}
+
+		if ( $this->newer_than_source( $version ) ) {
+			$refused  = \array_merge( $refused, $unparsed );
+			$unparsed = array();
+		}
+
+		return array( $refused, $unparsed );
 	}
 
 	/**
@@ -209,9 +380,11 @@ class CodeCompatibility {
 			return array();
 		}
 
-		$findings = array();
-		$budget   = self::MAX_BYTES;
-		$opened   = 0;
+		$findings       = array();
+		$budget         = static::MAX_BYTES;
+		$opened         = 0;
+		$this->complete = true;
+		$this->fixable  = array();
 
 		foreach ( $parts as $relative ) {
 			$path = $this->dir . DIRECTORY_SEPARATOR . $relative;
@@ -233,11 +406,15 @@ class CodeCompatibility {
 			for ( $i = 0; $i < $entries; $i++ ) {
 				$name = $zip->name( $i );
 
-				if ( false === $name || ! $this->is_php( $name ) ) {
+				// Skipped before it is read, so tests and fixtures cost neither time nor read budget.
+				if ( false === $name || ! $this->is_php( $name ) || $this->incidental( $name ) ) {
 					continue;
 				}
 
+				// Stopping here used to return whatever had been found so far, and an empty list read
+				// as a pass for code nobody had looked at.
 				if ( $zip->size( $i ) > $budget ) {
+					$this->complete = false;
 					break 2;
 				}
 
@@ -248,10 +425,21 @@ class CodeCompatibility {
 				}
 
 				$budget -= \strlen( $source );
+				$found   = $this->inspect( $source, $version, $name );
 
-				foreach ( $this->inspect( $source, $version ) as $finding ) {
+				foreach ( $found as $finding ) {
 					$finding['file'] = $name;
 					$findings[]      = $finding;
+				}
+
+				// Tried here, while the source is in hand, and only for a file with something wrong
+				// with it. Only the PHP running this can check a fix, as only it can check a parse.
+				if ( ! empty( $found ) && $this->judges_this_php( $version ) ) {
+					$fixed = ( new SyntaxFixer() )->fix( $source );
+
+					if ( null !== $fixed ) {
+						$this->fixable[ $name ] = \count( $fixed['changes'] );
+					}
 				}
 			}
 
@@ -266,19 +454,37 @@ class CodeCompatibility {
 	 *
 	 * @param string $source  PHP source.
 	 * @param string $version PHP version to judge against.
+	 * @param string $name    Entry name, which decides whether the file is parsed.
 	 *
 	 * @return array
 	 */
-	public function inspect( $source, $version ) {
-		// The cheap half. Tokenising every PHP file in a package is the expensive part, and a
-		// file mentioning none of these names cannot contain a call to one -- a tokeniser would
-		// only confirm that at a hundred times the cost. The class-name check below needs the
-		// same prefilter, and `class` is what it has.
-		if ( false === \stripos( $source, 'class' ) && ! $this->mentions_any( $source ) ) {
+	public function inspect( $source, $version, $name = '' ) {
+		if ( $this->incidental( $name ) ) {
 			return array();
 		}
 
-		$tokens = @\token_get_all( $source ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		// Only the PHP running this can say what it will parse, so a parse check is made only when
+		// that is the version being judged -- which it always is outside the tests. Tokenising
+		// every file costs little next to reading it: 27,839 files, 131MB, in under three seconds.
+		if ( $this->judges_this_php( $version ) ) {
+			try {
+				// Silenced because a file that parses can still raise deprecations while it does.
+				$tokens = @\token_get_all( $source, TOKEN_PARSE ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			} catch ( \Throwable $e ) {
+				// `\Throwable`, not `\ParseError`: one uncaught error from one strange file would take
+				// down the whole review screen.
+				return array(
+					array(
+						'kind'       => 'parse',
+						'symbol'     => $e->getMessage(),
+						'line'       => (int) $e->getLine(),
+						'removed_in' => '',
+					),
+				);
+			}
+		} else {
+			$tokens = @\token_get_all( $source ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
 
 		if ( empty( $tokens ) ) {
 			return array();
@@ -286,7 +492,8 @@ class CodeCompatibility {
 
 		return \array_merge(
 			$this->removed_calls( $tokens, $version ),
-			$this->php4_constructors( $tokens, $version )
+			$this->php4_constructors( $tokens, $version ),
+			$this->removed_syntax( $tokens, $version )
 		);
 	}
 
@@ -299,19 +506,22 @@ class CodeCompatibility {
 	 * @return array
 	 */
 	protected function removed_calls( array $tokens, $version ) {
-		$findings = array();
-		$count    = \count( $tokens );
+		$findings  = array();
+		$count     = \count( $tokens );
+		$guarded   = $this->guarded_names( $tokens );
+		$qualified = \defined( 'T_NAME_FULLY_QUALIFIED' ) ? \constant( 'T_NAME_FULLY_QUALIFIED' ) : -1;
 
 		for ( $i = 0; $i < $count; $i++ ) {
 			$token = $tokens[ $i ];
 
-			if ( ! \is_array( $token ) || T_STRING !== $token[0] ) {
+			if ( ! \is_array( $token ) || ( T_STRING !== $token[0] && $qualified !== $token[0] ) ) {
 				continue;
 			}
 
-			$name = \strtolower( $token[1] );
+			// PHP 8 reads `\create_function` as one name rather than a separator and a name.
+			$name = \strtolower( \ltrim( $token[1], '\\' ) );
 
-			if ( ! isset( self::$removed[ $name ] ) ) {
+			if ( ! isset( self::$removed[ $name ] ) || isset( $guarded[ $name ] ) ) {
 				continue;
 			}
 
@@ -334,13 +544,59 @@ class CodeCompatibility {
 			}
 
 			$findings[] = array(
-				'symbol'     => $token[1] . '()',
+				'kind'       => 'removed',
+				'symbol'     => \ltrim( $token[1], '\\' ) . '()',
 				'line'       => (int) $token[2],
 				'removed_in' => self::$removed[ $name ],
 			);
 		}
 
 		return $findings;
+	}
+
+	/**
+	 * Functions the file asks about before calling.
+	 *
+	 * `function_exists( 'get_magic_quotes_gpc' ) && get_magic_quotes_gpc()` is how code that still
+	 * supports an old PHP calls something a newer one removed, and on the newer one it never runs.
+	 * MetaSlider bundles exactly that line, and the check refused a site running it on PHP 8
+	 * without trouble. Matched per file rather than per call, because the guard and the call are
+	 * often in different methods, and a file that asks whether a function exists knows it may not.
+	 *
+	 * @param array $tokens Token stream.
+	 *
+	 * @return array Lowercased names as keys.
+	 */
+	protected function guarded_names( array $tokens ) {
+		$names     = array();
+		$count     = \count( $tokens );
+		$qualified = \defined( 'T_NAME_FULLY_QUALIFIED' ) ? \constant( 'T_NAME_FULLY_QUALIFIED' ) : -1;
+
+		for ( $i = 0; $i < $count; $i++ ) {
+			$token = $tokens[ $i ];
+
+			if ( ! \is_array( $token ) || ( T_STRING !== $token[0] && $qualified !== $token[0] ) ) {
+				continue;
+			}
+
+			if ( ! \in_array( \strtolower( \ltrim( $token[1], '\\' ) ), array( 'function_exists', 'is_callable' ), true ) ) {
+				continue;
+			}
+
+			$open = $this->meaningful_index( $tokens, $i );
+
+			if ( null === $open || '(' !== $tokens[ $open ] ) {
+				continue;
+			}
+
+			$argument = $this->meaningful_index( $tokens, $open );
+
+			if ( null !== $argument && \is_array( $tokens[ $argument ] ) && T_CONSTANT_ENCAPSED_STRING === $tokens[ $argument ][0] ) {
+				$names[ \strtolower( \trim( $tokens[ $argument ][1], '\'"\\' ) ) ] = true;
+			}
+		}
+
+		return $names;
 	}
 
 	/**
@@ -370,10 +626,12 @@ class CodeCompatibility {
 			}
 		}
 
-		$findings = array();
-		$class    = '';
-		$depth    = 0;
-		$opened   = -1;
+		$findings    = array();
+		$candidates  = array();
+		$constructed = false;
+		$class       = '';
+		$depth       = 0;
+		$opened      = -1;
 
 		for ( $i = 0; $i < $count; $i++ ) {
 			$token = $tokens[ $i ];
@@ -387,6 +645,10 @@ class CodeCompatibility {
 				--$depth;
 
 				if ( '' !== $class && $depth <= $opened ) {
+					if ( ! $constructed ) {
+						$findings = \array_merge( $findings, $candidates );
+					}
+
 					$class  = '';
 					$opened = -1;
 				}
@@ -408,8 +670,10 @@ class CodeCompatibility {
 
 				// `new class {` is anonymous and has no name to collide with.
 				if ( \is_array( $name ) && T_STRING === $name[0] ) {
-					$class  = $name[1];
-					$opened = $depth;
+					$class       = $name[1];
+					$opened      = $depth;
+					$candidates  = array();
+					$constructed = false;
 				}
 
 				continue;
@@ -425,15 +689,28 @@ class CodeCompatibility {
 				continue;
 			}
 
+			// A class that also declares `__construct()` has used that one since PHP 5, and its
+			// same-named method is an ordinary method that keeps working. Core's `rss.php` keeps
+			// `MagpieRSS::MagpieRSS()` beside a `__construct()` for exactly that reason.
+			if ( '__construct' === \strtolower( $name[1] ) ) {
+				$constructed = true;
+				continue;
+			}
+
 			if ( \strtolower( $name[1] ) !== \strtolower( $class ) ) {
 				continue;
 			}
 
-			$findings[] = array(
+			$candidates[] = array(
+				'kind'       => 'removed',
 				'symbol'     => \sprintf( '%s::%s() as a constructor', $class, $name[1] ),
 				'line'       => (int) $name[2],
 				'removed_in' => self::CONSTRUCTOR_REMOVED,
 			);
+		}
+
+		if ( '' !== $class && ! $constructed ) {
+			$findings = \array_merge( $findings, $candidates );
 		}
 
 		return $findings;
@@ -482,20 +759,327 @@ class CodeCompatibility {
 	}
 
 	/**
-	 * Whether the source mentions any removed name at all.
+	 * PHP 8.0 removals that parse and fail only when compiled.
 	 *
-	 * @param string $source PHP source.
+	 * `TOKEN_PARSE` accepts both of these, and `php -l` refuses both, so without this the parse
+	 * check would pass a file that fatals the moment it is included.
 	 *
-	 * @return bool
+	 * @param array  $tokens  Token stream.
+	 * @param string $version PHP version to judge against.
+	 *
+	 * @return array
 	 */
-	protected function mentions_any( $source ) {
-		foreach ( \array_keys( self::$removed ) as $name ) {
-			if ( false !== \stripos( $source, $name ) ) {
-				return true;
+	protected function removed_syntax( array $tokens, $version ) {
+		if ( ! $this->removed_by( '8.0', $version ) ) {
+			return array();
+		}
+
+		$findings = array();
+
+		if ( \defined( 'T_UNSET_CAST' ) ) {
+			foreach ( $tokens as $token ) {
+				if ( \is_array( $token ) && T_UNSET_CAST === $token[0] ) {
+					$findings[] = array(
+						'kind'       => 'removed',
+						'symbol'     => 'the (unset) cast',
+						'line'       => (int) $token[2],
+						'removed_in' => '8.0',
+					);
+				}
 			}
 		}
 
-		return false;
+		return \array_merge( $findings, $this->nested_ternaries( $tokens ) );
+	}
+
+	/**
+	 * Ternaries nested on the left without parentheses: `a ? b : c ? d : e`.
+	 *
+	 * PHP 8.0 refuses a ternary that follows a finished one in the same expression, and the
+	 * mixed short forms `a ?: b ? c : d` and `a ? b : c ?: d`. A chain of short ones, `a ?: b ?: c`,
+	 * and a ternary nested in the middle operand are both still fine. Parentheses, brackets and
+	 * braces start a new expression, and so does anything that binds more loosely than a
+	 * ternary -- an assignment, `and`, `print`, a comma, a statement's end. A `?` straight after
+	 * `(`, `,`, `:` or a modifier is a nullable type, not a ternary.
+	 *
+	 * Checked against PHP's own compiler on labelled cases and on 27,839 files from real plugins,
+	 * where it agrees with `php -l` everywhere.
+	 *
+	 * @param array $tokens Token stream.
+	 *
+	 * @return array
+	 */
+	protected function nested_ternaries( array $tokens ) {
+		$findings = array();
+
+		foreach ( $this->ternary_sites( $tokens ) as $site ) {
+			$findings[] = array(
+				'kind'       => 'removed',
+				'symbol'     => 'a nested ternary without parentheses',
+				'line'       => $site['line'],
+				'removed_in' => '8.0',
+			);
+		}
+
+		return $findings;
+	}
+
+	/**
+	 * Where each unparenthesised nested ternary is, and where the expression before it starts.
+	 *
+	 * The detector and `SyntaxFixer` share this, so a fix can only ever parenthesise exactly what
+	 * the check refused. `start` is the first token of the chain's left operand and `before` the
+	 * last token ahead of the offending `?`, and wrapping that span is the grouping PHP 7 applied:
+	 * the ternary associated to the left. The start is the first token after whatever binds more
+	 * loosely than a ternary at the same depth, after an `if` or `while` condition, or after a
+	 * block. Where that is wrong the wrapped file does not parse, and `SyntaxFixer` checks.
+	 *
+	 * @param array $tokens Token stream from `token_get_all()`.
+	 *
+	 * @return array Each with `start`, `before`, `question` and `line`.
+	 */
+	public function ternary_sites( array $tokens ) {
+		// Keyed for `isset()`: this runs once per token of every file in the package.
+		$skip     = \array_fill_keys( array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ), true );
+		$opens    = \array_fill_keys( array( '(', '[', '{', T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES ), true );
+		$markers  = \array_fill_keys( array( '(', ',', ':', T_PUBLIC, T_PROTECTED, T_PRIVATE, T_VAR, T_STATIC, T_CONST ), true );
+		$controls = \array_fill_keys( array( T_IF, T_ELSEIF, T_WHILE, T_FOR, T_FOREACH, T_SWITCH, T_DECLARE ), true );
+		$offsets  = \array_fill_keys( array( T_VARIABLE, '$', T_OBJECT_OPERATOR, T_DOUBLE_COLON, ']', '}' ), true );
+		$ends     = array(
+			T_ELSE,
+			T_INCLUDE,
+			T_INCLUDE_ONCE,
+			T_REQUIRE,
+			T_REQUIRE_ONCE,
+			T_THROW,
+			';',
+			',',
+			'=',
+			T_DOUBLE_ARROW,
+			T_OPEN_TAG,
+			T_OPEN_TAG_WITH_ECHO,
+			T_CLOSE_TAG,
+			T_INLINE_HTML,
+			T_LOGICAL_AND,
+			T_LOGICAL_OR,
+			T_LOGICAL_XOR,
+			T_PRINT,
+			T_ECHO,
+			T_RETURN,
+			T_CASE,
+			T_YIELD,
+			T_YIELD_FROM,
+			T_PLUS_EQUAL,
+			T_MINUS_EQUAL,
+			T_MUL_EQUAL,
+			T_DIV_EQUAL,
+			T_CONCAT_EQUAL,
+			T_MOD_EQUAL,
+			T_AND_EQUAL,
+			T_OR_EQUAL,
+			T_XOR_EQUAL,
+			T_SL_EQUAL,
+			T_SR_EQUAL,
+			T_POW_EQUAL,
+			T_COALESCE_EQUAL,
+		);
+		$ends     = \array_fill_keys( $ends, true );
+
+		// Named rather than used directly so this still parses on 7.4.
+		if ( \defined( 'T_ATTRIBUTE' ) ) {
+			$opens[ \constant( 'T_ATTRIBUTE' ) ] = true;
+		}
+
+		if ( \defined( 'T_READONLY' ) ) {
+			$markers[ \constant( 'T_READONLY' ) ] = true;
+		}
+
+		$fresh    = array(
+			'pending' => 0,
+			'done'    => false,
+			'short'   => true,
+			'start'   => null,
+			'control' => false,
+		);
+		$levels   = array( $fresh );
+		$sites    = array();
+		$previous = null;
+		$last     = null;
+		$line     = 1;
+		$count    = \count( $tokens );
+
+		for ( $i = 0; $i < $count; $i++ ) {
+			$token = $tokens[ $i ];
+			$type  = \is_array( $token ) ? $token[0] : $token;
+
+			if ( \is_array( $token ) ) {
+				$line = (int) $token[2] + \substr_count( $token[1], "\n" );
+			}
+
+			if ( isset( $skip[ $type ] ) ) {
+				continue;
+			}
+
+			$top    = \count( $levels ) - 1;
+			$before = \is_array( $previous ) ? $previous[0] : (string) $previous;
+
+			if ( isset( $opens[ $type ] ) ) {
+				if ( null === $levels[ $top ]['start'] ) {
+					$levels[ $top ]['start'] = $i;
+				}
+
+				$child            = $fresh;
+				$child['control'] = ( '(' === $type && isset( $controls[ $before ] ) )
+					|| ( '{' === $type && ! isset( $offsets[ $before ] ) );
+				$levels[]         = $child;
+			} elseif ( ')' === $type || ']' === $type || '}' === $type ) {
+				// The expression around a closing bracket carries on past it, as in
+				// `$a ? function () {} : $b ? 1 : 2`, which PHP refuses. Only a closed block or a
+				// control structure's condition, outside any ternary, begins a new statement --
+				// which moves where a fix starts, never what is found. A `{` after a variable, an
+				// arrow or an index is an offset or a dynamic name, not a block.
+				if ( $top > 0 ) {
+					$closed = \array_pop( $levels );
+					$parent = $top - 1;
+
+					if ( $closed['control'] && 0 === $levels[ $parent ]['pending'] && ! $levels[ $parent ]['done'] ) {
+						$levels[ $parent ]['start'] = null;
+					}
+				}
+			} elseif ( isset( $ends[ $type ] ) || ( ':' === $type && 0 === $levels[ $top ]['pending'] ) ) {
+				// A `:` that closes no ternary is a label, a `case`, a return type or a named
+				// argument, and a new expression follows it.
+				$levels[ $top ] = $fresh;
+			} elseif ( '?' === $type ) {
+				if ( ! isset( $markers[ $before ] ) ) {
+					$next  = $this->meaningful_index( $tokens, $i );
+					$short = null !== $next && ':' === $tokens[ $next ];
+					$state = $levels[ $top ];
+
+					if ( 0 === $state['pending'] && $state['done'] && ! ( $state['short'] && $short ) ) {
+						$sites[] = array(
+							'start'    => $state['start'],
+							'before'   => $last,
+							'question' => $i,
+							'line'     => $line,
+						);
+
+						// One site per chain, and the chain still starts where it did.
+						$state          = $fresh;
+						$state['start'] = $sites[ \count( $sites ) - 1 ]['start'];
+					}
+
+					if ( $short ) {
+						// `?:` finishes as it starts. Inside another ternary's middle operand it
+						// finishes nothing at this level.
+						if ( 0 === $state['pending'] ) {
+							$state['short'] = $state['done'] ? $state['short'] : true;
+							$state['done']  = true;
+						}
+
+						$i = $next;
+					} else {
+						++$state['pending'];
+					}
+
+					$levels[ $top ] = $state;
+				}
+			} elseif ( ':' === $type ) {
+				// Only a `:` that closes a ternary gets here.
+				--$levels[ $top ]['pending'];
+
+				if ( 0 === $levels[ $top ]['pending'] ) {
+					$levels[ $top ]['done']  = true;
+					$levels[ $top ]['short'] = false;
+				}
+			} elseif ( null === $levels[ $top ]['start'] ) {
+				$levels[ $top ]['start'] = $i;
+			}
+
+			// `$i` may have moved past a `?:`, so both are read back rather than kept from above.
+			$previous = $tokens[ $i ];
+			$last     = $i;
+		}
+
+		return $sites;
+	}
+
+	/**
+	 * Position of the next token that is not whitespace or a comment.
+	 *
+	 * @param array $tokens Token stream.
+	 * @param int   $index  Position to start after.
+	 *
+	 * @return int|null
+	 */
+	protected function meaningful_index( array $tokens, $index ) {
+		$skip  = array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT );
+		$count = \count( $tokens );
+
+		for ( $i = $index + 1; $i < $count; $i++ ) {
+			if ( ! \is_array( $tokens[ $i ] ) || ! \in_array( $tokens[ $i ][0], $skip, true ) ) {
+				return $i;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Whether the version being judged is the one running this code.
+	 *
+	 * @param string $version PHP version to judge against.
+	 *
+	 * @return bool
+	 */
+	protected function judges_this_php( $version ) {
+		return $this->short( $version ) === $this->short( PHP_VERSION );
+	}
+
+	/**
+	 * Whether a file sits somewhere nothing loads it from.
+	 *
+	 * Measured, not guessed: judged as PHP 8.5, a real site's plugins had 813 files that did not
+	 * parse and 126 removals, and every one of them sat in `tests/` inside a vendored
+	 * PHP_CodeSniffer. Outside such directories the same 27,839 files produced nothing at all.
+	 *
+	 * @param string $name Entry name.
+	 *
+	 * @return bool
+	 */
+	protected function incidental( $name ) {
+		return (bool) \preg_match( '#(^|/)(tests?|fixtures?|stubs?|examples?)/#i', \str_replace( '\\', '/', (string) $name ) );
+	}
+
+	/**
+	 * The PHP version the package was exported under.
+	 *
+	 * @return string Empty when the manifest does not say.
+	 */
+	protected function source_version() {
+		if ( null === $this->manifest ) {
+			return '';
+		}
+
+		$version = (string) $this->manifest->get( 'source.php_version', '' );
+
+		return '' !== $version ? $version : (string) $this->manifest->get( 'profile.php.version', '' );
+	}
+
+	/**
+	 * Whether this PHP is newer than the source's, so a file that does not parse here is new.
+	 *
+	 * A source that did not record its version counts as older, which refuses: a check that
+	 * cannot tell is not a check that passed.
+	 *
+	 * @param string $version PHP version being judged.
+	 *
+	 * @return bool
+	 */
+	protected function newer_than_source( $version ) {
+		$source = $this->source_version();
+
+		return '' === $source || \version_compare( $this->short( $version ), $this->short( $source ), '>' );
 	}
 
 	/**
@@ -526,14 +1110,27 @@ class CodeCompatibility {
 	/**
 	 * Findings as lines somebody can act on.
 	 *
-	 * @param array $findings Findings.
+	 * @param array  $findings Findings.
+	 * @param string $version  PHP version they were judged against.
 	 *
 	 * @return array
 	 */
-	protected function describe( array $findings ) {
+	protected function describe( array $findings, $version ) {
 		$lines = array();
 
 		foreach ( \array_slice( $findings, 0, self::MAX_REPORTED ) as $finding ) {
+			if ( 'parse' === $finding['kind'] ) {
+				$lines[] = \sprintf(
+					'%s:%d does not parse on PHP %s: %s',
+					$finding['file'],
+					$finding['line'],
+					$this->short( $version ),
+					$finding['symbol']
+				);
+
+				continue;
+			}
+
 			$lines[] = \sprintf(
 				'%s:%d uses %s, removed in PHP %s.',
 				$finding['file'],

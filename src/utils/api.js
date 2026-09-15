@@ -232,16 +232,16 @@ export const api = {
 				data: { dir },
 			} ),
 
-		preview: ( dir ) =>
+		preview: ( dir, fixPhp = false ) =>
 			stableCall( 'import/preview', {
 				method: 'POST',
-				data: dir ? { dir } : {},
+				data: { ...( dir ? { dir } : {} ), fix_php: fixPhp },
 			} ),
 
-		start: ( dir, mode ) =>
+		start: ( dir, mode, fixPhp = false ) =>
 			stableCall( 'import/start', {
 				method: 'POST',
-				data: { dir, mode },
+				data: { dir, mode, fix_php: fixPhp },
 			} ),
 
 		step: ( dir, mode ) =>

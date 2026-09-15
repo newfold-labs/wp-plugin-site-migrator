@@ -16,6 +16,8 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\SearchReplace;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Report;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\CodeCompatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
@@ -873,6 +875,448 @@ class RegressionTest extends TestCase {
 			$this->removals( 'namespace A\\B; $f = create_function( "", "return 1;" );' )
 		);
 	}
+
+	/**
+	 * Syntax a PHP no longer accepts, found by asking the PHP that will run it.
+	 *
+	 * `$str{0}` and `(real)` are parse errors from 8.0 on, and no list of removed functions names
+	 * either. Only the running PHP can say what it parses, so no other version is parse-checked.
+	 */
+	public function test_code_this_php_cannot_parse_is_found() {
+		$checker = new CodeCompatibility( '' );
+		$broken  = $checker->inspect( '<?php function ( {', PHP_VERSION, 'wp-content/plugins/p/broken.php' );
+
+		$this->assertCount( 1, $broken );
+		$this->assertSame( 'parse', $broken[0]['kind'] );
+		$this->assertSame( array(), $checker->inspect( '<?php function ( {', '7.0' ), 'another version is not parsed' );
+
+		if ( \PHP_VERSION_ID < 80000 ) {
+			return;
+		}
+
+		foreach ( array( '$s = "abc"; echo $s{0};', '$x = (real) "1.5";' ) as $source ) {
+			$found = $checker->inspect( '<?php ' . $source, PHP_VERSION, 'wp-content/themes/t/functions.php' );
+
+			$this->assertSame( 'parse', isset( $found[0]['kind'] ) ? $found[0]['kind'] : null, $source );
+		}
+	}
+
+	/**
+	 * The two PHP 8.0 removals the parser accepts and only the compiler refuses.
+	 *
+	 * Each case is labelled by PHP 8.5's own `php -l`. The fine ones are the shapes a ternary
+	 * detector gets wrong: nullable types, `case` labels, closures, short chains, `print`.
+	 */
+	public function test_removed_syntax_the_parser_still_accepts() {
+		$fatal = array(
+			'$x = (unset) $y;',
+			'$x = $a ? 1 : $b ? 2 : 3;',
+			'$x = $a ?: $b ? 1 : 2;',
+			'$x = $a ? 1 : $b ?: 2;',
+			'$x = $a ? 1 : $b ?? $c ? 2 : 3;',
+			'f( $a ? 1 : $b ? 2 : 3 );',
+			'function f() { return $a ? 1 : $b ? 2 : 3; }',
+			// A closure does not end the expression it sits in.
+			'$x = $a ? function () { return 1; } : $b ? 2 : 3;',
+		);
+
+		$fine = array(
+			'$x = ( $a ? 1 : $b ) ? 2 : 3;',
+			'$x = $a ? $b ? 1 : 2 : 3;',
+			'$x = $a ?: $b ?: $c;',
+			'$x = $a ? 1 : $b ?? 2;',
+			'f( $a ? 1 : 2, $b ? 3 : 4 );',
+			'class K { public function a(): ?int { return 1; } public function b(): ?int { return $x ? 1 : 2; } public ?int $p = null; }',
+			'switch ( $a ) { case $b ? 1 : 2: break; case 3: $x = $c ? 1 : 2; }',
+			'$x = $a ? function () { return $b ? 1 : 2; } : null;',
+			'$f = fn( ?int $a ): ?int => $a ? 1 : 2;',
+			'$x = $a ? 1 : print $b ? 2 : 3;',
+			'unset( $y ); $x = "(unset)";',
+		);
+
+		foreach ( $fatal as $source ) {
+			$this->assertCount( 1, $this->removals( $source ), $source );
+		}
+
+		foreach ( $fine as $source ) {
+			$this->assertSame( array(), $this->removals( $source ), $source );
+		}
+
+		$this->assertSame( array(), $this->removals( '$x = (unset) $y; $z = $a ? 1 : $b ? 2 : 3;', '7.4' ), 'still accepted by 7.4' );
+	}
+
+	/**
+	 * Code that supports an old PHP, none of which fails on a new one.
+	 *
+	 * Both shapes were on a site the check refused. MetaSlider bundles HTMLPurifier, which calls
+	 * `get_magic_quotes_gpc()` only behind `function_exists()`, and core's `rss.php` keeps
+	 * `MagpieRSS::MagpieRSS()` beside a `__construct()`, which is what PHP has called since 5.
+	 */
+	public function test_old_php_support_that_never_runs_on_new_php() {
+		$this->assertSame(
+			array(),
+			$this->removals( '$mq = $fix && version_compare( PHP_VERSION, "7.4.0", "<" ) && function_exists( "get_magic_quotes_gpc" ) && get_magic_quotes_gpc();' )
+		);
+
+		// The guard and the call in different methods.
+		$this->assertSame(
+			array(),
+			$this->removals( 'class Loader { function ok() { return is_callable( "create_function" ); } function make() { return create_function( "", "" ); } }' )
+		);
+
+		$this->assertSame(
+			array(),
+			$this->removals( 'class MagpieRSS { function __construct( $s ) {} public function MagpieRSS( $s ) { self::__construct( $s ); } }' )
+		);
+
+		$this->assertSame( array(), $this->removals( 'class RSSCache { public function RSSCache() {} function __construct() {} }' ), 'declared after' );
+
+		// An unguarded call written fully qualified is still one, however the PHP tokenises it.
+		$this->assertSame( array( 'create_function()' ), $this->removals( 'namespace A; $f = \\create_function( "", "return 1;" );' ) );
+	}
+
+	/**
+	 * Tests and fixtures ship inside plugins and never run.
+	 *
+	 * Judged as PHP 8.5, a real site's plugins had 813 files that did not parse and 126 removals,
+	 * and every one sat in `tests/` inside a vendored PHP_CodeSniffer, whose fixtures are broken on
+	 * purpose. Refusing the site over them would have refused one that runs.
+	 */
+	public function test_tests_and_fixtures_are_not_read() {
+		$checker = new CodeCompatibility( '' );
+		$source  = '<?php function ( { $f = create_function( "", "" );';
+
+		$incidental = array(
+			'wp-content/plugins/p/vendor/squizlabs/php_codesniffer/tests/Core/Broken.inc',
+			'wp-content/plugins/p/src/Standards/Generic/Tests/Metrics/X.inc',
+			'wp-content/plugins/p/fixtures/a.php',
+			'wp-content/plugins/p/examples/b.php',
+			'wp-content/plugins/p/stubs/c.php',
+		);
+
+		foreach ( $incidental as $name ) {
+			$this->assertSame( array(), $checker->inspect( $source, PHP_VERSION, $name ), $name );
+		}
+
+		$this->assertNotEmpty( $checker->inspect( $source, PHP_VERSION, 'wp-content/plugins/p/tests.php' ), 'only a directory counts' );
+	}
+
+	/**
+	 * A file that does not parse blocks only when this PHP is newer than the source's.
+	 *
+	 * On the same version or an older one the source cannot have been loading it either.
+	 * WooCommerce 11.0 declares PHP 7.4 and carries 46 files of PHP 8 syntax that 7.4 cannot parse
+	 * and never loads; refusing to move it to a 7.4 host would refuse a site that works there.
+	 */
+	public function test_a_file_that_does_not_parse_blocks_only_on_a_newer_php() {
+		$package  = $this->code_package( '<?php function ( {' );
+		$statuses = array();
+
+		foreach ( array(
+			'source older' => '5.6.40',
+			'source same'  => PHP_VERSION,
+			'source newer' => '99.0.0',
+		) as $case => $version ) {
+			$report = new Report();
+
+			( new CodeCompatibility( $package, $this->code_manifest( $version ) ) )->check( $report );
+
+			$check             = $report->get( 'php_code' );
+			$statuses[ $case ] = $check['status'];
+
+			$this->assertStringContainsString( 'wp-content/plugins/p/broken.php:1 does not parse on PHP', $check['context']['missing'][0], $case );
+		}
+
+		$this->assertSame(
+			array(
+				'source older' => 'block',
+				'source same'  => 'warn',
+				'source newer' => 'warn',
+			),
+			$statuses
+		);
+
+		// A manifest that does not say where it came from refuses, like every check that cannot tell.
+		$report = new Report();
+
+		( new CodeCompatibility( $package, $this->code_manifest( '' ) ) )->check( $report );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
+	 * Code past the read budget is not reported as checked.
+	 *
+	 * The scan stopped at 64MB and returned what it had found, so a package whose first 64MB were
+	 * clean passed with the rest never read.
+	 */
+	public function test_a_scan_that_stops_early_does_not_pass() {
+		$package = $this->code_package( '<?php echo "a file larger than the budget below";' );
+		$report  = new Report();
+		$checker = new class( $package, $this->code_manifest( PHP_VERSION ) ) extends CodeCompatibility {
+			const MAX_BYTES = 10;
+		};
+
+		$checker->check( $report );
+
+		$this->assertSame( 'warn', $report->get( 'php_code' )['status'] );
+		$this->assertStringContainsString( 'only part of it was checked', $report->get( 'php_code' )['label'] );
+	}
+
+	/**
+	 * Tests and fixtures do not use up the read budget.
+	 *
+	 * A real site's plugins held 131MB of PHP, much of it vendored test suites. Read and then
+	 * discarded, those files ran the check out of budget and it warned that it had only checked
+	 * part of a package whose running code it could have read in full.
+	 */
+	public function test_tests_do_not_use_up_the_read_budget() {
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/p/vendor/lib/tests/Fixture.php' => '<?php echo "a fixture larger than the budget";',
+				'wp-content/plugins/p/p.php'                        => '<?php echo 1;',
+			)
+		);
+		$report  = new Report();
+		$checker = new class( $package, $this->code_manifest( PHP_VERSION ) ) extends CodeCompatibility {
+			const MAX_BYTES = 20;
+		};
+
+		$checker->check( $report );
+
+		$this->assertSame( 'pass', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
+	 * A package holding PHP files in a plugins part.
+	 *
+	 * @param string|array $files One file's contents, or contents keyed by entry name.
+	 *
+	 * @return string Package directory.
+	 */
+	protected function code_package( $files ) {
+		$package = $this->dir . '/package';
+		$files   = \is_array( $files ) ? $files : array( 'wp-content/plugins/p/broken.php' => $files );
+
+		\wp_mkdir_p( $package . '/parts' );
+
+		$writer = ZipWriter::create( $package . '/parts/plugins.001.zip' );
+
+		foreach ( $files as $name => $php ) {
+			$source = $this->dir . '/source-' . \md5( $name ) . '.php';
+
+			\file_put_contents( $source, $php );
+			$writer->add_file( $source, $name );
+		}
+
+		$writer->close();
+
+		return $package;
+	}
+
+	/**
+	 * A manifest naming that part, exported under the PHP version given.
+	 *
+	 * @param string $version Source PHP version, or empty for a manifest that does not say.
+	 *
+	 * @return Manifest
+	 */
+	protected function code_manifest( $version ) {
+		$data = array( 'parts' => array( array( 'file' => 'parts/plugins.001.zip' ) ) );
+
+		if ( '' !== $version ) {
+			$data['source'] = array( 'php_version' => $version );
+		}
+
+		return new Manifest( $data );
+	}
+
+	/**
+	 * The three removals with an exact replacement are rewritten, and only those.
+	 *
+	 * Chosen because each is a spelling rather than a meaning: `{}` offsets always meant `[]`,
+	 * `(real)` always meant `(float)`, and a ternary chain always associated to the left. The
+	 * parentheses go exactly where PHP 7 put them, so the fixed file runs the way the source did.
+	 */
+	public function test_safe_fixes_rewrite_only_the_exact_equivalents() {
+		$fixer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer();
+		$cases = array(
+			'$c = $s{0};'                                      => '$c = $s[0];',
+			'$c = $o->name{$i}{1} . $list[2]{0};'              => '$c = $o->name[$i][1] . $list[2][0];',
+			'$c = "{$s{0}} $s{0}";'                            => '$c = "{$s[0]} $s{0}";',
+			'$c = $a{"{$b}"};'                                 => '$c = $a["{$b}"];',
+			'$n = (real) $x + ( REAL )$y;'                     => '$n = (float) $x + (float)$y;',
+			'$x = $a ? 1 : $b ? 2 : 3;'                        => '$x = ($a ? 1 : $b) ? 2 : 3;',
+			'$x = $a ? 1 : $b ? 2 : $c ? 3 : 4;'               => '$x = (($a ? 1 : $b) ? 2 : $c) ? 3 : 4;',
+			'if ( $c ) return $a ? 1 : $b ? 2 : 3;'            => 'if ( $c ) return ($a ? 1 : $b) ? 2 : 3;',
+			'if ( $c ) f( $a ) ? 1 : $b ? 2 : 3;'              => 'if ( $c ) (f( $a ) ? 1 : $b) ? 2 : 3;',
+			'$x = array( "k" => $a ?: $b ? 1 : 2 );'           => '$x = array( "k" => ($a ?: $b) ? 1 : 2 );',
+			'$x = $a ? function () { return 1; } : $b ? 2 : 3;' => '$x = ($a ? function () { return 1; } : $b) ? 2 : 3;',
+			'$x = $a . $b ? 1 : 2 ? 3 : 4;'                    => '$x = ($a . $b ? 1 : 2) ? 3 : 4;',
+		);
+
+		foreach ( $cases as $before => $after ) {
+			$fixed = $fixer->fix( "<?php\n" . $before );
+
+			$this->assertNotNull( $fixed, $before );
+			$this->assertSame( "<?php\n" . $after, $fixed['source'], $before );
+			$this->assertNotEmpty( $fixed['changes'], $before );
+		}
+
+		// A string's own braces are the string's.
+		$this->assertNull( $fixer->fix( '<?php $c = "$s{0}"; $d = \'$s{0}\';' ) );
+
+		// And a rewrite that changes anything but the spelling is refused, even though the result
+		// parses and uses nothing removed.
+		$careless = new class() extends \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer {
+			protected function real_casts( $source, array &$changes ) {
+				$changes[] = array( 'line' => 1 );
+
+				return \str_replace( '(real)', '(int)', $source );
+			}
+		};
+
+		$this->assertNull( $careless->fix( '<?php $n = (real) $x;' ) );
+		$this->assertNotNull( $fixer->fix( '<?php $n = (real) $x;' ) );
+	}
+
+	/**
+	 * A file is fixed whole or not at all.
+	 *
+	 * Rewriting the braces in a file that also calls `create_function()` would change it and still
+	 * leave it unable to run, and the import would report it fixed.
+	 */
+	public function test_a_file_with_anything_else_wrong_is_left_alone() {
+		$fixer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer();
+
+		$this->assertNull( $fixer->fix( '<?php $a = $s{0}; function ( {' ) );
+		$this->assertNull( $fixer->fix( '<?php $a = $s[0]; $x = $a ? 1 : ( $b ? 2 : 3 );' ) );
+
+		// Removals only from 8.0, so on an older PHP these files are fine once fixed.
+		if ( PHP_VERSION_ID >= 80000 ) {
+			$this->assertNull( $fixer->fix( '<?php $a = $s{0}; $f = create_function( "", "" );' ) );
+			$this->assertNull( $fixer->fix( '<?php $a = $s{0}; $b = (unset) $c;' ) );
+		}
+	}
+
+	/**
+	 * Only a chosen file is changed, after it is written, and its original is kept.
+	 */
+	public function test_fixed_files_are_written_with_their_originals_kept() {
+		$broken  = "<?php\n\$c = \$s{0} . ( \$a ? 1 : \$b ? 2 : 3 );\n";
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/fixme/a.php'  => $broken,
+				'wp-content/plugins/fixme/b.php'  => $broken,
+				'wp-content/plugins/fixme/ok.php' => "<?php\n\$c = \$s[0];\n",
+			)
+		);
+
+		$manifest = new Manifest(
+			array(
+				'parts' => array(
+					array(
+						'name'   => 'plugins',
+						'prefix' => 'wp-content/plugins',
+						'file'   => 'parts/plugins.001.zip',
+					),
+				),
+				'large' => array(),
+			)
+		);
+
+		$state = array(
+			'part_index'       => 0,
+			'entry_index'      => 0,
+			'files_done'       => 0,
+			'bytes_done'       => 0,
+			'migrator_skipped' => 0,
+			'large_index'      => 0,
+			'large_offset'     => 0,
+		);
+
+		\NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::clear_backups();
+		\wp_mkdir_p( WP_PLUGIN_DIR );
+
+		// `b.php` is as broken as `a.php`, and was not chosen.
+		$restorer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\FileRestorer(
+			$package,
+			$manifest,
+			array(
+				'wp-content/plugins/fixme/a.php'  => true,
+				'wp-content/plugins/fixme/ok.php' => true,
+			)
+		);
+
+		$this->assertTrue( $restorer->step( $state, 0 ) );
+
+		$target = ( new \NewfoldLabs\WP\SiteMigrator\Core\Import\PathMap() )->target( 'plugins', 'wp-content/plugins' );
+		$root   = \dirname( \NewfoldLabs\WP\SiteMigrator\Core\Import\PathMap::safe_path( $target['root'], 'wp-content/plugins/fixme/a.php', $target['strip'] ), 2 );
+		$backup = \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::backup_dir() . '/wp-content/plugins/fixme/a.php';
+
+		$this->assertSame( "<?php\n\$c = \$s[0] . ( (\$a ? 1 : \$b) ? 2 : 3 );\n", \file_get_contents( $root . '/fixme/a.php' ) );
+		$this->assertSame( $broken, \file_get_contents( $root . '/fixme/b.php' ) );
+		$this->assertSame( "<?php\n\$c = \$s[0];\n", \file_get_contents( $root . '/fixme/ok.php' ) );
+		$this->assertSame( $broken, \file_get_contents( $backup ) );
+		$this->assertFileDoesNotExist( $root . '/fixme/a.php.nfd-sm-fixing' );
+		$this->assertCount( 1, $restorer->fixed() );
+		$this->assertSame( 'wp-content/plugins/fixme/a.php', $restorer->fixed()[0]['file'] );
+		$this->assertSame( 3, $state['files_done'] );
+
+		\NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::clear_backups();
+
+		$this->assertDirectoryDoesNotExist( \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::backup_dir() );
+
+		\Fixture::rmdir( ABSPATH );
+	}
+
+	/**
+	 * Choosing the fix turns a refusal into a notice only for the files it can fix.
+	 */
+	public function test_choosing_fixes_unblocks_only_what_they_fix() {
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->markTestSkipped( 'These are removals only from PHP 8.0.' );
+		}
+
+		$fixable = "<?php\n\$c = \$s{0};\n";
+		$checker = new CodeCompatibility( $this->code_package( $fixable ), $this->code_manifest( '7.4.33' ) );
+
+		$report = new Report();
+		$checker->check( $report );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'block', $check['status'] );
+		$this->assertSame( 1, $check['context']['fixable'] );
+		$this->assertSame( array( 'wp-content/plugins/p/broken.php' ), $checker->fixable_files() );
+
+		$report = new Report();
+		$checker->check( $report, '', true );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'warn', $check['status'] );
+		$this->assertCount( 1, $check['context']['missing'] );
+
+		// Beside a file no fix can help, the refusal stands and names only that one.
+		\Fixture::rmdir( $this->dir . '/package' );
+
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/p/fixable.php' => $fixable,
+				'wp-content/plugins/p/each.php'    => "<?php\nwhile ( list( \$k ) = each( \$a ) ) {}\n",
+			)
+		);
+		$checker = new CodeCompatibility( $package, $this->code_manifest( '7.4.33' ) );
+
+		$report = new Report();
+		$checker->check( $report, '', true );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'block', $check['status'] );
+		$this->assertCount( 1, $check['context']['missing'] );
+		$this->assertStringContainsString( 'each.php', $check['context']['missing'][0] );
+		$this->assertSame( array( 'wp-content/plugins/p/fixable.php' ), $checker->fixable_files() );
+	}
+
 	/**
 	 * A package without the plugins leaves a database that still expects them.
 	 *

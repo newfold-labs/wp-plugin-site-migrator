@@ -82,7 +82,9 @@ class Importer {
 	 * Constructor.
 	 *
 	 * @param string $dir     Absolute package directory.
-	 * @param array  $options `mode`, `acting_user`, `site_url`, `home_url`, `keep_backup`.
+	 * @param array  $options `mode`, `acting_user`, `site_url`, `home_url`, `keep_backup`, and
+	 *                        `fix_php` -- true or false to decide whether safe syntax fixes run,
+	 *                        null to keep whatever the recorded run chose.
 	 */
 	public function __construct( $dir, array $options = array() ) {
 		$this->dir        = \rtrim( $dir, '/\\' );
@@ -97,9 +99,54 @@ class Importer {
 				'site_url'    => '',
 				'home_url'    => '',
 				'keep_backup' => true,
+				'fix_php'     => null,
 			),
 			$options
 		);
+	}
+
+	/**
+	 * Record whether the next run applies safe syntax fixes.
+	 *
+	 * The browser's steps are separate requests that carry only the package, so the choice made on
+	 * the review screen has to live in the checkpoint. Only a run that has not yet claimed the site
+	 * takes it: one already restoring files was checked and planned under the choice it began with.
+	 *
+	 * @param bool $wanted Whether to fix.
+	 *
+	 * @return void
+	 */
+	public function choose_fixes( $wanted ) {
+		$state = $this->checkpoint->load();
+
+		if ( ImportCheckpoint::is_settled( $state ) ) {
+			$this->checkpoint->clear();
+
+			$state = $this->checkpoint->load();
+		}
+
+		if ( '' !== $state['package'] ) {
+			return;
+		}
+
+		$state['fix_php'] = (bool) $wanted;
+
+		$this->checkpoint->save( $state );
+	}
+
+	/**
+	 * Whether this run applies safe syntax fixes: this request's choice, else the recorded one.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return bool
+	 */
+	protected function fixes_wanted( array $state ) {
+		if ( null !== $this->options['fix_php'] ) {
+			return (bool) $this->options['fix_php'];
+		}
+
+		return ! empty( $state['fix_php'] );
 	}
 
 	/**
@@ -232,7 +279,7 @@ class Importer {
 		// so a package built before this existed is still checked -- including one already
 		// sitting on a server.
 		$code = new CodeCompatibility( $this->dir, $manifest );
-		$code->check( $report );
+		$code->check( $report, '', ! empty( $this->options['fix_php'] ) );
 
 		// And what the database switches on that will not be here to run. Said in plugin names
 		// rather than in part names, because "uploads and plugins were left out" does not read
@@ -544,6 +591,16 @@ class Importer {
 
 		$this->check_previous_backup( $swap, $state );
 
+		// The originals an earlier import's fixes kept belong to a site that is about to be
+		// replaced again, which is the same reasoning that just discarded its tables.
+		SyntaxFixer::clear_backups();
+
+		// Decided from the package here rather than trusted from the review screen, with the same
+		// scan, so a run can only fix what that screen said it would.
+		$state['fix_php']   = $this->fixes_wanted( $state );
+		$state['php_fixes'] = $state['fix_php'] ? ( new CodeCompatibility( $this->dir, $manifest ) )->fixable_files() : array();
+		$state['php_fixed'] = array();
+
 		// Recorded only now, on the far side of every check: from here on the run owns the site.
 		$state['package'] = $this->dir;
 
@@ -632,12 +689,22 @@ class Importer {
 	protected function stage_files( array &$state, $deadline ) {
 		$this->progress->start( ImportCheckpoint::STAGE_FILES );
 
-		$restorer = new FileRestorer( $this->dir, $this->package->manifest() );
+		$restorer = new FileRestorer(
+			$this->dir,
+			$this->package->manifest(),
+			\array_fill_keys( (array) $state['php_fixes'], true )
+		);
 
 		$complete = $restorer->step( $state, $deadline );
 
 		foreach ( $restorer->refused() as $path ) {
 			$state['refused'][] = $path;
+		}
+
+		// Keyed by file, because a step that dies before its checkpoint is written restores and
+		// fixes the same entry again on the next one.
+		foreach ( $restorer->fixed() as $record ) {
+			$state['php_fixed'][ $record['file'] ] = \count( $record['changes'] );
 		}
 
 		if ( ! empty( $state['refused'] ) ) {
@@ -660,6 +727,28 @@ class Importer {
 				'Left %d file(s) in the package alone: they would have overwritten the migrator '
 					. 'itself, which is running this import.',
 				(int) $state['migrator_skipped']
+			);
+		}
+
+		if ( ! empty( $state['php_fixed'] ) ) {
+			$state['notes'][] = \sprintf(
+				'Fixed syntax PHP %1$s no longer accepts in %2$d file(s), %3$d change(s) in all. The originals are kept in %4$s.',
+				\implode( '.', \array_slice( \explode( '.', PHP_VERSION ), 0, 2 ) ),
+				\count( $state['php_fixed'] ),
+				\array_sum( $state['php_fixed'] ),
+				SyntaxFixer::backup_dir()
+			);
+		}
+
+		$unfixed = \array_diff( (array) $state['php_fixes'], \array_keys( (array) $state['php_fixed'] ) );
+
+		// Found fixable at precheck and not fixed as written -- a backup that could not be saved,
+		// or an entry that was never written. Each is code that will not run here.
+		if ( ! empty( $unfixed ) ) {
+			$state['notes'][] = \sprintf(
+				'%d file(s) that were to be fixed were left as the package had them, and will not run on this PHP: %s',
+				\count( $unfixed ),
+				\implode( ', ', \array_slice( $unfixed, 0, 10 ) ) . ( \count( $unfixed ) > 10 ? ', …' : '' )
 			);
 		}
 

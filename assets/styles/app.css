@@ -209,6 +209,14 @@
     .nfd-sm-gate-fix { @apply m-0 mt-0.5 text-[13.5px] leading-[1.5] text-warn-body }
     .nfd-sm-gate--pass .nfd-sm-gate-fix { @apply text-muted }
     .nfd-sm-gate--block .nfd-sm-gate-fix { @apply text-red-800 }
+    /* File paths and plugin slugs, often long and unbroken, so they wrap anywhere rather than
+       widening the row past a phone's screen. */
+    .nfd-sm-gate-list { @apply m-0 mt-1.5 pl-4 list-disc font-mono text-[12.5px] leading-[1.5] text-warn-body [overflow-wrap:anywhere] }
+    .nfd-sm-gate-list li { @apply m-0 }
+    .nfd-sm-gate--block .nfd-sm-gate-list { @apply text-red-800 }
+    .nfd-sm-note--stop .nfd-sm-gate-list,
+    .nfd-sm-note--stop .nfd-sm-gate-fix { @apply text-red-800 }
+    .nfd-sm-note--stop li + li { @apply mt-1.5 }
 
     /* The status marker on a check. A tick in a tinted disc when it passed, the handoff's
        badge when it did not. */

@@ -32,22 +32,40 @@ export const Review = () => {
 	const [ error, setError ] = useState( '' );
 	const [ busy, setBusy ] = useState( false );
 	const [ understood, setUnderstood ] = useState( false );
+	const [ fixPhp, setFixPhp ] = useState( false );
+	const [ checking, setChecking ] = useState( false );
 
+	// Asked again when the fix is switched, because the answer changes: a package whose only
+	// blockers are fixable becomes importable, and the list says which files will be changed.
 	useEffect( () => {
-		api.import.preview( dir ).then( ( response ) => {
+		let current = true;
+
+		setChecking( true );
+
+		api.import.preview( dir, fixPhp ).then( ( response ) => {
+			if ( ! current ) {
+				return;
+			}
+
+			setChecking( false );
+
 			if ( response.failed ) {
 				setError( response.error );
 			} else {
 				setPreview( response );
 			}
 		} );
-	}, [ dir ] );
+
+		return () => {
+			current = false;
+		};
+	}, [ dir, fixPhp ] );
 
 	const begin = async () => {
 		setBusy( true );
 		setError( '' );
 
-		const started = await api.import.start( dir );
+		const started = await api.import.start( dir, undefined, fixPhp );
 
 		if ( started.failed ) {
 			setBusy( false );
@@ -119,6 +137,21 @@ export const Review = () => {
 	const warnings = preview.report?.warnings || [];
 	const users = preview.users || {};
 	const source = preview.package?.source || {};
+	const code = [ ...blocking, ...warnings ].find(
+		( c ) => c.id === 'php_code'
+	);
+	const fixable = code?.context?.fixable || 0;
+
+	// The files behind a check, when it names them.
+	const missing = ( c ) =>
+		Array.isArray( c.context?.missing ) &&
+		c.context.missing.length > 0 && (
+			<ul className="nfd-sm-gate-list">
+				{ c.context.missing.map( ( item, index ) => (
+					<li key={ index }>{ String( item ) }</li>
+				) ) }
+			</ul>
+		);
 
 	return (
 		<Layout
@@ -166,7 +199,15 @@ export const Review = () => {
 					</p>
 					<ul>
 						{ blocking.map( ( c ) => (
-							<li key={ c.id }>{ c.label }</li>
+							<li key={ c.id }>
+								{ c.label }
+								{ missing( c ) }
+								{ c.context?.fix && (
+									<p className="nfd-sm-gate-fix">
+										{ c.context.fix }
+									</p>
+								) }
+							</li>
 						) ) }
 					</ul>
 				</div>
@@ -174,9 +215,47 @@ export const Review = () => {
 
 			{ warnings.map( ( c ) => (
 				<div key={ c.id } className="nfd-sm-note nfd-sm-note--warn">
-					{ c.label }
+					<p>{ c.label }</p>
+					{ missing( c ) }
 				</div>
 			) ) }
+
+			{ fixable > 0 && (
+				<div className="nfd-sm-card">
+					<p className="nfd-sm-eyebrow">
+						{ __(
+							'Code this server cannot run',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<label className="nfd-sm-check" htmlFor="nfd-sm-fix-php">
+						<input
+							id="nfd-sm-fix-php"
+							type="checkbox"
+							checked={ fixPhp }
+							disabled={ checking || busy }
+							onChange={ ( e ) => setFixPhp( e.target.checked ) }
+						/>
+						<span>
+							{ sprintf(
+								/* translators: 1: number of files, 2: PHP version. */
+								__(
+									'Fix %1$d file(s) as they are imported so they run on PHP %2$s',
+									'nfd-site-migrator'
+								),
+								fixable,
+								code.context?.php || ''
+							) }
+						</span>
+					</label>
+					<p className="nfd-sm-hint">
+						{ __(
+							'Only rewrites with an exact equivalent: $str{0} becomes $str[0], (real) becomes (float), and a nested ternary gets the parentheses PHP 7 applied. Each fixed file is checked again before it is written, and its original is kept.',
+							'nfd-site-migrator'
+						) }
+					</p>
+				</div>
+			) }
 
 			<div className="nfd-sm-card">
 				<p className="nfd-sm-eyebrow">
@@ -394,7 +473,7 @@ export const Review = () => {
 							type="button"
 							className="nfd-sm-btn nfd-sm-btn--danger"
 							id="nfd-sm-begin-import"
-							disabled={ ! understood || busy }
+							disabled={ ! understood || busy || checking }
 							onClick={ begin }
 						>
 							{ busy
