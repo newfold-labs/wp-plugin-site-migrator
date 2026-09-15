@@ -722,6 +722,59 @@ class RegressionTest extends TestCase {
 		$this->assertSame( 'block', $collation['status'] );
 		$this->assertSame( array( 'latin2_general_ci' ), $collation['context']['missing'] );
 	}
+
+	/**
+	 * A site on current MariaDB refused by a destination on the very same server.
+	 *
+	 * MariaDB 11.4.5 lists its UCA 14.0 collations in `SHOW COLLATION` as `uca1400_ai_ci`, with no
+	 * character set, and 11.5 made `utf8mb4_uca1400_ai_ci` the server default. A fresh WordPress on
+	 * MariaDB 12.3.3 had 65 tables in the two UCA 14.0 collations, and a second install on the same
+	 * 12.3.3 refused its package with "The destination does not support this site's text encoding".
+	 * The answers below are what that server gave.
+	 */
+	public function test_mariadb_uca1400_collations_are_listed_by_their_full_names() {
+		\Fixture::$columns = array(
+			'SHOW COLLATION'             => array( 'latin1_swedish_ci', 'utf8mb4_general_ci', 'utf8mb4_unicode_520_ci', 'uca1400_ai_ci' ),
+			'SELECT FULL_COLLATION_NAME' => array( 'utf8mb3_uca1400_ai_ci', 'utf8mb4_uca1400_ai_ci', 'ucs2_uca1400_ai_ci' ),
+		);
+
+		$facts = ( new \ReflectionMethod( SiteProfile::class, 'database_facts' ) );
+		$facts->setAccessible( true );
+		$facts = $facts->invoke( null );
+
+		$this->assertContains( 'utf8mb4_uca1400_ai_ci', $facts['collations'] );
+		$this->assertContains( 'utf8mb3_uca1400_ai_ci', $facts['collations'] );
+		$this->assertNotContains( 'ucs2_uca1400_ai_ci', $facts['collations'], 'still only the families WordPress uses' );
+
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'utf8mb4_unicode_520_ci', 'utf8mb3_uca1400_ai_ci', 'utf8mb4_uca1400_ai_ci', 'latin1_swedish_ci' ),
+				),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array( 'collations' => $facts['collations'] ),
+			)
+		);
+
+		$this->assertSame( 'pass', ( new Compatibility( $source, $destination ) )->check()->get( 'collation' )['status'] );
+
+		// MySQL has no FULL_COLLATION_NAME column, so the second query fails and answers nothing;
+		// the list is then exactly what it always was.
+		\Fixture::$columns = array( 'SHOW COLLATION' => array( 'utf8mb4_0900_ai_ci', 'utf8mb4_general_ci' ) );
+
+		$this->assertSame( array( 'utf8mb4_0900_ai_ci', 'utf8mb4_general_ci' ), $facts = ( function () {
+			$method = new \ReflectionMethod( SiteProfile::class, 'database_facts' );
+			$method->setAccessible( true );
+
+			return $method->invoke( null )['collations'];
+		} )() );
+	}
 	/**
 	 * Reduce findings to the symbols they name.
 	 *

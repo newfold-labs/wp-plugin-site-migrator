@@ -86,6 +86,13 @@ class Fixture {
 	public static $tables = array();
 
 	/**
+	 * What other column queries answer, keyed by how the query starts.
+	 *
+	 * @var array
+	 */
+	public static $columns = array();
+
+	/**
 	 * Where `wp_get_upload_dir()` points.
 	 *
 	 * @var string
@@ -176,6 +183,7 @@ class Fixture {
 		self::$options    = array();
 		self::$transients = array();
 		self::$tables     = array();
+		self::$columns    = array();
 		self::$site_url   = 'http://source.test';
 		self::$current_user_id = 1;
 		self::$filters    = array();
@@ -469,7 +477,17 @@ class WPDB_Stub {
 			return \Fixture::$tables;
 		}
 
+		foreach ( \Fixture::$columns as $start => $rows ) {
+			if ( 0 === \stripos( \ltrim( (string) $query ), $start ) ) {
+				return $rows;
+			}
+		}
+
 		return array();
+	}
+
+	public function suppress_errors( $suppress = true ) {
+		return false;
 	}
 
 	public function get_var( $query ) {
