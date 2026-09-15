@@ -8,6 +8,7 @@
 namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Report;
 
 /**
@@ -238,7 +239,7 @@ class PluginPresence {
 	 * @return array
 	 */
 	protected function carried() {
-		if ( null === $this->manifest || ! \class_exists( '\\ZipArchive' ) ) {
+		if ( null === $this->manifest || ! ZipReader::available() ) {
 			return array();
 		}
 
@@ -257,17 +258,16 @@ class PluginPresence {
 				continue;
 			}
 
-			$zip = new \ZipArchive();
-
-			if ( true !== $zip->open( $path ) ) {
+			try {
+				$zip = ZipReader::open( $path );
+			} catch ( \RuntimeException $e ) {
 				continue;
 			}
 
-			// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- ZipArchive's own property.
-			$entries = (int) $zip->numFiles;
+			$entries = $zip->count();
 
 			for ( $i = 0; $i < $entries; $i++ ) {
-				$entry = $zip->getNameIndex( $i );
+				$entry = $zip->name( $i );
 
 				if ( false === $entry || ! \preg_match( '#(?:^|/)plugins/([^/]+)#', $entry, $match ) ) {
 					continue;

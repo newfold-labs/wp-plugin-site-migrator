@@ -8,6 +8,7 @@
 namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
 
 /**
  * Restores the file half of a package, one bounded step at a time.
@@ -130,21 +131,17 @@ class FileRestorer {
 			isset( $part['prefix'] ) ? $part['prefix'] : ''
 		);
 
-		$zip = new \ZipArchive();
+		// Throws on an archive it cannot open, with the same message this used to build itself.
+		$zip = ZipReader::open( $path );
 
-		if ( true !== $zip->open( $path ) ) {
-			throw new \RuntimeException(
-				'Unable to open archive: ' . $path
-			);
-		}
-
-		$total = $zip->numFiles; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+		$total = $zip->count();
 
 		while ( $state['entry_index'] < $total ) {
-			$name = $zip->getNameIndex( (int) $state['entry_index'] );
+			$index = (int) $state['entry_index'];
+			$name  = $zip->name( $index );
 
 			if ( false !== $name ) {
-				$this->write_entry( $zip, $name, $target, $state );
+				$this->write_entry( $zip, $index, $name, $target, $state );
 			}
 
 			++$state['entry_index'];
@@ -167,14 +164,15 @@ class FileRestorer {
 	/**
 	 * Write one archive entry to disk.
 	 *
-	 * @param \ZipArchive $zip    Open archive.
-	 * @param string      $name   Entry name.
-	 * @param array       $target Root and prefix to strip.
-	 * @param array       $state  Import state, modified in place.
+	 * @param ZipReader $zip    Open archive.
+	 * @param int       $index  Entry index.
+	 * @param string    $name   Entry name.
+	 * @param array     $target Root and prefix to strip.
+	 * @param array     $state  Import state, modified in place.
 	 *
 	 * @return void
 	 */
-	protected function write_entry( \ZipArchive $zip, $name, array $target, array &$state ) {
+	protected function write_entry( ZipReader $zip, $index, $name, array $target, array &$state ) {
 		$path = PathMap::safe_path( $target['root'], $name, $target['strip'] );
 
 		if ( '' === $path ) {
@@ -205,38 +203,28 @@ class FileRestorer {
 			\unlink( $path );
 		}
 
-		$stream = $zip->getStream( $name );
-
-		if ( ! \is_resource( $stream ) ) {
-			$this->refused[] = $name;
-
-			return;
-		}
-
 		$handle = \fopen( $path, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		if ( false === $handle ) {
-			\fclose( $stream );
 			$this->refused[] = $name;
 
 			return;
 		}
 
-		$bytes = 0;
+		$bytes = $zip->copy( $index, $handle );
 
-		while ( ! \feof( $stream ) ) {
-			$chunk = \fread( $stream, self::CHUNK ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		\fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
-			if ( false === $chunk || '' === $chunk ) {
-				break;
-			}
+		if ( false === $bytes ) {
+			// An entry that fails its size or checksum part way leaves a truncated file, and a
+			// truncated PHP file is a fatal on the next request rather than a missing feature.
+			// Absent is the better failure. The part was verified against its SHA-256 before the
+			// import began, so this is damage after that, not a package that was always wrong.
+			\unlink( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			$this->refused[] = $name;
 
-			\fwrite( $handle, $chunk ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-			$bytes += \strlen( $chunk );
+			return;
 		}
-
-		\fclose( $handle );
-		\fclose( $stream );
 
 		++$state['files_done'];
 		$state['bytes_done'] += $bytes;

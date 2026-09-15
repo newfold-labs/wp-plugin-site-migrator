@@ -8,6 +8,7 @@
 namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Report;
 
 /**
@@ -198,7 +199,7 @@ class CodeCompatibility {
 	 * @return array|null Findings, or null when the package's code could not be read.
 	 */
 	public function scan( $version ) {
-		if ( ! \class_exists( '\\ZipArchive' ) ) {
+		if ( ! ZipReader::available() ) {
 			return null;
 		}
 
@@ -219,29 +220,28 @@ class CodeCompatibility {
 				continue;
 			}
 
-			$zip = new \ZipArchive();
-
-			if ( true !== $zip->open( $path ) ) {
+			try {
+				$zip = ZipReader::open( $path );
+			} catch ( \RuntimeException $e ) {
 				continue;
 			}
 
 			++$opened;
 
-			// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- ZipArchive's own property.
-			$entries = (int) $zip->numFiles;
+			$entries = $zip->count();
 
 			for ( $i = 0; $i < $entries; $i++ ) {
-				$entry = $zip->statIndex( $i );
+				$name = $zip->name( $i );
 
-				if ( false === $entry || ! $this->is_php( $entry['name'] ) ) {
+				if ( false === $name || ! $this->is_php( $name ) ) {
 					continue;
 				}
 
-				if ( $entry['size'] > $budget ) {
+				if ( $zip->size( $i ) > $budget ) {
 					break 2;
 				}
 
-				$source = $zip->getFromIndex( $i );
+				$source = $zip->contents( $i );
 
 				if ( false === $source ) {
 					continue;
@@ -250,7 +250,7 @@ class CodeCompatibility {
 				$budget -= \strlen( $source );
 
 				foreach ( $this->inspect( $source, $version ) as $finding ) {
-					$finding['file'] = $entry['name'];
+					$finding['file'] = $name;
 					$findings[]      = $finding;
 				}
 			}

@@ -27,16 +27,19 @@ require __DIR__ . '/constants.php';
 
 // Check plugin requirements. These have to agree with the header above: WordPress enforces
 // `Requires PHP` and `Requires at least` itself on activation, and this adds the extension check
-// it has no equivalent for. `zip` is on the list because every part of a package is a zip archive
-// -- it was missing, which meant a host without it activated the plugin cleanly and then failed
-// partway through the first export.
+// it has no equivalent for. `zip` is deliberately not on the list. It was, to stop a host without
+// it activating cleanly and failing partway through the first export -- but this check
+// *deactivates* the plugin on every visit to the Plugins screen, which also shut out a destination
+// that never needed zip: `ZipReader` unpacks a package with zlib, and `ZipWriter` builds one with
+// it. A host with neither is still refused by `Checker::check_zip()` before anything is written,
+// which is the failure the list was there to prevent.
 global $pagenow;
 if ( 'plugins.php' === $pagenow ) {
 	$plugin_check = new WP_Forge_Plugin_Check( __FILE__ );
 
 	$plugin_check->min_php_version    = '7.4';
 	$plugin_check->min_wp_version     = '5.8';
-	$plugin_check->req_php_extensions = array( 'json', 'zlib', 'zip' );
+	$plugin_check->req_php_extensions = array( 'json', 'zlib' );
 
 	$plugin_check->check_plugin_requirements();
 }

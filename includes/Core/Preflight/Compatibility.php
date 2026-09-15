@@ -424,11 +424,21 @@ class Compatibility {
 		}
 
 		if ( ! \in_array( 'zip', $dst, true ) ) {
-			$report->block(
-				'zip',
-				'The destination does not have PHP\'s zip extension, which is needed to unpack the site.',
-				array( 'fix' => 'Ask the host to enable the zip extension.' )
-			);
+			// `true ===`, not truthiness: a profile from a plugin that predates the zlib reader
+			// has no `unzip` at all, and that destination genuinely cannot unpack without zip.
+			if ( true === $this->destination->get( 'php.unzip', null ) ) {
+				$report->warn(
+					'zip',
+					'The destination does not have PHP\'s zip extension, so it will unpack the site with zlib instead.',
+					array( 'detail' => 'Every file is still checked against the size and checksum the package recorded as it is written. The destination cannot build a package of its own until the extension is enabled.' )
+				);
+			} else {
+				$report->block(
+					'zip',
+					'The destination does not have PHP\'s zip extension, which is needed to unpack the site.',
+					array( 'fix' => 'Ask the host to enable the zip extension, or update this plugin on the destination -- newer versions unpack without it.' )
+				);
+			}
 		}
 
 		$missing = \array_values( \array_diff( $src, $dst ) );

@@ -7,6 +7,8 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Preflight;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
+
 /**
  * Gathers, serialises and parses the compatibility profile.
  *
@@ -84,6 +86,10 @@ class SiteProfile {
 					'disabled'      => \array_filter( \array_map( 'trim', \explode( ',', (string) \ini_get( 'disable_functions' ) ) ) ),
 					'open_basedir'  => (string) \ini_get( 'open_basedir' ),
 					'zip'           => \class_exists( 'ZipArchive' ),
+					// Reading a package is a different question from building one: without the
+					// extension a destination still unpacks with zlib. Additive, so a profile
+					// from an older plugin simply lacks it and is judged the way it always was.
+					'unzip'         => ZipReader::available(),
 				),
 				'database'       => self::database_facts(),
 				'host'           => array(

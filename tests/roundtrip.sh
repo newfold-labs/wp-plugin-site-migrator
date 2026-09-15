@@ -154,6 +154,27 @@ provision() {
 provision "$SRC" "$SRC_DB" "$SRC_URL" "$SRC_PREFIX" || { echo "Could not provision the source."; exit 1; }
 provision "$DST" "$DST_DB" "$DST_URL" "$DST_PREFIX" || { echo "Could not provision the destination."; exit 1; }
 
+# NFD_UNZIP=zlib makes the destination unpack without ZipArchive. The PHP builds on a developer
+# machine compile the zip extension in, so it cannot be removed; the filter takes the same path a
+# host without it takes. Asserted rather than assumed, or a run that silently used ZipArchive
+# would pass for the wrong reason.
+if [ "${NFD_UNZIP:-}" = "zlib" ]; then
+	mkdir -p "$DST/wp-content/mu-plugins"
+	printf '%s\n' '<?php' "add_filter( 'nfd_sm_native_unzip', '__return_true' );" > "$DST/wp-content/mu-plugins/nfd-sm-native-unzip.php"
+	assert "the destination unpacks with zlib" "zlib" \
+		"$(dst eval 'echo \NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader::backend();' 2>/dev/null)"
+fi
+
+# NFD_ZIP=zlib is the other half: the source builds its package with ZipWriter. Run it without
+# NFD_UNZIP and the destination reads that package with ZipArchive, which is the pairing most real
+# migrations will be; run it with both and neither side uses the extension at all.
+if [ "${NFD_ZIP:-}" = "zlib" ]; then
+	mkdir -p "$SRC/wp-content/mu-plugins"
+	printf '%s\n' '<?php' "add_filter( 'nfd_sm_native_zip', '__return_true' );" > "$SRC/wp-content/mu-plugins/nfd-sm-native-zip.php"
+	assert "the source packages with zlib" "zlib" \
+		"$(src eval 'echo \NewfoldLabs\WP\SiteMigrator\Core\Package\ZipWriter::backend();' 2>/dev/null)"
+fi
+
 # --------------------------------------------------------------------------------------------
 say "Seeding the source with things that break naive migrations"
 

@@ -225,6 +225,14 @@ run is not a check that passed. There are three checkpoints: at pairing, before 
 again on the destination immediately before the first write, against live facts rather than
 whatever the handshake saw days earlier.
 
+**A destination's collations come from two queries, not `SHOW COLLATION` alone.** MariaDB 11.4.5
+lists its UCA 14.0 collations there once, as `uca1400_ai_ci` with no character set, while tables
+still report `utf8mb4_uca1400_ai_ci` — the server default from 11.5, so every WordPress installed on
+current MariaDB uses it. Profiled from `SHOW COLLATION` alone, a MariaDB 12.3.3 destination refused
+a package from an identical 12.3.3 source over "text encoding". `SiteProfile::full_collation_names()`
+adds `FULL_COLLATION_NAME` from `COLLATION_CHARACTER_SET_APPLICABILITY`; MySQL has no such column,
+so there the query fails with its error suppressed and the list is what it always was.
+
 `Pairing::fetch_profile()` reaches the destination through **`?rest_route=` first**, `/wp-json/`
 only as a fallback: a site on plain permalinks serves only the query form and answers the path
 form with a redirect to its home page, which arrives as HTML and reads as "the plugin is not
@@ -388,6 +396,37 @@ export already excludes itself, so ordinarily nothing matches — this is the de
 to bet the running importer on a package it did not build. String comparison against a list built
 once, because it runs per entry. `UserMerger` is the one table that merges rather than replaces
 (plan §9.4). `Swap` also handles rollback and the backup tables.
+
+**A destination does not need PHP's zip extension.** Hosts ship without it, and every file in a
+package is inside a zip part, so an import used to be impossible there — and the bootstrap's
+requirement check deactivated the plugin before anyone got that far. `Core/Package/ZipReader` is
+the one way anything on the import side opens a part: `ZipArchive` when it exists, otherwise its
+own reader over the central directory, streaming each entry through zlib's `inflate_add()`. It
+reads only what this plugin writes (stored or deflated, zip64 included, never encrypted or split),
+checks every offset against the file before believing it, and refuses an entry whose size or
+CRC-32 does not match — more than `getStream()` checks. Not PclZip, which WordPress ships: it
+holds a whole entry in memory, compressed and inflated at once. `FileRestorer` deletes a file whose
+entry fails part way, because a truncated PHP file is a fatal and an absent one is not. Filter
+`nfd_sm_native_unzip` forces the zlib path on a server that has both, which is how
+`NFD_UNZIP=zlib tests/roundtrip.sh` runs it here: Homebrew's PHP and Local's both compile the
+extension in, so it cannot be switched off natively. The official `php:*-cli` Docker images ship
+without it, which is where the genuine case has been run.
+
+**And neither does a source.** `Core/Package/ZipWriter` writes a volume front to back with
+`deflate_add()`: local header, data, then each entry's size and CRC patched back into its header
+(two seeks, no data descriptor), and the central directory on `close()`. It keeps
+`FileCollector`'s rules — created with truncation, filled once, closed once — so a step that dies
+mid-volume leaves one the next step writes again, and the checkpoint still only moves at close.
+Two things differ and are handled. The work happens as files are *added* rather than in `close()`,
+so `$spent` carries adding time into the volume sizing; without it the writer looks infinitely fast
+and volumes jump to the cap. And a writer bug is the one kind nothing downstream catches — the
+SHA-256 is taken from whatever was written — so `read_back()` inflates every entry of every zlib
+volume through `ZipReader` and checks its CRC before the volume is recorded. It is deliberately
+32-bit and refuses past 4GB or 65,535 entries rather than writing zip64; the defaults cannot reach
+either. `ZipArchive` stays the default whenever it exists, `nfd_sm_native_zip` forces the writer
+(`NFD_ZIP=zlib tests/roundtrip.sh`), and `Checker::check_zip()` warns rather than blocks when the
+writer is what will run. Tests read its output with `ZipArchive::CHECKCONS`, the zlib reader and
+Info-ZIP's `unzip -t`, so it is never checked only against its own idea of the format.
 
 **A backup lasts until its import is kept, or until the next migration starts — not 30 days**
 (plan D8, revised). The cap used to make a new import *refuse* while a previous backup was inside
@@ -729,8 +768,9 @@ literals that no symbol graph follows.
 - Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in three places that must agree:
   the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, and the hard-coded
   `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`. The last one is the one that gets
-  forgotten — it sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must list
-  `zip`, because every part of a package is a zip archive.
+  forgotten — it sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must **not**
+  list `zip`: that check deactivates the plugin on every visit to the Plugins screen, and neither
+  side needs the extension any more (see *A destination does not need PHP's zip extension*).
 - **The floor rising does not mean the style changed.** `array()` throughout, no typed properties,
   no arrow functions — modern syntax is now permitted, not mandated, and a mechanical rewrite of
   the codebase buys nothing. New code may use it where it earns its place.
@@ -897,6 +937,14 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - No in-place fallback for a host without `RENAME TABLE` (plan §9.3). Preflight probes for it and
   reports it, so such a host is refused rather than half-migrated.
 - The lossy `utf8mb4` → `utf8` branch is coded and never exercised.
+- **The zlib reader and writer have run on a PHP without `ZipArchive` only in Docker** —
+  `php:8.3-cli` plus `mysqli`, MariaDB 12.3.3 beside it, driven through WP-CLI. The reader imported
+  a real 204MB production package: all 1,683 files byte for byte, the site rendering, rollback
+  clean. The writer then exported that site (1,691 files, 9 volumes) and a second zip-less install
+  imported it: every volume passed `unzip -t`, `ZipArchive::CHECKCONS` and Python's `zipfile`, all
+  1,691 files matched the source, and the site rendered with no fatals. That run is what found the
+  `uca1400` collation refusal. Not yet through the browser on a real host without the extension,
+  and never with `mbstring` or other extensions also missing.
 - The `LOOSE_THRESHOLD` (64MB) and `VOLUME_LIMIT` (128MB) have never met real shared hosting. Plan
   D3 shipped the first as proposed and cut the second to an eighth of it, and its validation clause
   is explicitly still open.
