@@ -199,6 +199,10 @@
         @apply items-start bg-warn-bg border-b-warn-edge border-l-[3px] border-l-warn px-5 py-[15px]
     }
     .nfd-sm-gate--block { @apply bg-red-50 border-b-red-200 border-l-red-600 }
+    /* A blocker and a warning are different kinds of news. Flush against each other the red row
+       ran straight into the yellow one with a hairline between them and read as one block, so
+       where the list changes from one to the other the box's own white shows through. */
+    .nfd-sm-gate--block + .nfd-sm-gate--warn { @apply mt-2.5 border-t border-t-warn-edge }
     .nfd-sm-gate-label { @apply m-0 text-[14px] text-row-ink }
     .nfd-sm-gate--warn .nfd-sm-gate-label { @apply text-[14px] font-semibold text-warn-title }
     .nfd-sm-gate--block .nfd-sm-gate-label { @apply text-[14px] font-semibold text-red-900 }
