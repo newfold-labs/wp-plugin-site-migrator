@@ -729,6 +729,14 @@ a directory's size is a walk of the whole site, which is the expensive half of a
 making somebody wait through most of one to decide what to leave out of it is a strange trade.
 Table sizes *are* shown, because `SHOW TABLE STATUS` is a single query.
 
+**Out of the way is not the same as out of reach**, and for a while it was: the compatibility
+screen was the only door to `/contents`, and it needs a paired destination — so *Export without
+checking* on the pairing screen went straight to the run, and a source that never paired could not
+choose its plugins and themes at all. That link now lands on the picker, whose primary button
+builds the package, and carries `state.back` so *Back* returns to `/pair` rather than to a
+comparison that was never made (`result` is `{ skipped: true }`, which is truthy enough to stop
+`Compatibility` redirecting and leaves it drawing an empty report).
+
 **The picker draws names and stores slugs.** A directory name is the identity — it is what a
 `Selection` refuses, what the manifest records and what `--set` takes — but `advanced-hiive-config`
 is not what anybody calls that plugin, so `/export/contents` sends a `labels` map beside each

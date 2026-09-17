@@ -1,6 +1,6 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { Fragment, useEffect, useState } from '@wordpress/element';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
 import { api } from '../../utils/api';
@@ -200,6 +200,10 @@ const label = ( name ) => ( PARTS[ name ] ? PARTS[ name ].label : name );
  */
 export const Contents = () => {
 	const navigate = useNavigate();
+
+	// Whoever sent us here, so Back does not land on the compatibility screen of somebody who
+	// skipped pairing -- which has no comparison to draw and bounces to /pair anyway.
+	const back = useLocation().state?.back || '/compatibility';
 	const [ data, setData ] = useState( null );
 	const [ selection, setSelection ] = useState( {
 		parts: {},
@@ -649,7 +653,7 @@ export const Contents = () => {
 						<button
 							type="button"
 							className="nfd-sm-link"
-							onClick={ () => navigate( '/compatibility' ) }
+							onClick={ () => navigate( back ) }
 						>
 							{ __( 'Back', 'nfd-site-migrator' ) }
 						</button>

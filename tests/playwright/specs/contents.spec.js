@@ -67,6 +67,41 @@ test.describe( 'Contents', () => {
 		expect( errors, 'the page threw while rendering' ).toEqual( [] );
 	} );
 
+	test( 'skipping pairing still reaches the picker', async ( { page } ) => {
+		// The picker hangs off the compatibility screen, which needs a paired destination — so
+		// *Export without checking* went straight to the run and an unpaired source could never
+		// choose its plugins and themes at all. Reported from a real site.
+		await auth.navigateToAdminPage( page, `${ utils.PLUGIN_PAGE }#/pair` );
+		await wordpress.waitForApp( page );
+
+		// An unpaired source is the whole point, and an earlier spec may have left a destination
+		// stored — in which case this screen offers to re-pair rather than to skip.
+		await page.evaluate( async () => {
+			const { restRouteUrl, nonce } = window.nfdSiteMigrator;
+
+			await fetch( restRouteUrl + 'preflight/destination', {
+				method: 'DELETE',
+				credentials: 'same-origin',
+				headers: { 'X-WP-Nonce': nonce },
+			} );
+		} );
+
+		await page.reload();
+		await wordpress.waitForApp( page );
+
+		await page
+			.getByRole( 'button', { name: /Export without checking/ } )
+			.click();
+
+		await expect( page.locator( '#nfd-sm-part-plugins' ) ).toBeVisible();
+		await expect( page.locator( '#nfd-sm-part-themes' ) ).toBeVisible();
+		expect( page.url() ).toContain( '#/contents' );
+
+		// And Back belongs to whoever sent us, or it lands on a comparison that was never made.
+		await page.getByRole( 'button', { name: 'Back' } ).click();
+		expect( page.url() ).toContain( '#/pair' );
+	} );
+
 	test( 'a refusal survives a reload', async ( { page } ) => {
 		await auth.navigateToAdminPage( page, CONTENTS );
 		await wordpress.waitForApp( page );

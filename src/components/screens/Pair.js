@@ -279,7 +279,14 @@ export const Pair = ( { onResult } ) => {
 								className="nfd-sm-link"
 								onClick={ () => {
 									onResult( { skipped: true } );
-									navigate( '/export' );
+
+									// To the picker, not straight to the run.
+									// Choosing what goes in is part of packaging,
+									// and it hangs off the compatibility screen —
+									// which nobody who skipped pairing ever sees.
+									navigate( '/contents', {
+										state: { back: '/pair' },
+									} );
 								} }
 							>
 								{ __(
