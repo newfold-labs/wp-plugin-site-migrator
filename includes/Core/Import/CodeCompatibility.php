@@ -195,7 +195,7 @@ class CodeCompatibility {
 			return;
 		}
 
-		list( $refused, $unparsed ) = $this->split( $findings, $version );
+		list( $refused, $carried ) = $this->split( $findings, $version );
 
 		// A file is fixable when `SyntaxFixer` removed every refusal in it and the result checked
 		// clean. With fixes chosen, those files stop being refusals and become a notice; whatever
@@ -229,9 +229,12 @@ class CodeCompatibility {
 			$files   = \count( \array_unique( \array_column( $refused, 'file' ) ) );
 			$context = array(
 				'missing' => $this->describe( $refused, $version ),
-				'detail'  => 'These are removals, not deprecations: the site would fatal on every request after the switch, '
-					. 'including the screen that offers to undo it. Fix them on the source and export again, or move to a '
-					. 'server running the PHP version the site came from.',
+				'detail'  => \sprintf(
+					'Each of these went from PHP after the version the site came from, so this is code that runs there and '
+					. 'cannot here: a file that will not parse fails the moment WordPress loads it, and a call fails when it is '
+					. 'reached. Fix them on the source and export again, or import onto a server still running PHP %s.',
+					$this->short( $this->source_version() )
+				),
 				'fix'     => 'Each one is a small edit in the file named.',
 				'fixable' => \count( $fixable ),
 				'php'     => $php,
@@ -266,17 +269,31 @@ class CodeCompatibility {
 			return;
 		}
 
-		if ( ! empty( $unparsed ) ) {
+		if ( ! empty( $carried ) ) {
+			$calls  = \count( $carried ) - \count( \array_keys( \array_column( $carried, 'kind' ), 'parse', true ) );
+			$source = $this->short( $this->source_version() );
+
+			if ( 0 === $calls ) {
+				$label = \sprintf( 'Some of the package\'s PHP does not parse on PHP %s.', $php );
+			} elseif ( \count( $carried ) === $calls ) {
+				$label = \sprintf( '%d call(s) in the package are to functions PHP %s no longer has.', $calls, $php );
+			} else {
+				$label = \sprintf( 'Some of the package\'s code would not run on PHP %s.', $php );
+			}
+
 			$report->warn(
 				'php_code',
-				\sprintf( 'Some of the package\'s PHP does not parse on PHP %s.', $this->short( $version ) ),
+				$label,
 				array(
-					'missing' => $this->describe( $unparsed, $version ),
+					'missing' => $this->describe( $carried, $version ),
 					'detail'  => \sprintf(
-						'The site came from PHP %s, so this is not refused: plugins often ship code for a newer PHP and load it only there. '
-						. 'If WordPress does load one of these files, the page that loads it will fail.',
-						$this->short( $this->source_version() )
+						'Not refused, because the site was already running PHP %s with this same code: whatever this names is not '
+						. 'reached there, and the migration changes nothing about it. Plugins carry compatibility shims and vendored '
+						. 'libraries for other PHP versions as a matter of course. If WordPress does reach one, that request fails -- '
+						. 'there as much as here.',
+						$source
 					),
+					'php'     => $php,
 				)
 			);
 
@@ -328,38 +345,63 @@ class CodeCompatibility {
 	}
 
 	/**
-	 * Findings that refuse the import, and parse failures that only warn.
+	 * Findings that refuse the import, and findings the source was already living with.
 	 *
-	 * A file this PHP cannot parse is this migration's doing only when this PHP is newer than the
-	 * one the site ran on: the syntax it relies on was removed on the way up. On the same version
-	 * or an older one, the source could not have been loading it either -- plugins ship code for a
-	 * newer PHP than they require and load it only there. WooCommerce 11.0 declares PHP 7.4 and
-	 * carries 46 files of PHP 8 syntax; blocking on those would refuse a site that runs perfectly
-	 * well.
+	 * **The question is never "can this PHP run it", it is "does this migration break it".** A
+	 * package carries whole plugins, and a plugin routinely ships code for PHP versions it is not
+	 * running on: a compatibility shim, a vendored library's legacy driver, a wrapper around a
+	 * function that went years ago. None of that is reached, which is why the site it came from
+	 * works. So a finding only refuses the import when the source's own PHP still had what this
+	 * one has taken away -- the range between the two versions, and nothing outside it.
+	 *
+	 * For a **removed function** that is exact: `removed_in` says which version took it, and a
+	 * source already past that version was running the same file without it. WP Defender vendors
+	 * `thecodingmachine/safe`, whose generated wrappers call `create_function()`, `mysql_query()`
+	 * and `zip_entry_read()` inside function bodies nobody calls; a real 8.2 site refused a package
+	 * from another 8.2 site over them, on a migration where PHP did not change at all.
+	 *
+	 * For a **file this PHP cannot parse** there is no such number, so the comparison is the two
+	 * PHP versions: newer here than there and the syntax was removed on the way up; the same or
+	 * older and the source could not have been loading it either. WooCommerce 11.0 declares PHP 7.4
+	 * and carries 46 files of PHP 8 syntax.
+	 *
+	 * A source that does not say which PHP it ran gets the strict reading, because then there is
+	 * nothing to compare against.
 	 *
 	 * @param array  $findings Findings from `scan()`.
 	 * @param string $version  PHP version they were judged against.
 	 *
-	 * @return array Refusals, then parse failures that only warn.
+	 * @return array Refusals, then what the source was already carrying, which only warns.
 	 */
 	protected function split( array $findings, $version ) {
-		$refused  = array();
-		$unparsed = array();
+		$source  = $this->short( $this->source_version() );
+		$newer   = $this->newer_than_source( $version );
+		$refused = array();
+		$carried = array();
 
 		foreach ( $findings as $finding ) {
 			if ( 'parse' === $finding['kind'] ) {
-				$unparsed[] = $finding;
-			} else {
-				$refused[] = $finding;
+				if ( $newer ) {
+					$refused[] = $finding;
+				} else {
+					$carried[] = $finding;
+				}
+
+				continue;
 			}
+
+			$gone = (string) $finding['removed_in'];
+
+			if ( '' !== $source && '' !== $gone && \version_compare( $gone, $source, '<=' ) ) {
+				$carried[] = $finding;
+
+				continue;
+			}
+
+			$refused[] = $finding;
 		}
 
-		if ( $this->newer_than_source( $version ) ) {
-			$refused  = \array_merge( $refused, $unparsed );
-			$unparsed = array();
-		}
-
-		return array( $refused, $unparsed );
+		return array( $refused, $carried );
 	}
 
 	/**

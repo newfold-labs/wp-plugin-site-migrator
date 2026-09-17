@@ -416,7 +416,16 @@ PHP 8.5 those files produced 813 parse failures and 126 removals, every one insi
 PHP_CodeSniffer whose fixtures are broken on purpose, and outside them nothing at all. **A file that
 does not parse blocks only when this PHP is newer than the source's** (`source.php_version`); on the
 same version or older it warns, because the source could not have been loading it either —
-WooCommerce 11.0 declares PHP 7.4 and ships 46 files of PHP 8 syntax. **Code that supports an old
+WooCommerce 11.0 declares PHP 7.4 and ships 46 files of PHP 8 syntax. **And a removed function only
+blocks when it went from PHP *above* the source's own version**, which is the same rule with a
+number attached: `removed_in` says which release took the function, and a source already past it was
+running that very file without it. Two real sites, both on PHP 8.2, were refused over
+`create_function()`, `mysql_query()` and `zip_entry_read()` inside WP Defender's vendored
+`thecodingmachine/safe`, whose generated wrappers call them in bodies nothing invokes — a migration
+where PHP did not change at all. The question a gate here has to answer is never "can this PHP run
+every line" but "does this migration break something that works", and a package carries whole
+plugins, compatibility shims and vendored legacy drivers included. A package that does not say which
+PHP it ran still gets the strict reading, because then there is nothing to compare against. **Code that supports an old
 PHP is not a removal**: a call to a function the same file names in `function_exists()` or
 `is_callable()` (MetaSlider's HTMLPurifier did this, and the check refused the Local test site
 over it), and a same-named method in a class that also declares `__construct()` (core's `rss.php`).

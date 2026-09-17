@@ -1318,6 +1318,40 @@ class RegressionTest extends TestCase {
 	}
 
 	/**
+	 * A function the source's own PHP had already removed is not this migration's problem.
+	 *
+	 * Reported from a real pair of sites, both on PHP 8.2: the destination refused a package over
+	 * `create_function()`, `mysql_query()` and `zip_entry_read()` inside WP Defender's vendored
+	 * copy of `thecodingmachine/safe`, whose generated wrappers call those functions in bodies
+	 * nothing invokes. PHP did not change at all in that migration, and the source was serving the
+	 * same files happily -- which is the proof the call is never reached. What must still block is
+	 * the real case: a function that was there on the source's PHP and is gone on this one.
+	 */
+	public function test_a_function_the_source_had_already_lost_does_not_block() {
+		$package = $this->code_package( "<?php\nfunction wrap( \$a, \$c ) { return create_function( \$a, \$c ); }\n" );
+
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '8.2.33' ) ) )->check( $report, '8.2.33' );
+
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'warn', $check['status'], 'PHP 8.2 to PHP 8.2 changes nothing about this call.' );
+		$this->assertStringContainsString( 'create_function()', $check['context']['missing'][0] );
+
+		// The same file from a site that still had the function: a real break, and refused.
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '7.4.33' ) ) )->check( $report, '8.2.33' );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+
+		// And a package that does not say which PHP it ran gets the strict reading.
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '' ) ) )->check( $report, '8.2.33' );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
 	 * A package without the plugins leaves a database that still expects them.
 	 *
 	 * Observed on a real destination: the header rendered five banners stacked instead of one,
