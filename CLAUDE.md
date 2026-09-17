@@ -138,6 +138,19 @@ four-place scheme made `WP_Admin::register_assets()` silently skip enqueueing on
 registers `Rest\Routes::register()` and `Cli\Commands::register()`, primes `Utils\Options::fetch()`,
 and persists options on `shutdown`. No activation hooks.
 
+**Nothing loads below the PHP the header promises, and the check is the file's first statement.**
+WordPress enforces `Requires PHP` when a plugin is activated or updated through the admin, and
+nowhere else — an *already active* plugin is loaded on whatever PHP the server runs today, so a host
+downgrade, a restored backup, or files replaced over FTP put this code in front of a PHP it was
+never written for. The first line that will not compile is then a fatal on every request, wp-admin
+included, which is a locked-out site that cannot even reach the plugins page to switch the thing
+off. `PHP_VERSION_ID < 70400` returns early and registers one admin notice naming both versions.
+Everything inside that block has to compile on a PHP the rest of the plugin does not support, so no
+syntax newer than the floor it is checking may appear in it, and `bin/verify-zip.sh` asserts the
+guard is in the zip. Checked on the real thing: all 81 shipped files pass `php -l` on PHP 7.2.34,
+and the bootstrap loaded there returns without a fatal, defines none of the plugin's classes and
+prints the notice.
+
 **Deactivation takes nothing with it, and deleting the plugin is what purges.** The deactivation
 hook pointed at `nfd_sm_purge_all()`, which recursively deletes the storage directory — so on a
 production site, switching the plugin off to see whether it was the cause destroyed a package that
@@ -871,10 +884,12 @@ literals that no symbol graph follows.
 
 ## Conventions
 
-- Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in three places that must agree:
-  the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, and the hard-coded
-  `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`. The last one is the one that gets
-  forgotten — it sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must **not**
+- Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in four places that must agree:
+  the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, the hard-coded
+  `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`, and the `PHP_VERSION_ID` guard above it.
+  `VersionTest` compares all four, because a guard that disagrees with the header refuses a PHP the
+  plugin supports or admits one it does not. The `WP_Forge_Plugin_Check` numbers are the ones that
+  get forgotten — they sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must **not**
   list `zip`: that check deactivates the plugin on every visit to the Plugins screen, and neither
   side needs the extension any more (see *A destination does not need PHP's zip extension*).
 - **The floor rising does not mean the style changed.** `array()` throughout, no typed properties,

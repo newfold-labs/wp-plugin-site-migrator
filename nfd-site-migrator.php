@@ -22,6 +22,41 @@
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  */
 
+// Nothing below this is loaded on a PHP older than the header promises, and the check is
+// deliberately the first statement in the file. WordPress enforces `Requires PHP` when a plugin is
+// activated or updated through the admin, and nowhere else: a plugin that is *already* active is
+// loaded on whatever PHP the server is running today, so a host downgrade, a restored backup, or
+// files replaced over FTP or a file manager all put this code in front of a PHP it was never
+// written for. The first line any of it cannot compile is then a fatal error on every request,
+// wp-admin included -- which is a locked-out site with no clue on the screen, and the plugin cannot
+// even be switched off from the plugins page to clear it. A refusal that names the version is
+// recoverable; a white screen is not.
+//
+// Keep this block compilable by every PHP a WordPress has ever run on. It is the one piece of the
+// plugin that has to parse on a version the rest of it does not support, so nothing here may use
+// syntax newer than the floor it is checking for.
+if ( PHP_VERSION_ID < 70400 ) {
+
+	/**
+	 * Say why the plugin did not load.
+	 *
+	 * Declared inside the guard because the file returns before anything else is defined, so this
+	 * is the only thing the site gets from the plugin and it cannot collide with the real one.
+	 *
+	 * @return void
+	 */
+	function nfd_sm_php_version_notice() {
+		echo '<div class="notice notice-error"><p><strong>Site Migrator</strong> '
+			. 'needs PHP 7.4 or newer and this server is running PHP '
+			. esc_html( PHP_VERSION ) . '. The plugin has not loaded; nothing else on the site is '
+			. 'affected. Ask your host to update PHP, or deactivate the plugin.</p></div>';
+	}
+
+	add_action( 'admin_notices', 'nfd_sm_php_version_notice' );
+
+	return;
+}
+
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/constants.php';
 
