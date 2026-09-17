@@ -1037,6 +1037,7 @@ abstract class DatabaseBase {
 
 			$sql = $this->replace_table_name( $statement, $matches[1], $staged );
 			$sql = $this->replace_table_collations( $sql );
+			$sql = $this->strip_foreign_keys( $sql, $matches[1], $state );
 
 			$this->import_query( $sql );
 
@@ -1366,6 +1367,54 @@ abstract class DatabaseBase {
 		}
 
 		return $input;
+	}
+
+	/**
+	 * Take the foreign keys out of a table on its way into staging
+	 *
+	 * Three separate things break otherwise, and a real migration hit all of them. **A constraint
+	 * name is unique across the whole database, not per table**, so staging a copy of a table the
+	 * destination already has fails on the name alone -- MySQL 1005, errno 121 -- and that is the
+	 * common case, because a destination that was migrated from this source before is carrying the
+	 * source's own constraint names. **`REFERENCES` names the live table**, which the staged copy
+	 * must not point at: `replace_table_name()` rewrites the identifier the statement is about and
+	 * deliberately nothing else, so the reference would bind to the live `wp_users`, and the swap
+	 * would then carry it onto `nfdold_wp_users` and leave the imported table pointing into the
+	 * backup. **And a parent the package does not carry** cannot be referenced at all (errno 150).
+	 *
+	 * So they do not travel. WordPress core defines no foreign keys, the plugins that do use them
+	 * as a convenience, and the `KEY` index beside each one is in the dump and does travel -- what
+	 * is lost is enforcement, not data and not lookup speed. It is counted and said plainly in the
+	 * import's notes rather than being dropped quietly.
+	 *
+	 * @param  string $sql   CREATE TABLE statement, already renamed for staging
+	 * @param  string $table Table name as the source wrote it
+	 * @param  array  $state Import state, modified in place
+	 * @return string
+	 */
+	protected function strip_foreign_keys( $sql, $table, array &$state ) {
+		$pattern = '/,\s*(?:CONSTRAINT\s+`[^`]+`\s+)?FOREIGN\s+KEY\s*\([^)]*\)\s*'
+			. 'REFERENCES\s+`[^`]+`\s*\([^)]*\)'
+			. '(?:\s+ON\s+(?:DELETE|UPDATE)\s+(?:RESTRICT|CASCADE|SET\s+NULL|NO\s+ACTION|SET\s+DEFAULT))*/i';
+
+		$count    = 0;
+		$stripped = preg_replace( $pattern, '', $sql, -1, $count );
+
+		// A pattern that did not match leaves the statement alone; one that failed returns null,
+		// and the table is then staged exactly as the dump wrote it rather than not at all.
+		if ( null === $stripped || $count < 1 ) {
+			return $sql;
+		}
+
+		if ( ! isset( $state['foreign_keys'] ) ) {
+			$state['foreign_keys'] = array();
+		}
+
+		$state['foreign_keys'][ $table ] = isset( $state['foreign_keys'][ $table ] )
+			? $state['foreign_keys'][ $table ] + $count
+			: $count;
+
+		return $stripped;
 	}
 
 	/**

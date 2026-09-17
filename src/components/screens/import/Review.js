@@ -439,13 +439,13 @@ export const Review = () => {
 			{ preview.has_backup && (
 				<div className="nfd-sm-note nfd-sm-note--warn">
 					{ __(
-						'This site still holds the tables a previous import replaced. Confirm or undo that one first — they are the only copy of what was here before it.',
+						'This site still holds the tables a previous import replaced. Starting this one discards them, which ends that import’s undo — this import is then the one that can be reversed. Go back and roll that one back first if you want what was here before it.',
 						'nfd-site-migrator'
 					) }
 				</div>
 			) }
 
-			{ preview.ok && ! preview.has_backup && (
+			{ preview.ok && (
 				<div className="nfd-sm-card nfd-sm-card--commit">
 					<label className="nfd-sm-check" htmlFor="nfd-sm-understood">
 						<input

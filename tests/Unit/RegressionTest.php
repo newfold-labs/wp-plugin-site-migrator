@@ -1352,6 +1352,55 @@ class RegressionTest extends TestCase {
 	}
 
 	/**
+	 * A foreign key in the dump cannot travel into a staging table.
+	 *
+	 * Reported from a real import, which stopped at `Can't create table nfdimp_wp_defender_quarantine
+	 * (errno: 121 "Duplicate key on write or update")`. Constraint names are unique per *database*,
+	 * not per table, so staging a copy of a table whose constraint names the destination already
+	 * holds fails on the name alone — and a destination migrated from the same source before is
+	 * carrying exactly those names. The references are worse than the names: `REFERENCES wp_users`
+	 * binds the staged copy to the live table, and the swap then carries it onto `nfdold_wp_users`,
+	 * which is how another site ended up with an imported table pointing into the backup.
+	 */
+	public function test_foreign_keys_do_not_travel_into_staging() {
+		$create = "CREATE TABLE `nfdimp_wp_defender_quarantine` (\n"
+			. "  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"
+			. "  `defender_scan_item_id` int(10) unsigned DEFAULT NULL,\n"
+			. "  `created_by` bigint(20) unsigned DEFAULT NULL,\n"
+			. "  PRIMARY KEY (`id`),\n"
+			. "  KEY `wp_67fde6fa6276b_created_by` (`created_by`),\n"
+			. "  CONSTRAINT `wp_67fde6fa6276b_created_by` FOREIGN KEY (`created_by`) REFERENCES `wp_users` (`ID`) ON DELETE SET NULL ON UPDATE CASCADE,\n"
+			. "  CONSTRAINT `wp_67fde6fa6276b_defender_scan_item_id` FOREIGN KEY (`defender_scan_item_id`) REFERENCES `wp_defender_scan_item` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"
+			. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
+
+		$loader = new class( $GLOBALS['wpdb'] ) extends \NewfoldLabs\WP\SiteMigrator\Database\DatabaseMysqli {
+			public function strip( $sql, $table, array &$state ) {
+				return $this->strip_foreign_keys( $sql, $table, $state );
+			}
+		};
+
+		$state   = array();
+		$staged  = $loader->strip( $create, 'wp_defender_quarantine', $state );
+
+		$this->assertStringNotContainsString( 'FOREIGN KEY', $staged );
+		$this->assertStringNotContainsString( 'wp_67fde6fa6276b_created_by` FOREIGN', $staged );
+		$this->assertSame( array( 'wp_defender_quarantine' => 2 ), $state['foreign_keys'], 'and it is counted, to be said in the notes' );
+
+		// The columns, the primary key and the indexes all stay: what is lost is enforcement.
+		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $staged );
+		$this->assertStringContainsString( 'KEY `wp_67fde6fa6276b_created_by` (`created_by`)', $staged );
+		$this->assertStringContainsString( '`created_by` bigint(20) unsigned DEFAULT NULL', $staged );
+		$this->assertStringEndsWith( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;', $staged );
+
+		// A table without one is handed back untouched, and counts nothing.
+		$plain = 'CREATE TABLE `nfdimp_wp_posts` ( `ID` bigint(20) unsigned NOT NULL, PRIMARY KEY (`ID`) );';
+		$state = array();
+
+		$this->assertSame( $plain, $loader->strip( $plain, 'wp_posts', $state ) );
+		$this->assertSame( array(), $state );
+	}
+
+	/**
 	 * A package without the plugins leaves a database that still expects them.
 	 *
 	 * Observed on a real destination: the header rendered five banners stacked instead of one,

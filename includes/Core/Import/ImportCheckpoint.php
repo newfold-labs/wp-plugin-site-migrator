@@ -161,6 +161,8 @@ class ImportCheckpoint extends Checkpoint {
 			'php_fixed'        => array(),
 
 			// Database load.
+			// Foreign keys the staged schema could not carry, counted by table.
+			'foreign_keys'     => array(),
 			'query_offset'     => 0,
 			'statements'       => 0,
 			'tables'           => array(),

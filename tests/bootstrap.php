@@ -456,6 +456,8 @@ class WPDB_Stub {
 	// property the code under test reads is a stub that fails as a fatal rather than as a test.
 	public $base_prefix = 'wp_';
 	public $dbname    = 'nfd_sm_tests';
+	// Real `$wpdb` carries the connection handle, and `DatabaseBase`'s constructor reads it.
+	public $dbh       = null;
 	public $users     = 'wp_users';
 	public $usermeta  = 'wp_usermeta';
 	public $options   = 'wp_options';

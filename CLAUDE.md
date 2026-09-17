@@ -497,6 +497,29 @@ either. `ZipArchive` stays the default whenever it exists, `nfd_sm_native_zip` f
 writer is what will run. Tests read its output with `ZipArchive::CHECKCONS`, the zlib reader and
 Info-ZIP's `unzip -t`, so it is never checked only against its own idea of the format.
 
+**Foreign keys do not travel, and the swap cuts the ones it would otherwise break.** A dump's
+`CREATE TABLE` carries its constraints, and staging that table fails three ways. A constraint name
+is unique per *database*, not per table, so a destination that already holds the source's names —
+which is what a site migrated from that source before looks like — dies on the name alone
+(`errno 121`, seen on a real import of a WP Defender quarantine table). `REFERENCES` names the live
+table, and `replace_table_name()` rewrites only the identifier the statement is *about*, so the
+staged copy would bind to the live `wp_users` and the swap would then carry it onto
+`nfdold_wp_users`, leaving the imported table pointing into the backup. And a parent the package
+does not carry cannot be referenced at all (`errno 150`). So `DatabaseBase::strip_foreign_keys()`
+removes them on the way into staging, counts them, and the run's notes say what was dropped: the
+columns, the primary key and the `KEY` indexes beside each constraint all travel, and what is lost
+is enforcement — which WordPress core never defines and plugins use as a convenience.
+`Swap::detach_backup_references()` then cuts any constraint left pointing from outside the backup
+set into it, because `RENAME TABLE` rewrites a foreign key to follow the table it names, and a
+reference into the replaced site both misleads and makes the backup undroppable.
+
+**And dropping a set of tables is one statement whose result is checked.** `discard_backup()` and
+`discard_staged()` used to loop, issuing one `DROP` per table and counting each as dropped without
+asking — so a table held by a foreign key stayed while the run reported success. That is how a site
+was left holding a single `nfdold_wp_users` that no later import would clear, and which the review
+screen then read as a migration still awaiting a decision. One `DROP TABLE a, b, c` lets a parent
+and its children go together, and the count is taken by listing what is left.
+
 **A backup lasts until its import is kept, or until the next migration starts — not 30 days**
 (plan D8, revised). The cap used to make a new import *refuse* while a previous backup was inside
 its window, so a rule meant to protect one migration blocked the next, and the way out was a button
@@ -720,6 +743,12 @@ back first" when that is exactly what they had done. A linked pull always stages
 directory, so the package path matches on every retry: this is the state *Try a different package*
 leads into. `ImportCheckpoint::is_settled()` already drew the line for `step()`, `Resume` and the
 Done screen; this was the one caller left out.
+
+**The review screen does not withhold the Import button over a previous backup.** It did, with a
+note telling the user to confirm or undo that import first — the same refusal plan D8 removed from
+the importer, rebuilt in the UI, and reachable only from a screen they had already left. Precheck
+discards those tables and says so in a note, so the screen now explains that starting this import
+ends the previous one's undo, and lets it start.
 
 **Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
 before they can render. The resume redirect used to `return null`: a blank admin page, on the

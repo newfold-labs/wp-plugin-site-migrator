@@ -639,13 +639,27 @@ class Importer {
 			return;
 		}
 
+		// Cut first: a table this site kept, holding a foreign key the previous swap left pointing
+		// at those backups, makes them undroppable -- and a drop that fails here used to be
+		// reported as a success and then read, on the next visit, as a migration still undecided.
+		$swap->detach_backup_references();
+
 		$dropped = $swap->discard_backup();
+		$left    = $swap->remaining( $swap->backup_prefix() );
 
 		$state['notes'][] = \sprintf(
 			'Discarded %d table(s) a previous import had kept. Starting this migration is what '
 			. 'ended that one\'s rollback window.',
 			$dropped
 		);
+
+		if ( ! empty( $left ) ) {
+			$state['notes'][] = \sprintf(
+				'%d of them could not be dropped and are still here: %s.',
+				\count( $left ),
+				\implode( ', ', \array_slice( $left, 0, 5 ) ) . ( \count( $left ) > 5 ? ', …' : '' )
+			);
+		}
 	}
 
 	/**
@@ -801,6 +815,19 @@ class Importer {
 			return;
 		}
 
+		// Said rather than dropped quietly: a constraint the source enforced is not enforced here.
+		// See `DatabaseBase::strip_foreign_keys()` for why they cannot travel.
+		if ( ! empty( $state['foreign_keys'] ) ) {
+			$tables = \array_keys( (array) $state['foreign_keys'] );
+
+			$state['notes'][] = \sprintf(
+				'Did not carry %d foreign key(s), from %s. The tables and their indexes arrived; what is '
+					. 'gone is the database enforcing those relationships, which WordPress itself never relies on.',
+				\array_sum( (array) $state['foreign_keys'] ),
+				\implode( ', ', \array_slice( $tables, 0, 5 ) ) . ( \count( $tables ) > 5 ? ', …' : '' )
+			);
+		}
+
 		$this->progress->finish( ImportCheckpoint::STAGE_DATABASE );
 
 		$state['stage'] = ImportCheckpoint::STAGE_TRANSFORM;
@@ -919,6 +946,21 @@ class Importer {
 		$swap = $this->swap( $state );
 		$swap->recreate_views( (array) $state['views'], $state );
 
+		// A table this site already had, that the package does not carry, keeps its foreign keys
+		// through the rename -- and they now name the backup copy of the parent rather than the
+		// one this site is about to serve. Cut here, while the reason is still in view: left in
+		// place they hold a plugin to the replaced site and make the backup undroppable.
+		$cut = $swap->detach_backup_references();
+
+		if ( ! empty( $cut ) ) {
+			$state['notes'][] = \sprintf(
+				'Removed %d foreign key(s) that the swap left pointing at the replaced tables: %s. The '
+					. 'rows are untouched; only the database-level rule is gone.',
+				\count( $cut ),
+				\implode( ', ', \array_slice( $cut, 0, 5 ) ) . ( \count( $cut ) > 5 ? ', …' : '' )
+			);
+		}
+
 		$fixups = new Fixups();
 
 		$acting_final = (int) \nfd_sm_data_get( $state, 'users.acting_id', 0 );
@@ -929,8 +971,18 @@ class Importer {
 
 		if ( ! $this->options['keep_backup'] ) {
 			$dropped = $swap->discard_backup();
+			$left    = $swap->remaining( $swap->backup_prefix() );
 
 			$state['notes'][] = \sprintf( 'Discarded %d backup table(s) as requested.', $dropped );
+
+			// Counted by looking, so a table that refused to go is said rather than assumed away.
+			if ( ! empty( $left ) ) {
+				$state['notes'][] = \sprintf(
+					'%d backup table(s) could not be dropped and are still here: %s.',
+					\count( $left ),
+					\implode( ', ', \array_slice( $left, 0, 5 ) ) . ( \count( $left ) > 5 ? ', …' : '' )
+				);
+			}
 		} else {
 			$state['notes'][] = \sprintf(
 				'The previous site is kept in tables prefixed %s, so this import can be rolled back '
