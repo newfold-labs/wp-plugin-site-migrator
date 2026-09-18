@@ -1,6 +1,6 @@
 import { __, sprintf } from '@wordpress/i18n';
-import { useEffect, useState } from '@wordpress/element';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from '@wordpress/element';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
 import { Loading } from '../../Loading';
 import { api } from '../../../utils/api';
@@ -93,6 +93,14 @@ const remaining = ( state ) => {
  */
 export const Pull = () => {
 	const navigate = useNavigate();
+
+	// Arriving from the receive screen's *Start the transfer*, which is a decision already made:
+	// asking again here would be the same button twice, one screen apart. `useRef` rather than
+	// state because it must fire once and never re-arm — the poll below keeps answering `offered`
+	// until the transfer is connected, and a second claim would mint a second key.
+	const asked = useRef( false );
+	const start = useLocation().state?.start;
+
 	const { state, connect, claim, disconnect, run, halt } = usePull();
 
 	const [ url, setUrl ] = useState( '' );
@@ -190,6 +198,28 @@ export const Pull = () => {
 		setCleared( response.cleared || 0 );
 		run();
 	};
+
+	// One press, not two. The receive screen shows the same offer with the same button, so
+	// arriving here with `start` means somebody has already pressed it: claim and begin, rather
+	// than drawing an identical card and waiting to be told again.
+	useEffect( () => {
+		if (
+			! start ||
+			asked.current ||
+			! state.hydrated ||
+			state.connected ||
+			! waiting?.offered ||
+			busy
+		) {
+			return;
+		}
+
+		asked.current = true;
+		accept();
+		// `accept` is recreated every render and is stable in what it does; the ref is what
+		// makes this fire once.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ start, state.hydrated, state.connected, waiting, busy ] );
 
 	const submit = async ( event ) => {
 		event.preventDefault();

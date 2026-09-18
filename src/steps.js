@@ -26,12 +26,18 @@ export const SOURCE_STEPS = [
 /**
  * Receiving a site.
  *
+ * It begins at *Connect*, which is `/receive` -- the screen that mints the pairing code. That
+ * screen was in neither journey for a long time, which made it a dead end: the first thing a
+ * destination does was not on the map the plugin draws of what it is doing, so after handing over
+ * a code there was nothing saying what happens next or where to wait for it.
+ *
  * `locked` marks the point past which going back is not a thing that exists. Up to the
  * confirmation everything is a decision that can be revisited; after it the site has been
  * replaced, and the way back is rollback — an action with consequences, offered on its own
  * screen, not a link in a breadcrumb.
  */
 export const DESTINATION_STEPS = [
+	{ id: 'connect', label: 'Connect', path: '/receive' },
 	{ id: 'choose', label: 'Package', path: '/import' },
 	{ id: 'review', label: 'Review', path: '/import/review' },
 	{ id: 'run', label: 'Import', path: '/import/run', locked: true },

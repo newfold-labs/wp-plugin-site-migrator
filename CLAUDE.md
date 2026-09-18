@@ -763,6 +763,27 @@ the importer, rebuilt in the UI, and reachable only from a screen they had alrea
 discards those tables and says so in a note, so the screen now explains that starting this import
 ends the previous one's undo, and lets it start.
 
+**One code means the screens say one code.** The link has carried the whole handshake since phase
+9 — pairing leaves a token, *Offer* marks the package, the destination claims a key it never sees —
+and the screens went on teaching the older two-code model anyway. The source's Deliver screen
+opened with "offer it … *or generate a key to paste by hand*" and drew the key card and the
+download card at full size underneath, so a migration needing one code looked like it needed two.
+Both fallbacks now sit inside one `<details>`, *Other ways to deliver this*, folded exactly when
+`link.linked` says nobody has to carry anything — and unfolded, not hidden, for the two cases that
+still need them: a source that skipped pairing, and a destination paired by a version that never
+sent a token.
+
+**And the destination waits on the screen it is already on.** `/receive` mints the pairing code, and
+it was the one screen in the plugin that belonged to neither journey: after handing the code over it
+stood still, while the package that arrived for it announced itself on `/import`, which nobody had a
+reason to open. It is now `connect`, the first step of `DESTINATION_STEPS`, and it polls
+`import/pull/offer` every five seconds — the question the link already answers, costing the source
+nothing and returning no credential. When the answer turns to `offered` the screen becomes the offer:
+who is sending, how big, how many files, and one button. That button carries `state.start` to
+`/import/pull`, which claims and begins on arrival rather than drawing the same card and asking a
+second time — guarded by a ref, because the poll keeps saying `offered` until the transfer connects
+and a second claim would mint a second key.
+
 **Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
 before they can render. The resume redirect used to `return null`: a blank admin page, on the
 first thing anybody sees.
