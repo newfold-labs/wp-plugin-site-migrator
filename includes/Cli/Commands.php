@@ -404,6 +404,9 @@ class Commands {
 	 *     # a plugin and a year of media, but keep everything else
 	 *     wp site-migrator contents --set='{"paths":{"plugins":["akismet"],"uploads":["2019"]}}'
 	 *
+	 *     # code only: plugins and themes, and none of the database
+	 *     wp site-migrator contents --set='{"database":{"skip_database":true}}'
+	 *
 	 *     # carry the whole site again
 	 *     wp site-migrator contents --reset
 	 *

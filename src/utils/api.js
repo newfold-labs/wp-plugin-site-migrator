@@ -200,6 +200,10 @@ export const api = {
 			data: { paused },
 		} ),
 	exportContents: () => call( { path: `${ BASE }/export/contents` } ),
+
+	// Asked only when the database has been turned off, because answering it means reading every
+	// plugin's PHP. See `ExportController::belongings()`.
+	exportBelongings: () => call( { path: `${ BASE }/export/belongings` } ),
 	exportChoose: ( selection ) =>
 		call( {
 			path: `${ BASE }/export/contents`,

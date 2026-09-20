@@ -44,17 +44,33 @@ class Compatibility {
 	/**
 	 * Run every gate.
 	 *
+	 * Two of them are about moving a database and nothing else: whether the destination's server
+	 * can store the source's text, and whether it can rename tables atomically. A package that
+	 * carries no database asks neither question, and asking them anyway refuses code-only imports
+	 * over a collation no table in them uses. Everything else still applies -- the destination has
+	 * to run the PHP and hold the files whatever else is true.
+	 *
+	 * @param bool $with_database Whether a database is coming with the package.
+	 *
 	 * @return Report
 	 */
-	public function check() {
+	public function check( $with_database = true ) {
 		$report = new Report();
 
 		$this->check_wordpress( $report );
 		$this->check_multisite( $report );
 		$this->check_php( $report );
-		$this->check_collations( $report );
+
+		if ( $with_database ) {
+			$this->check_collations( $report );
+		}
+
 		$this->check_space( $report );
-		$this->check_swap( $report );
+
+		if ( $with_database ) {
+			$this->check_swap( $report );
+		}
+
 		$this->check_extensions( $report );
 		$this->check_environment( $report );
 

@@ -136,6 +136,30 @@ export const Review = () => {
 	const blocking = preview.report?.blocking || [];
 	const warnings = preview.report?.warnings || [];
 	const users = preview.users || {};
+
+	// A package can carry code and no data. Almost everything this screen says is about a
+	// database arriving — who will be able to sign in, what is replaced, what can be undone — and
+	// none of it is true of one that brings plugin and theme files to a site that keeps its own
+	// content. Saying it anyway would be the worst kind of wrong: a warning nobody needs, on the
+	// screen where warnings are supposed to mean something.
+	const filesOnly = !! preview.files_only;
+
+	// And a third shape between the two: a package that brings a few tables and settings and
+	// merges them, leaving the rest of this site where it is. It is not a replacement, so it does
+	// not get the replacement's warnings -- but it does write into the live options table, which
+	// nothing else in the import does, so it says which settings.
+	const partial = !! preview.partial;
+	const merging = preview.merging || {};
+	const gentle = filesOnly || partial;
+
+	const starting = __( 'Starting…', 'nfd-site-migrator' );
+	let commit = __( 'Import it', 'nfd-site-migrator' );
+
+	if ( filesOnly ) {
+		commit = __( 'Bring in the files', 'nfd-site-migrator' );
+	} else if ( partial ) {
+		commit = __( 'Merge it in', 'nfd-site-migrator' );
+	}
 	const source = preview.package?.source || {};
 	const code = [ ...blocking, ...warnings ].find(
 		( c ) => c.id === 'php_code'
@@ -292,131 +316,217 @@ export const Review = () => {
 				</dl>
 			</div>
 
-			<div className="nfd-sm-card nfd-sm-card--stop">
-				<p className="nfd-sm-eyebrow">
-					{ __( 'What this replaces', 'nfd-site-migrator' ) }
-				</p>
-				<p>
-					{ __(
-						'Every post, page, comment, setting, plugin and theme on this site is replaced by the ones in the package. This site’s own content does not survive.',
-						'nfd-site-migrator'
-					) }
-				</p>
-				<p>
-					{ __(
-						'The tables being replaced are kept, so this can be undone — until you keep this import or start another migration.',
-						'nfd-site-migrator'
-					) }
-				</p>
-			</div>
-
-			<div className="nfd-sm-card">
-				<p className="nfd-sm-eyebrow">
-					{ __( 'Who can sign in afterwards', 'nfd-site-migrator' ) }
-				</p>
-
-				{ ! users.available && (
-					<p className="nfd-sm-hint">{ users.reason }</p>
-				) }
-
-				{ users.available && (
-					<>
-						<p>
-							{ __(
-								'Accounts on this site are kept, not replaced. Where the same person exists on both, they keep the password they already use here.',
+			{ partial && (
+				<div className="nfd-sm-card">
+					<p className="nfd-sm-eyebrow">
+						{ __( 'What this changes', 'nfd-site-migrator' ) }
+					</p>
+					<p>
+						{ sprintf(
+							/* translators: 1: number of tables, 2: number of settings. */
+							__(
+								'This package does not replace this site. It brings %1$d table(s) and %2$d setting(s) belonging to the plugins and themes it carries, and merges them into the database that is already here.',
 								'nfd-site-migrator'
-							) }
-						</p>
-						<table className="nfd-sm-parts">
-							<thead>
-								<tr>
-									<th>
-										{ __( 'Account', 'nfd-site-migrator' ) }
-									</th>
-									<th>
-										{ __(
-											'Signs in as',
-											'nfd-site-migrator'
-										) }
-									</th>
-									<th>
-										{ __(
-											'Password',
-											'nfd-site-migrator'
-										) }
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{ ( users.matched || [] ).map( ( m ) => (
-									<tr key={ `m${ m.dest_id }` }>
-										<td>{ m.email }</td>
-										<td className="nfd-sm-mono">
-											{ m.source_login }
-											{ m.source_login !==
-												m.dest_login && (
-												<span className="nfd-sm-muted">
-													{ ` (was ${ m.dest_login })` }
-												</span>
-											) }
-										</td>
-										<td>
-											{ __(
-												'the one you use here',
-												'nfd-site-migrator'
-											) }
-										</td>
-									</tr>
-								) ) }
-								{ ( users.carried || [] ).map( ( c ) => (
-									<tr key={ `c${ c.dest_id }` }>
-										<td>{ c.email }</td>
-										<td className="nfd-sm-mono">
-											{ c.login }
-											{ c.login !== c.requested_login && (
-												<span className="nfd-sm-warn">
-													{ ` (renamed from ${ c.requested_login })` }
-												</span>
-											) }
-										</td>
-										<td>
-											{ __(
-												'unchanged',
-												'nfd-site-migrator'
-											) }
-										</td>
-									</tr>
-								) ) }
-								{ ( users.source_only || [] ).map( ( s ) => (
-									<tr key={ `s${ s.id }` }>
-										<td>{ s.email }</td>
-										<td className="nfd-sm-mono">
-											{ s.login }
-										</td>
-										<td>
-											{ __(
-												'their password from the other site',
-												'nfd-site-migrator'
-											) }
-										</td>
-									</tr>
-								) ) }
-							</tbody>
-						</table>
-
-						{ ( users.carried || [] ).some(
-							( c ) => c.login !== c.requested_login
-						) && (
-							<p className="nfd-sm-hint">
+							),
+							( merging.tables || [] ).length,
+							( merging.options || [] ).length
+						) }
+					</p>
+					<p>
+						{ __(
+							'Your posts, pages, users, comments and every other plugin’s settings stay exactly as they are. A table with the same name as one arriving is kept, so this can be undone.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					{ ( merging.tables || [] ).length > 0 && (
+						<ul className="nfd-sm-mono">
+							{ merging.tables.map( ( name ) => (
+								<li key={ name }>{ name }</li>
+							) ) }
+						</ul>
+					) }
+					{ ( merging.options || [] ).length > 0 && (
+						<details className="nfd-sm-details">
+							<summary>
 								{ __(
-									'A username was renamed because a different person on the other site already uses it. Both accounts are kept; you can merge them yourself afterwards if they are the same person.',
+									'Settings that would be written',
+									'nfd-site-migrator'
+								) }
+							</summary>
+							<ul className="nfd-sm-mono">
+								{ merging.options.map( ( name ) => (
+									<li key={ name }>{ name }</li>
+								) ) }
+							</ul>
+						</details>
+					) }
+				</div>
+			) }
+
+			{ ! partial && filesOnly && (
+				<div className="nfd-sm-card">
+					<p className="nfd-sm-eyebrow">
+						{ __( 'What this changes', 'nfd-site-migrator' ) }
+					</p>
+					<p>
+						{ __(
+							'This package carries no database. Plugin and theme files are written; your posts, pages, users, comments and settings are not touched, and this site keeps its own.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<p>
+						{ __(
+							'A plugin or theme this site already has, and the package also carries, is overwritten by the package’s copy. Anything new arrives switched off, because what switches a plugin on is a setting in the database this import does not write.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<p>
+						{ __(
+							'Undoing it deletes the files that were added and changes nothing else.',
+							'nfd-site-migrator'
+						) }
+					</p>
+				</div>
+			) }
+
+			{ ! partial && ! filesOnly && (
+				<div className="nfd-sm-card nfd-sm-card--stop">
+					<p className="nfd-sm-eyebrow">
+						{ __( 'What this replaces', 'nfd-site-migrator' ) }
+					</p>
+					<p>
+						{ __(
+							'Every post, page, comment, setting, plugin and theme on this site is replaced by the ones in the package. This site’s own content does not survive.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<p>
+						{ __(
+							'The tables being replaced are kept, so this can be undone — until you keep this import or start another migration.',
+							'nfd-site-migrator'
+						) }
+					</p>
+				</div>
+			) }
+
+			{ ! gentle && (
+				<div className="nfd-sm-card">
+					<p className="nfd-sm-eyebrow">
+						{ __(
+							'Who can sign in afterwards',
+							'nfd-site-migrator'
+						) }
+					</p>
+
+					{ ! users.available && (
+						<p className="nfd-sm-hint">{ users.reason }</p>
+					) }
+
+					{ users.available && (
+						<>
+							<p>
+								{ __(
+									'Accounts on this site are kept, not replaced. Where the same person exists on both, they keep the password they already use here.',
 									'nfd-site-migrator'
 								) }
 							</p>
-						) }
-					</>
-				) }
-			</div>
+							<table className="nfd-sm-parts">
+								<thead>
+									<tr>
+										<th>
+											{ __(
+												'Account',
+												'nfd-site-migrator'
+											) }
+										</th>
+										<th>
+											{ __(
+												'Signs in as',
+												'nfd-site-migrator'
+											) }
+										</th>
+										<th>
+											{ __(
+												'Password',
+												'nfd-site-migrator'
+											) }
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{ ( users.matched || [] ).map( ( m ) => (
+										<tr key={ `m${ m.dest_id }` }>
+											<td>{ m.email }</td>
+											<td className="nfd-sm-mono">
+												{ m.source_login }
+												{ m.source_login !==
+													m.dest_login && (
+													<span className="nfd-sm-muted">
+														{ ` (was ${ m.dest_login })` }
+													</span>
+												) }
+											</td>
+											<td>
+												{ __(
+													'the one you use here',
+													'nfd-site-migrator'
+												) }
+											</td>
+										</tr>
+									) ) }
+									{ ( users.carried || [] ).map( ( c ) => (
+										<tr key={ `c${ c.dest_id }` }>
+											<td>{ c.email }</td>
+											<td className="nfd-sm-mono">
+												{ c.login }
+												{ c.login !==
+													c.requested_login && (
+													<span className="nfd-sm-warn">
+														{ ` (renamed from ${ c.requested_login })` }
+													</span>
+												) }
+											</td>
+											<td>
+												{ __(
+													'unchanged',
+													'nfd-site-migrator'
+												) }
+											</td>
+										</tr>
+									) ) }
+									{ ( users.source_only || [] ).map(
+										( s ) => (
+											<tr key={ `s${ s.id }` }>
+												<td>{ s.email }</td>
+												<td className="nfd-sm-mono">
+													{ s.login }
+												</td>
+												<td>
+													{ __(
+														'their password from the other site',
+														'nfd-site-migrator'
+													) }
+												</td>
+											</tr>
+										)
+									) }
+								</tbody>
+							</table>
+
+							{ ( users.carried || [] ).some(
+								( c ) => c.login !== c.requested_login
+							) && (
+								<p className="nfd-sm-hint">
+									{ __(
+										'A username was renamed because a different person on the other site already uses it. Both accounts are kept; you can merge them yourself afterwards if they are the same person.',
+										'nfd-site-migrator'
+									) }
+								</p>
+							) }
+						</>
+					) }
+				</div>
+			) }
 
 			{ preview.manual?.length > 0 && (
 				<div className="nfd-sm-card">
@@ -457,28 +567,37 @@ export const Review = () => {
 							}
 						/>
 						<span>
-							{ sprintf(
-								/* translators: %s: destination URL. */
-								__(
-									'I understand that the content currently on %s will be replaced.',
-									'nfd-site-migrator'
-								),
-								preview.target?.site_url || ''
-							) }
+							{ gentle
+								? sprintf(
+										/* translators: %s: destination URL. */
+										__(
+											'I understand that plugin and theme files on %s will be overwritten where the package carries the same ones.',
+											'nfd-site-migrator'
+										),
+										preview.target?.site_url || ''
+								  )
+								: sprintf(
+										/* translators: %s: destination URL. */
+										__(
+											'I understand that the content currently on %s will be replaced.',
+											'nfd-site-migrator'
+										),
+										preview.target?.site_url || ''
+								  ) }
 						</span>
 					</label>
 
 					<div className="nfd-sm-actions">
 						<button
 							type="button"
-							className="nfd-sm-btn nfd-sm-btn--danger"
+							className={ `nfd-sm-btn nfd-sm-btn--${
+								gentle ? 'primary' : 'danger'
+							}` }
 							id="nfd-sm-begin-import"
 							disabled={ ! understood || busy || checking }
 							onClick={ begin }
 						>
-							{ busy
-								? __( 'Starting…', 'nfd-site-migrator' )
-								: __( 'Import it', 'nfd-site-migrator' ) }
+							{ busy ? starting : commit }
 						</button>
 						<button
 							type="button"

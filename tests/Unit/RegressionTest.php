@@ -1466,4 +1466,53 @@ class RegressionTest extends TestCase {
 			PluginPresence::parse_serialized_strings( $line )
 		);
 	}
+	/**
+	 * A package with no database is a package, not a broken one.
+	 *
+	 * `has_database()` is what the import branches on, and the distinction it draws is between a
+	 * source that deliberately sent no data and a dump that failed to arrive. The second is still
+	 * caught where it always was — `PackageReader::verify()` checks every file the manifest names.
+	 */
+	public function test_a_manifest_can_record_no_database() {
+		$manifest = new Manifest();
+
+		$this->assertFalse( $manifest->has_database() );
+
+		$manifest->set_database( 'database.sql', 120, 'abc' );
+
+		$this->assertTrue( $manifest->has_database() );
+	}
+
+	/**
+	 * And the gates that exist to move a database step aside when none is moving.
+	 *
+	 * A collation the destination's server does not have is a real refusal when tables written in
+	 * it are on their way. With a code-only package nothing is written to any table, so the same
+	 * refusal would block an import over an encoding it will never use — which is the shape of
+	 * every false refusal this plugin has shipped.
+	 */
+	public function test_a_code_only_package_is_not_refused_over_the_database() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.1' ),
+				'database'       => array( 'collations_used' => array( 'latin2_general_ci' ) ),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.2' ),
+				'database'       => array( 'collations' => array( 'utf8mb4_general_ci' ) ),
+			)
+		);
+
+		$compatibility = new Compatibility( $source, $destination );
+
+		$this->assertSame( 'block', $compatibility->check()->get( 'collation' )['status'] );
+		$this->assertNull( $compatibility->check( false )->get( 'collation' ) );
+	}
 }

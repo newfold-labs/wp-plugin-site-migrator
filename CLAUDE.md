@@ -325,6 +325,64 @@ The comparison is order-insensitive (`canonical()`), because one side was typed 
 other read back out of JSON; and only a real difference counts, so saving an unchanged selection
 never costs somebody an hour of packaging.
 
+**A package can carry code and no data, and that is a different kind of import.** `skip_database`
+sits beside the three row filters in `Selection` but does something categorically different: the
+twelve tables in `$required_tables` may never be skipped one at a time, because a package holding
+*some* of core's tables describes a site that cannot boot — refusing all of it is not that. What
+travels is plugins and themes, and the destination keeps its own content, users and settings. The
+export writes no `database.sql` at all (never an empty one, which would arrive as a database that
+replaces everything with nothing) and the manifest simply has no `database` entry, which is how
+`Manifest::has_database()` tells "no data was sent" from "the data is missing" — the second is still
+caught by `PackageReader::verify()`, which checks every file the manifest names.
+
+On the destination it is five stages shorter. `stage_files` hands straight to fixups, skipping
+database, transform, users, validate and **swap** — which with nothing staged would rename the live
+tables into the backup set and put nothing back in their place. `Fixups` does not run either: no
+view was dropped, no foreign key was left pointing at a backup, `active_plugins` still reads the way
+this site wrote it, and the session belongs to a user the import never touched. Precheck does not
+discard a previous import's backup, because spending somebody's undo is the price of *replacing*
+a site and this replaces nothing; `Compatibility::check( false )` skips the collation and
+`RENAME TABLE` gates for the same reason, or a code-only import would be refused over an encoding no
+table in it uses. Rollback is `AddedCode` alone, which is the whole of what changed. The honest
+consequence, said on the review screen and again in the run's notes: what arrives is **inactive and
+unconfigured**, because what switches a plugin on and what holds its settings are rows in the
+destination's own `wp_options`. Proven between two real installs — the destination's posts, users and
+options untouched, the plugin's own table absent, no `nfdold_`/`nfdimp_` table created, and rollback
+removing exactly the files that arrived.
+
+**And a code-only package can still bring a plugin's own data, which is a third kind of import.**
+"Plugins and themes only" means nothing if the plugins arrive empty, so a selection that refuses the
+database may still name tables and option rows to carry: `carry_tables` and `carry_options`. The
+dump is then an *allowlist* rather than the site minus refusals, the manifest marks it
+`database.partial` with both lists in it, and the destination merges instead of swapping — five
+stages become three, `Swap::execute_only()` renames just those tables (live to `nfdold_`, staged
+into place, one statement as always), and the options table is the one place in the whole import
+where rows are written into a live table rather than renamed into it. That is `OptionMerger`, and
+it records every previous value — `null` meaning "there was no row" — so the undo is exact rather
+than approximate. Rollback is the same rename backwards plus those values going back; a table this
+site never had is not "put back" but dropped, which leaves the database holding what it held.
+
+**Which tables belong to a plugin is read out of the plugin, not guessed from its name.**
+WordPress keeps no registry, and naming is no guide — WooCommerce's tables are `wp_wc_*`,
+Wordfence's are `wp_wf*`. `TableOwners` scans each plugin's PHP for the two ways a table is really
+named (`$wpdb->prefix . 'acme_log'` and `"{$wpdb->prefix}acme_log"`) and for the option names it
+passes to `get_option()` and friends, then **intersects both with what the site actually has**.
+That is what makes a false positive harmless and keeps the limits easy to state: a name assembled
+at runtime is not found, and the table turns up in `unclaimed` for somebody to tick by hand. Two
+rules keep it honest. The result is a *suggestion*, shown in the picker with its tables and
+settings listed, never acted on by itself. And `Selection::is_protected_option()` refuses core's
+own options — `home`, `siteurl`, `active_plugins`, `template`, transients — in the scan, again when
+the selection is saved, and a third time in `OptionMerger`, because plugins read those constantly
+and a checkbox saying "bring this plugin's settings" must never mean "adopt the other site's
+address". The scan lives behind its own `/export/belongings` route: answering it means reading every
+plugin's code, and it is only asked once somebody has actually turned the database off.
+
+Proven between two real installs, 26 assertions: the scan finding both tables and both settings and
+refusing `home`, a dump holding only what was chosen, the destination keeping its posts and its own
+address, a table it already had replaced and kept for the undo, one it never had arriving, settings
+landing with their URLs rewritten to the destination, and a rollback putting its own table and its
+own setting back while deleting the row it never had.
+
 **What was left out travels in the manifest**, under `contents`, absent meaning the whole site. It
 is the only way the destination can tell a site with no media from a package that deliberately
 left the media behind, and `Importer::manual_steps()` says so on the review screen — built from

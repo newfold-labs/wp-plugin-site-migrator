@@ -140,4 +140,46 @@ test.describe( 'Contents', () => {
 			page.locator( '#nfd-sm-flag-skip_revisions' )
 		).toBeChecked();
 	} );
+	test( 'turning the database off changes what the screen asks', async ( {
+		page,
+	} ) => {
+		const errors = [];
+
+		page.on( 'pageerror', ( error ) => errors.push( error.message ) );
+
+		await auth.navigateToAdminPage( page, CONTENTS );
+		await wordpress.waitForApp( page );
+
+		// On by default: a package carries the site unless somebody says otherwise.
+		const database = page.locator( '#nfd-sm-flag-skip_database' );
+
+		await expect( database ).toBeChecked();
+		await expect(
+			page.locator( '#nfd-sm-flag-skip_revisions' )
+		).toBeVisible();
+
+		// Armed before the click, not after: the scan is one request and it can be finished
+		// before an assertion in between has run, which is a test that fails on being fast.
+		// Matched on the route's last segment alone: apiFetch sends these as
+		// `?rest_route=%2F…%2Fexport%2Fbelongings`, so a matcher looking for `export/belongings`
+		// matches nothing and fails as a timeout, which reads like the request never happened.
+		const scan = page.waitForResponse(
+			( response ) =>
+				response.url().includes( 'belongings' ) &&
+				response.status() === 200
+		);
+
+		await database.uncheck();
+
+		// The three row filters decide what a dump leaves out, and there is no dump now.
+		await expect(
+			page.locator( '#nfd-sm-flag-skip_revisions' )
+		).toHaveCount( 0 );
+		await expect( page.locator( '.nfd-sm-note--warn' ) ).toBeVisible();
+
+		// And the scan runs: the screen asking the server to read every plugin's code, which is
+		// the one expensive question here and must not be asked before somebody needs it.
+		expect( ( await ( await scan ).json() ).belongs ).toBeDefined();
+		expect( errors ).toEqual( [] );
+	} );
 } );

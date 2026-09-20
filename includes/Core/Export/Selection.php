@@ -61,11 +61,63 @@ class Selection {
 	);
 
 	/**
+	 * Options that may never travel as rows, whatever a scan of a plugin's code turned up.
+	 *
+	 * This is the `$required_tables` of the options table, and it exists for a sharper reason. A
+	 * plugin's settings are found by reading the names it passes to `get_option()` -- and plugins
+	 * read core's options constantly, so a scan of almost any plugin comes back naming `home`,
+	 * `siteurl`, `template` or `active_plugins`. Carrying one of those into a destination that is
+	 * keeping its own site would move that site's address, its theme, or the list of plugins it
+	 * loads, out of a package that promised to bring a plugin's settings.
+	 *
+	 * Enforced on both sides: refused here when the selection is saved, and refused again by
+	 * `OptionMerger` when a package asks for one, because a package is input this site did not
+	 * write.
+	 *
+	 * @var array
+	 */
+	protected static $protected_options = array(
+		'siteurl',
+		'home',
+		'blogname',
+		'blogdescription',
+		'admin_email',
+		'new_admin_email',
+		'users_can_register',
+		'default_role',
+		'template',
+		'stylesheet',
+		'current_theme',
+		'theme_switched',
+		'active_plugins',
+		'recently_activated',
+		'permalink_structure',
+		'rewrite_rules',
+		'db_version',
+		'initial_db_version',
+		'upload_path',
+		'upload_url_path',
+		'cron',
+		'wp_user_roles',
+		'sidebars_widgets',
+		'show_on_front',
+		'page_on_front',
+		'page_for_posts',
+		'blog_charset',
+		'wplang',
+		'timezone_string',
+		'gmt_offset',
+		'site_icon',
+		'nfd_site_migrator',
+	);
+
+	/**
 	 * The database filters this understands, and their defaults.
 	 *
 	 * @var array
 	 */
 	protected static $database_flags = array(
+		'skip_database'   => false,
 		'skip_revisions'  => false,
 		'skip_spam'       => false,
 		'skip_transients' => false,
@@ -221,6 +273,40 @@ class Selection {
 			$database['skip_tables'] = \array_values( \array_unique( $tables ) );
 		}
 
+		// The other direction, and only meaningful with `skip_database`: a package that carries no
+		// database can still carry a plugin's own tables and its settings, which is what makes
+		// "just the plugins" mean the plugins rather than their empty shells. Core's tables are
+		// refused here for the reason they may not be skipped there -- `wp_options` arriving whole
+		// would replace the destination's own settings, its permalinks and its active plugins,
+		// which is the opposite of keeping its site. Its *rows* travel through `carry_options`.
+		$carry = array();
+
+		foreach ( (array) \nfd_sm_data_get( $raw, 'carry_tables', array() ) as $table ) {
+			$table = \preg_replace( '/[^A-Za-z0-9_$\-]/', '', (string) $table );
+
+			if ( '' !== $table && ! self::is_required_table( $table ) ) {
+				$carry[] = $table;
+			}
+		}
+
+		if ( ! empty( $carry ) ) {
+			$database['carry_tables'] = \array_values( \array_unique( $carry ) );
+		}
+
+		$options = array();
+
+		foreach ( (array) \nfd_sm_data_get( $raw, 'carry_options', array() ) as $option ) {
+			$option = \preg_replace( '/[^A-Za-z0-9_\-.:\/]/', '', (string) $option );
+
+			if ( '' !== $option && ! self::is_protected_option( $option ) ) {
+				$options[] = $option;
+			}
+		}
+
+		if ( ! empty( $options ) ) {
+			$database['carry_options'] = \array_values( \array_unique( $options ) );
+		}
+
 		return array(
 			'parts'    => $parts,
 			'paths'    => $paths,
@@ -241,6 +327,43 @@ class Selection {
 	 */
 	public static function is_required_table( $table ) {
 		return \in_array( \strtolower( self::unprefixed( $table ) ), self::$required_tables, true );
+	}
+
+	/**
+	 * Whether an option belongs to the destination rather than to a plugin.
+	 *
+	 * Transients go too: they are a cache with a clock on it, and a cached value from another site
+	 * is the one kind of stale that looks like data.
+	 *
+	 * @param string $name Option name.
+	 *
+	 * @return bool
+	 */
+	public static function is_protected_option( $name ) {
+		$name = \strtolower( \trim( (string) $name ) );
+
+		if ( '' === $name ) {
+			return true;
+		}
+
+		if ( 0 === \strpos( $name, '_transient_' ) || 0 === \strpos( $name, '_site_transient_' ) ) {
+			return true;
+		}
+
+		if ( \defined( 'NFD_SM_OPTIONS_LIST' ) && \in_array( $name, (array) NFD_SM_OPTIONS_LIST, true ) ) {
+			return true;
+		}
+
+		return \in_array( $name, self::$protected_options, true );
+	}
+
+	/**
+	 * The options that may never travel, for a screen that wants to say so.
+	 *
+	 * @return array
+	 */
+	public static function protected_options() {
+		return self::$protected_options;
 	}
 
 	/**
@@ -327,6 +450,22 @@ class Selection {
 	}
 
 	/**
+	 * Whether the package carries a database at all.
+	 *
+	 * The twelve tables in `$required_tables` may never be skipped one at a time, because a
+	 * package holding some of core's tables and not others describes a site that cannot boot. That
+	 * rule protects against a *half* database, which is exactly the thing this flag does not
+	 * produce: refusing the database refuses all of it, and what arrives is code with no data —
+	 * plugins and themes for a destination that keeps its own site. So the two settings are not in
+	 * conflict, and the required list is simply not consulted when there is no dump to put them in.
+	 *
+	 * @return bool
+	 */
+	public function wants_database() {
+		return ! $this->skips( 'skip_database' );
+	}
+
+	/**
 	 * Whether a part is carried.
 	 *
 	 * @param string $name Part name.
@@ -393,6 +532,44 @@ class Selection {
 	}
 
 	/**
+	 * The tables a code-only package carries anyway.
+	 *
+	 * Empty unless the database was refused: with a dump on its way every table is in it, and a
+	 * list of tables to carry would be a list of tables that are already coming.
+	 *
+	 * @return array
+	 */
+	public function carried_tables() {
+		return $this->wants_database()
+			? array()
+			: (array) \nfd_sm_data_get( $this->database, 'carry_tables', array() );
+	}
+
+	/**
+	 * The option rows a code-only package carries anyway.
+	 *
+	 * Rows, not the table: a plugin's settings can travel without its settings *table* travelling,
+	 * and the difference is whether the destination keeps being itself.
+	 *
+	 * @return array
+	 */
+	public function carried_options() {
+		return $this->wants_database()
+			? array()
+			: (array) \nfd_sm_data_get( $this->database, 'carry_options', array() );
+	}
+
+	/**
+	 * Whether this selection produces a dump that merges rather than replaces.
+	 *
+	 * @return bool
+	 */
+	public function is_partial_database() {
+		return ! $this->wants_database()
+			&& ( ! empty( $this->carried_tables() ) || ! empty( $this->carried_options() ) );
+	}
+
+	/**
 	 * Whether a database filter is on.
 	 *
 	 * @param string $flag One of `database_flags()`.
@@ -427,6 +604,24 @@ class Selection {
 	 */
 	public function describe() {
 		$said = array();
+
+		// First, and phrased as the whole thing rather than as one more omission: a package with
+		// no database is a different kind of package, and a destination reading this list has to
+		// see that before it reads which parts of a site it is not getting.
+		if ( ! $this->wants_database() ) {
+			$carried  = \count( $this->carried_tables() );
+			$settings = \count( $this->carried_options() );
+
+			if ( $carried < 1 && $settings < 1 ) {
+				$said[] = 'the database — this package carries code only';
+			} else {
+				$said[] = \sprintf(
+					'the database, apart from %d table(s) and %d setting(s) belonging to what was chosen',
+					$carried,
+					$settings
+				);
+			}
+		}
 
 		foreach ( $this->refused_parts() as $part ) {
 			$said[] = self::part_phrase( $part );

@@ -127,6 +127,21 @@ class ImportCheckpoint extends Checkpoint {
 			// Which package this run belongs to, so a second one cannot resume into it.
 			'package'          => '',
 
+			// Whether the package carries code and no data, which decides how much of the run
+			// there is: five of the eight stages exist to move a database safely.
+			'files_only'       => false,
+
+			// Or code and *some* data: a chosen plugin's own tables and settings, merged into a
+			// destination that keeps its database. `swapped_names` is what the scoped rename
+			// moved and `options_before` is what the settings were here beforehand -- between
+			// them, the undo.
+			'partial'          => false,
+			'carry_tables'     => array(),
+			'carry_options'    => array(),
+			'swapped_names'    => array(),
+			'added_names'      => array(),
+			'options_before'   => array(),
+
 			// Prefixes are decided once, at precheck, and then never recomputed: the live
 			// prefix changes meaning the moment the swap runs.
 			'live_prefix'      => '',

@@ -10,6 +10,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Rest;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Exporter;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\PartSpecs;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Selection;
+use NewfoldLabs\WP\SiteMigrator\Core\Export\TableOwners;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
@@ -132,6 +133,18 @@ class ExportController extends Controller {
 
 		\register_rest_route(
 			$this->namespace,
+			'/export/belongings',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'belongings' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
+
+		\register_rest_route(
+			$this->namespace,
 			'/export/download',
 			array(
 				array(
@@ -179,6 +192,111 @@ class ExportController extends Controller {
 				'locked'    => $this->run_in_progress(),
 			)
 		);
+	}
+
+	/**
+	 * What each installed plugin and theme appears to own in the database.
+	 *
+	 * Its own endpoint rather than part of `/export/contents`, because it is the expensive one:
+	 * answering means reading every PHP file of every plugin on the site, and the screen only
+	 * needs it in the one case where somebody has said the database is not travelling. Asking for
+	 * it then, rather than on every visit to the picker, is the difference between a screen that
+	 * opens instantly and one that thinks for ten seconds about a question nobody asked.
+	 *
+	 * What comes back is a suggestion and is labelled as one on the screen. `TableOwners` says how
+	 * it is arrived at and what it cannot see.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function belongings() {
+		$owners = new TableOwners( $this->table_names() );
+		$dirs   = $this->code_directories();
+		$found  = array();
+
+		foreach ( $dirs as $part => $children ) {
+			foreach ( $children as $slug => $dir ) {
+				$tables  = $owners->owned_by( $dir );
+				$options = $owners->options_in( $dir, $this->option_names() );
+
+				if ( empty( $tables ) && empty( $options ) ) {
+					continue;
+				}
+
+				$found[ $part ][ $slug ] = array(
+					'tables'  => $tables,
+					'options' => \array_values( $options ),
+				);
+			}
+		}
+
+		$claimed = array();
+
+		foreach ( $found as $children ) {
+			foreach ( $children as $one ) {
+				$claimed[] = $one['tables'];
+			}
+		}
+
+		return \rest_ensure_response(
+			array(
+				'belongs'   => $found,
+				// Everything the scan could not attribute, so a table a plugin builds a name for
+				// at runtime is offered rather than quietly left behind.
+				'unclaimed' => $owners->unclaimed( $claimed ),
+			)
+		);
+	}
+
+	/**
+	 * Every plugin and theme directory on this site, keyed by the part it belongs to.
+	 *
+	 * @return array Map of part name => map of slug => absolute directory.
+	 */
+	protected function code_directories() {
+		$dirs = array();
+
+		foreach ( PartSpecs::all() as $spec ) {
+			$name = $spec->name();
+
+			if ( 'plugins' !== $name && 'mu-plugins' !== $name && 0 !== \strpos( $name, 'themes' ) ) {
+				continue;
+			}
+
+			$root = \rtrim( $spec->root(), '/\\' );
+
+			foreach ( PartSpecs::children( $spec ) as $child ) {
+				$dirs[ $name ][ $child ] = $root . DIRECTORY_SEPARATOR . $child;
+			}
+		}
+
+		return $dirs;
+	}
+
+	/**
+	 * This site's table names.
+	 *
+	 * @return array
+	 */
+	protected function table_names() {
+		global $wpdb;
+
+		$rows = $wpdb->get_col( 'SHOW TABLES' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+
+		return \is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * This site's option names.
+	 *
+	 * @return array
+	 */
+	protected function option_names() {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$rows = $wpdb->get_col( "SELECT `option_name` FROM `{$wpdb->options}`" );
+
+		return \is_array( $rows ) ? $rows : array();
 	}
 
 	/**

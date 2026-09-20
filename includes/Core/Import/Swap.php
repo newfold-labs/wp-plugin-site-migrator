@@ -143,6 +143,153 @@ class Swap {
 	}
 
 	/**
+	 * Swap a named few tables and leave the rest of the database where it is.
+	 *
+	 * The whole-site swap moves everything with the live prefix, which is right when the package
+	 * *is* the site. A package that carries a plugin's own tables is not that: the destination
+	 * keeps its posts, its users and its settings, and what changes is the handful of tables the
+	 * plugin owns. Same statement, same atomicity, a shorter list -- and the same backup, so the
+	 * undo is the same rename in reverse.
+	 *
+	 * A name with no live table is an arrival rather than a replacement: nothing goes to the
+	 * backup for it, and rolling back drops it.
+	 *
+	 * @param array $state Import state, modified in place.
+	 * @param array $names Table names without any prefix.
+	 *
+	 * @return void
+	 *
+	 * @throws \RuntimeException If there is nothing to move, or the rename fails.
+	 */
+	public function execute_only( array &$state, array $names ) {
+		$pairs    = array();
+		$replaced = array();
+		$added    = array();
+
+		foreach ( $names as $name ) {
+			$name = (string) $name;
+
+			if ( '' === $name ) {
+				continue;
+			}
+
+			if ( ! $this->table_exists( $this->stage . $name ) ) {
+				continue;
+			}
+
+			if ( $this->table_exists( $this->live . $name ) ) {
+				$pairs[]    = array( $this->live . $name, $this->backup . $name );
+				$replaced[] = $name;
+			} else {
+				$added[] = $name;
+			}
+
+			$pairs[] = array( $this->stage . $name, $this->live . $name );
+		}
+
+		if ( empty( $pairs ) ) {
+			throw new \RuntimeException( 'Nothing to swap.' );
+		}
+
+		$this->rename( $pairs );
+
+		$state['swapped']       = true;
+		$state['swapped_at']    = \gmdate( 'c' );
+		$state['backup_count']  = \count( $replaced );
+		$state['swapped_names'] = \array_values( \array_merge( $replaced, $added ) );
+		$state['added_names']   = \array_values( $added );
+	}
+
+	/**
+	 * Undo a swap of a named few tables.
+	 *
+	 * The mirror of `execute_only()`, and it has one case the whole-site rollback does not: a
+	 * table the destination never had is not put back, because there is nothing to put back. It
+	 * goes to the staging prefix with the others and is dropped from there.
+	 *
+	 * @param array $state Import state, modified in place.
+	 *
+	 * @return void
+	 *
+	 * @throws \RuntimeException If the rename fails.
+	 */
+	public function rollback_only( array &$state ) {
+		$names = isset( $state['swapped_names'] ) ? (array) $state['swapped_names'] : array();
+		$pairs = array();
+
+		foreach ( $names as $name ) {
+			$name = (string) $name;
+
+			if ( '' === $name || ! $this->table_exists( $this->live . $name ) ) {
+				continue;
+			}
+
+			$pairs[] = array( $this->live . $name, $this->stage . $name );
+
+			if ( $this->table_exists( $this->backup . $name ) ) {
+				$pairs[] = array( $this->backup . $name, $this->live . $name );
+			}
+		}
+
+		if ( ! empty( $pairs ) ) {
+			$this->rename( $pairs );
+		}
+
+		$state['swapped']     = false;
+		$state['rolled_back'] = true;
+	}
+
+	/**
+	 * Take a named few backup tables out of the way before a partial swap needs their names.
+	 *
+	 * @param array $names Table names without any prefix.
+	 *
+	 * @return array The full names that were dropped.
+	 */
+	public function clear_backup_names( array $names ) {
+		global $wpdb;
+
+		$dropped = array();
+
+		foreach ( $names as $name ) {
+			$table = $this->backup . (string) $name;
+
+			if ( ! $this->table_exists( $table ) ) {
+				continue;
+			}
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
+			$wpdb->query( 'DROP TABLE IF EXISTS `' . \esc_sql( $table ) . '`' );
+
+			$dropped[] = $table;
+		}
+
+		return $dropped;
+	}
+
+	/**
+	 * Whether one table is there.
+	 *
+	 * @param string $table Full table name.
+	 *
+	 * @return bool
+	 */
+	public function table_exists( $table ) {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s',
+				$wpdb->dbname,
+				$table
+			)
+		);
+
+		return null !== $found;
+	}
+
+	/**
 	 * Put the destination's own tables back.
 	 *
 	 * @param array $state Import state, modified in place.

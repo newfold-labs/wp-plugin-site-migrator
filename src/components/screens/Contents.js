@@ -213,6 +213,11 @@ export const Contents = () => {
 	const [ saving, setSaving ] = useState( false );
 	const [ error, setError ] = useState( '' );
 
+	// What each plugin and theme appears to own in the database, asked for only when it matters.
+	// Reading every plugin's PHP is the expensive question on this screen, and it is only worth
+	// answering for somebody who has said the database is staying behind.
+	const [ belongings, setBelongings ] = useState( null );
+
 	useEffect( () => {
 		let live = true;
 
@@ -277,6 +282,26 @@ export const Contents = () => {
 			return { ...current, paths };
 		} );
 
+	const skipping = !! selection.database.skip_database;
+
+	useEffect( () => {
+		if ( ! skipping || belongings ) {
+			return undefined;
+		}
+
+		let live = true;
+
+		api.exportBelongings().then( ( response ) => {
+			if ( live && ! response.failed ) {
+				setBelongings( response );
+			}
+		} );
+
+		return () => {
+			live = false;
+		};
+	}, [ skipping, belongings ] );
+
 	const toggleFlag = ( flag ) =>
 		setSelection( ( current ) => {
 			const database = { ...current.database };
@@ -285,6 +310,65 @@ export const Contents = () => {
 				delete database[ flag ];
 			} else {
 				database[ flag ] = true;
+			}
+
+			return { ...current, database };
+		} );
+
+	// Carrying a plugin's data is one decision, not five: its tables and its settings travel
+	// together or not at all, because half of a plugin's data is not a state anybody asked for.
+	const carrying = ( entry ) =>
+		( entry.tables || [] ).every( ( t ) =>
+			( selection.database.carry_tables || [] ).includes( t )
+		) &&
+		( entry.options || [] ).every( ( o ) =>
+			( selection.database.carry_options || [] ).includes( o )
+		);
+
+	const toggleCarry = ( entry ) =>
+		setSelection( ( current ) => {
+			const database = { ...current.database };
+			const tables = new Set( database.carry_tables || [] );
+			const options = new Set( database.carry_options || [] );
+			const on = carrying( entry );
+
+			( entry.tables || [] ).forEach( ( t ) =>
+				on ? tables.delete( t ) : tables.add( t )
+			);
+			( entry.options || [] ).forEach( ( o ) =>
+				on ? options.delete( o ) : options.add( o )
+			);
+
+			if ( tables.size ) {
+				database.carry_tables = [ ...tables ];
+			} else {
+				delete database.carry_tables;
+			}
+
+			if ( options.size ) {
+				database.carry_options = [ ...options ];
+			} else {
+				delete database.carry_options;
+			}
+
+			return { ...current, database };
+		} );
+
+	const toggleCarryTable = ( name ) =>
+		setSelection( ( current ) => {
+			const database = { ...current.database };
+			const tables = new Set( database.carry_tables || [] );
+
+			if ( tables.has( name ) ) {
+				tables.delete( name );
+			} else {
+				tables.add( name );
+			}
+
+			if ( tables.size ) {
+				database.carry_tables = [ ...tables ];
+			} else {
+				delete database.carry_tables;
 			}
 
 			return { ...current, database };
@@ -342,6 +426,12 @@ export const Contents = () => {
 	// Said back locally rather than waited for from the server: the point of the summary is to
 	// answer "what have I just done" while the boxes are still being ticked.
 	const leaving = [];
+
+	// First in the list for the reason it is first in `Selection::describe()`: it is not one more
+	// omission, it is what kind of package this is.
+	if ( selection.database.skip_database ) {
+		leaving.push( __( 'the database — code only', 'nfd-site-migrator' ) );
+	}
 
 	Object.keys( selection.parts ).forEach( ( name ) =>
 		leaving.push( label( name ) )
@@ -516,34 +606,232 @@ export const Contents = () => {
 						</p>
 						<p className="nfd-sm-hint">
 							{ __(
-								'The database always travels — it is the site. What can go is the parts of it nothing reads.',
+								'The database is the site: the posts, the settings, the users, and what every plugin has stored. Leave it in and the destination becomes this site. Leave it out and the package carries code only.',
 								'nfd-site-migrator'
 							) }
 						</p>
 
-						{ Object.keys( FLAGS ).map( ( flag ) => (
-							<label
-								className="nfd-sm-check"
-								key={ flag }
-								htmlFor={ `nfd-sm-flag-${ flag }` }
-							>
-								<input
-									id={ `nfd-sm-flag-${ flag }` }
-									type="checkbox"
-									checked={ !! selection.database[ flag ] }
-									disabled={ locked }
-									onChange={ () => toggleFlag( flag ) }
-								/>
-								<span>
-									<strong>{ FLAGS[ flag ].label }</strong>
-									<span className="nfd-sm-pick-blurb">
-										{ FLAGS[ flag ].blurb }
-									</span>
+						{ /* Its own control, above the filters and not among them. The three
+						     below decide what a dump leaves out; this one decides whether there
+						     is a dump, and a package with none is a different kind of package —
+						     which is why unchecking it takes the rest of this card away rather
+						     than leaving three settings that would have nothing to apply to. */ }
+						<label
+							className="nfd-sm-check"
+							htmlFor="nfd-sm-flag-skip_database"
+						>
+							<input
+								id="nfd-sm-flag-skip_database"
+								type="checkbox"
+								checked={ ! skipping }
+								disabled={ locked }
+								onChange={ () => toggleFlag( 'skip_database' ) }
+							/>
+							<span>
+								<strong>
+									{ __(
+										'Bring the database',
+										'nfd-site-migrator'
+									) }
+								</strong>
+								<span className="nfd-sm-pick-blurb">
+									{ __(
+										'On by default. Turn it off to send plugins and themes on their own — the destination keeps its own content, users and settings, and what arrives is code it has to activate itself.',
+										'nfd-site-migrator'
+									) }
 								</span>
-							</label>
-						) ) }
+							</span>
+						</label>
 
-						{ data.tables.length > 0 && (
+						{ skipping && (
+							<div className="nfd-sm-note nfd-sm-note--warn">
+								{ __(
+									'This package will carry no database, so the destination keeps its own content, users and settings — and what arrives is code it has to activate itself.',
+									'nfd-site-migrator'
+								) }
+							</div>
+						) }
+
+						{ skipping && ! belongings && (
+							<Loading>
+								{ __(
+									'Reading each plugin to see what it owns…',
+									'nfd-site-migrator'
+								) }
+							</Loading>
+						) }
+
+						{ skipping &&
+							belongings &&
+							Object.keys( belongings.belongs || {} ).length >
+								0 && (
+								<div className="nfd-sm-pick-sub">
+									<p className="nfd-sm-hint">
+										{ __(
+											'These plugins and themes keep data of their own. Their tables and settings can travel with them and be merged into the destination, leaving everything else there alone. Found by reading each plugin’s code, so check the list rather than trusting it.',
+											'nfd-site-migrator'
+										) }
+									</p>
+
+									{ Object.keys( belongings.belongs ).map(
+										( part ) =>
+											Object.keys(
+												belongings.belongs[ part ]
+											).map( ( slug ) => {
+												const entry =
+													belongings.belongs[ part ][
+														slug
+													];
+
+												return (
+													<label
+														className="nfd-sm-check"
+														key={
+															part + '/' + slug
+														}
+														htmlFor={ `nfd-sm-carry-${ part }-${ slug }` }
+													>
+														<input
+															id={ `nfd-sm-carry-${ part }-${ slug }` }
+															type="checkbox"
+															checked={ carrying(
+																entry
+															) }
+															disabled={ locked }
+															onChange={ () =>
+																toggleCarry(
+																	entry
+																)
+															}
+														/>
+														<span>
+															<strong>
+																{ data.parts.find(
+																	( one ) =>
+																		one.name ===
+																		part
+																)?.labels?.[
+																	slug
+																] || slug }
+															</strong>
+															<span className="nfd-sm-pick-blurb">
+																{ sprintf(
+																	/* translators: 1: number of tables, 2: number of settings. */
+																	__(
+																		'%1$d table(s) and %2$d setting(s): %3$s',
+																		'nfd-site-migrator'
+																	),
+																	(
+																		entry.tables ||
+																		[]
+																	).length,
+																	(
+																		entry.options ||
+																		[]
+																	).length,
+																	[
+																		...(
+																			entry.tables ||
+																			[]
+																		).slice(
+																			0,
+																			4
+																		),
+																		...(
+																			entry.options ||
+																			[]
+																		).slice(
+																			0,
+																			4
+																		),
+																	].join(
+																		', '
+																	)
+																) }
+															</span>
+														</span>
+													</label>
+												);
+											} )
+									) }
+								</div>
+							) }
+
+						{ skipping &&
+							belongings &&
+							( belongings.unclaimed || [] ).length > 0 && (
+								<details className="nfd-sm-details">
+									<summary>
+										{ __(
+											'Tables nothing claimed — carry one anyway',
+											'nfd-site-migrator'
+										) }
+									</summary>
+									<div className="nfd-sm-pick-sub">
+										<p className="nfd-sm-hint">
+											{ __(
+												'No plugin’s code names these, which usually means the name is built while the plugin runs, or that whatever made the table is no longer installed.',
+												'nfd-site-migrator'
+											) }
+										</p>
+										{ belongings.unclaimed.map(
+											( name ) => (
+												<label
+													className="nfd-sm-check"
+													key={ name }
+													htmlFor={ `nfd-sm-carry-table-${ name }` }
+												>
+													<input
+														id={ `nfd-sm-carry-table-${ name }` }
+														type="checkbox"
+														checked={ (
+															selection.database
+																.carry_tables ||
+															[]
+														).includes( name ) }
+														disabled={ locked }
+														onChange={ () =>
+															toggleCarryTable(
+																name
+															)
+														}
+													/>
+													<span className="nfd-sm-mono">
+														{ name }
+													</span>
+												</label>
+											)
+										) }
+									</div>
+								</details>
+							) }
+
+						{ ! skipping &&
+							Object.keys( FLAGS ).map( ( flag ) => (
+								<label
+									className="nfd-sm-check"
+									key={ flag }
+									htmlFor={ `nfd-sm-flag-${ flag }` }
+								>
+									<input
+										id={ `nfd-sm-flag-${ flag }` }
+										type="checkbox"
+										checked={
+											!! selection.database[ flag ]
+										}
+										disabled={ locked }
+										onChange={ () => toggleFlag( flag ) }
+									/>
+									<span>
+										<strong>{ FLAGS[ flag ].label }</strong>
+										<span className="nfd-sm-pick-blurb">
+											{ FLAGS[ flag ].blurb }
+										</span>
+									</span>
+								</label>
+							) ) }
+
+						{ ! skipping && data.tables.length > 0 && (
 							<details className="nfd-sm-details">
 								<summary>
 									{ __(

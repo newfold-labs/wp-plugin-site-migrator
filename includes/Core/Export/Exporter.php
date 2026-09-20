@@ -372,6 +372,19 @@ class Exporter {
 	protected function step_database( array &$state, $deadline ) {
 		$this->progress->start( Checkpoint::STAGE_DATABASE );
 
+		// A package can be code only. Nothing is written at all in that case -- not an empty
+		// dump, which would arrive at a destination as a database that replaces everything with
+		// nothing -- and the manifest simply has no `database` entry, which is how the other side
+		// tells "no data was sent" from "the data is missing".
+		if ( ! $this->selection( $state )->wants_database()
+			&& ! $this->selection( $state )->is_partial_database() ) {
+			$this->progress->finish( Checkpoint::STAGE_DATABASE );
+
+			$state['stage'] = Checkpoint::STAGE_FILES;
+
+			return;
+		}
+
 		$exporter = new DatabaseExporter( $this->selection( $state ) );
 		$target   = $this->package->path( DatabaseExporter::FILE );
 
@@ -487,12 +500,20 @@ class Exporter {
 			\array_values( \array_diff( $this->part_names( PartSpecs::all() ), $included ) )
 		);
 
-		$database = DatabaseExporter::FILE;
-		$manifest->set_database(
-			$database,
-			$this->package->size( $database ),
-			$this->package->checksum( $database )
-		);
+		if ( $selection->wants_database() || $selection->is_partial_database() ) {
+			$database = DatabaseExporter::FILE;
+			$manifest->set_database(
+				$database,
+				$this->package->size( $database ),
+				$this->package->checksum( $database ),
+				$selection->is_partial_database()
+					? array(
+						'tables'  => \array_values( $selection->carried_tables() ),
+						'options' => \array_values( $selection->carried_options() ),
+					)
+					: array()
+			);
+		}
 
 		// Sizes and checksums were taken as each volume and each loose file was written. They
 		// are read back here rather than recomputed, so finalize stays a bookkeeping step
