@@ -174,4 +174,89 @@ class TableOwnersTest extends TestCase {
 			$owners->options_in( $dir, array( 'home', 'active_plugins', 'acme_settings' ) )
 		);
 	}
+
+	/**
+	 * Including the harmless-looking ones, which are the ones this got wrong.
+	 *
+	 * Seen on the browser suite: Contact Form 7 came back owning `date_format`, `disallowed_keys`
+	 * and `html_type`; Yoast owning `category_base` and `tag_base`; WP Crontrol owning
+	 * `date_format` and `time_format`. None of them breaks a site the way `home` would, which is
+	 * exactly the problem -- ticking "bring this plugin's settings" would have reformatted the
+	 * destination's dates and moved its permalink bases with nothing to show it had happened.
+	 */
+	public function test_a_core_setting_a_plugin_formats_with_is_not_its_setting() {
+		$dir = $this->plugin(
+			'acme-forms',
+			'$when = get_option( \'date_format\' );' . "\n"
+				. '$base = get_option( \'category_base\' );' . "\n"
+				. '$bad = get_option( \'disallowed_keys\' );' . "\n"
+				. 'update_option( \'acme_forms_version\', 3 );'
+		);
+
+		$owners = new TableOwners( array(), 'wp_' );
+
+		$this->assertSame(
+			array( 'acme_forms_version' ),
+			$owners->options_in(
+				$dir,
+				array( 'date_format', 'category_base', 'disallowed_keys', 'acme_forms_version' )
+			)
+		);
+	}
+	/**
+	 * A core table a plugin queries is not a table the plugin owns.
+	 *
+	 * Seen on a real site: WooCommerce's code names `wp_posts`, `wp_options`, `wp_terms` and
+	 * `wp_term_taxonomy` the same way it names its own, so the scan reported it owning 53 tables
+	 * with the site's content among them — under a checkbox offering to carry "this plugin's
+	 * data". The save refuses core tables anyway; the point is that it must never be offered.
+	 */
+	public function test_a_core_table_a_plugin_queries_is_not_its_own() {
+		$dir = $this->plugin(
+			'acme-widgets',
+			'$p = $wpdb->prefix . \'posts\';' . "\n"
+				. '$o = "{$wpdb->prefix}options";' . "\n"
+				. '$mine = $wpdb->prefix . \'acme_log\';'
+		);
+
+		$owners = new TableOwners(
+			array( 'wp_posts', 'wp_options', 'wp_acme_log' ),
+			'wp_'
+		);
+
+		$this->assertSame( array( 'wp_acme_log' ), $owners->owned_by( $dir ) );
+	}
+
+	/**
+	 * A file buried deep is read when it is named like a schema, and not otherwise.
+	 *
+	 * The scan is shallow because a thorough one costs minutes on a real site — 20ms a file, and
+	 * WooCommerce alone has thousands. What it still reads at any depth is the kind of file that
+	 * declares things, which is where `dbDelta()` lives.
+	 */
+	public function test_it_reads_deep_files_that_look_like_schemas() {
+		$dir = $this->plugin( 'acme-widgets', '// nothing here' );
+
+		\mkdir( $dir . '/src/very/deep', 0777, true );
+		\file_put_contents( // phpcs:ignore WordPress.WP.AlternativeFunctions
+			$dir . '/src/very/deep/class-install.php',
+			'<?php $t = $wpdb->prefix . \'acme_log\';'
+		);
+		\file_put_contents( // phpcs:ignore WordPress.WP.AlternativeFunctions
+			$dir . '/src/very/deep/class-renderer.php',
+			'<?php $t = $wpdb->prefix . \'acme_cache\';'
+		);
+
+		$owners = new TableOwners( array( 'wp_acme_log', 'wp_acme_cache' ), 'wp_' );
+
+		$this->assertSame( array( 'wp_acme_log' ), $owners->owned_by( $dir ) );
+
+		// And a deep scan, when somebody asks for one, finds both.
+		$deep = new TableOwners( array( 'wp_acme_log', 'wp_acme_cache' ), 'wp_', 30.0, true );
+
+		$this->assertSame(
+			array( 'wp_acme_log', 'wp_acme_cache' ),
+			$deep->owned_by( $dir )
+		);
+	}
 }

@@ -112,6 +112,114 @@ class Selection {
 	);
 
 	/**
+	 * The rest of what WordPress itself puts in the options table.
+	 *
+	 * The list above is the dangerous half -- carrying one of those moves the destination's
+	 * address or its theme. This is the other half, and it is refused for a different reason: a
+	 * setting is not a plugin's just because the plugin read it. Contact Form 7 asks for
+	 * `date_format` to print a date and Yoast asks for `category_base` to build a URL, and a scan
+	 * that credits them with owning those names offers to carry the destination's date format and
+	 * permalink bases away under the heading of a plugin's own data. Nothing breaks, which is what
+	 * makes it worse: the destination quietly starts formatting its dates like another site.
+	 *
+	 * Taken from core's `populate_options()`, which is the definition of "core put this here",
+	 * plus the ones core writes from elsewhere.
+	 *
+	 * @var array
+	 */
+	protected static $core_options = array(
+		'admin_email_lifespan',
+		'adminhash',
+		'auto_plugin_theme_update_emails',
+		'auto_update_core_dev',
+		'auto_update_core_major',
+		'auto_update_core_minor',
+		'avatar_default',
+		'avatar_rating',
+		'blog_public',
+		'can_compress_scripts',
+		'category_base',
+		'close_comments_days_old',
+		'close_comments_for_old_posts',
+		'comment_max_links',
+		'comment_moderation',
+		'comment_order',
+		'comment_previously_approved',
+		'comment_registration',
+		'comments_notify',
+		'comments_per_page',
+		'date_format',
+		'default_category',
+		'default_comment_status',
+		'default_comments_page',
+		'default_email_category',
+		'default_link_category',
+		'default_ping_status',
+		'default_pingback_flag',
+		'default_post_format',
+		'disallowed_keys',
+		'finished_splitting_shared_terms',
+		'fresh_site',
+		'hack_file',
+		'html_type',
+		'https_detection_errors',
+		'https_migration_required',
+		'image_default_align',
+		'image_default_link_type',
+		'image_default_size',
+		'large_size_h',
+		'large_size_w',
+		'link_manager_enabled',
+		'links_updated_date_format',
+		'mailserver_login',
+		'mailserver_pass',
+		'mailserver_port',
+		'mailserver_url',
+		'medium_large_size_h',
+		'medium_large_size_w',
+		'medium_size_h',
+		'medium_size_w',
+		'moderation_keys',
+		'moderation_notify',
+		'nav_menu_options',
+		'page_comments',
+		'ping_sites',
+		'posts_per_page',
+		'posts_per_rss',
+		'recently_edited',
+		'recovery_keys',
+		'require_name_email',
+		'rss_use_excerpt',
+		'show_avatars',
+		'show_comments_cookies_opt_in',
+		'site_logo',
+		'start_of_week',
+		'sticky_posts',
+		'tag_base',
+		'thread_comments',
+		'thread_comments_depth',
+		'thumbnail_crop',
+		'thumbnail_size_h',
+		'thumbnail_size_w',
+		'time_format',
+		'uninstall_plugins',
+		'uploads_use_yearmonth_folders',
+		'use_balancetags',
+		'use_smilies',
+		'use_trackback',
+		'user_count',
+		'widget_block',
+		'widget_categories',
+		'widget_rss',
+		'widget_text',
+		'wp_attachment_pages_enabled',
+		'wp_calendar_block_has_published_posts',
+		'wp_force_deactivated_plugins',
+		'wp_notes_notify',
+		'wp_page_for_privacy_policy',
+	);
+
+	/**
 	 * The database filters this understands, and their defaults.
 	 *
 	 * @var array
@@ -354,7 +462,8 @@ class Selection {
 			return true;
 		}
 
-		return \in_array( $name, self::$protected_options, true );
+		return \in_array( $name, self::$protected_options, true )
+			|| \in_array( $name, self::$core_options, true );
 	}
 
 	/**
@@ -363,7 +472,7 @@ class Selection {
 	 * @return array
 	 */
 	public static function protected_options() {
-		return self::$protected_options;
+		return \array_merge( self::$protected_options, self::$core_options );
 	}
 
 	/**

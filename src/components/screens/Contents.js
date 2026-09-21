@@ -217,6 +217,8 @@ export const Contents = () => {
 	// Reading every plugin's PHP is the expensive question on this screen, and it is only worth
 	// answering for somebody who has said the database is staying behind.
 	const [ belongings, setBelongings ] = useState( null );
+	const [ scan, setScan ] = useState( null );
+	const [ scanError, setScanError ] = useState( '' );
 
 	useEffect( () => {
 		let live = true;
@@ -284,23 +286,65 @@ export const Contents = () => {
 
 	const skipping = !! selection.database.skip_database;
 
+	// The scan is stepped, so this is a loop rather than a request: each call reads for a few
+	// seconds and says where to carry on from, and what has been found so far is merged in as it
+	// arrives. Two things it must do that the first version did not — show progress, because on a
+	// real site this takes the best part of a minute, and *stop* on a failure, because a spinner
+	// that cannot end looks exactly like a screen that has crashed.
 	useEffect( () => {
-		if ( ! skipping || belongings ) {
+		if ( ! skipping || belongings?.done ) {
 			return undefined;
 		}
 
 		let live = true;
 
-		api.exportBelongings().then( ( response ) => {
-			if ( live && ! response.failed ) {
-				setBelongings( response );
+		const step = async ( cursor, offset, sofar ) => {
+			const response = await api.exportBelongings( cursor, offset );
+
+			if ( ! live ) {
+				return;
 			}
-		} );
+
+			if ( response.failed ) {
+				setScanError( response.error );
+				return;
+			}
+
+			const merged = { ...sofar };
+
+			Object.keys( response.belongs || {} ).forEach( ( part ) => {
+				merged[ part ] = {
+					...( merged[ part ] || {} ),
+					...response.belongs[ part ],
+				};
+			} );
+
+			setBelongings( {
+				belongs: merged,
+				unclaimed: response.unclaimed || [],
+				done: !! response.done,
+			} );
+
+			setScan( {
+				at: response.cursor,
+				total: response.total,
+				name: response.scanning,
+			} );
+
+			if ( ! response.done ) {
+				step( response.cursor, response.offset, merged );
+			}
+		};
+
+		step( 0, 0, {} );
 
 		return () => {
 			live = false;
 		};
-	}, [ skipping, belongings ] );
+		// `belongings` is written by the loop itself; re-running on every merge would start a
+		// second loop from the top.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ skipping ] );
 
 	const toggleFlag = ( flag ) =>
 		setSelection( ( current ) => {
@@ -353,6 +397,60 @@ export const Contents = () => {
 
 			return { ...current, database };
 		} );
+
+	// A plugin can own twenty tables and forty settings, and this row is a checkbox rather than a
+	// report: three names is enough to recognise what the data is, and the count beside them says
+	// how much is behind the tick.
+	const owned = ( entry ) => [
+		...( entry.tables || [] ),
+		...( entry.options || [] ),
+	];
+
+	// "4 table(s), 0 setting(s)" is two pieces of noise in a row that has to be read at a glance.
+	// A half that is empty is not mentioned at all.
+	const counts = ( entry ) => {
+		const tables = ( entry.tables || [] ).length;
+		const options = ( entry.options || [] ).length;
+
+		const t = sprintf(
+			/* translators: %d: number of database tables. */
+			_n( '%d table', '%d tables', tables, 'nfd-site-migrator' ),
+			tables
+		);
+
+		const o = sprintf(
+			/* translators: %d: number of settings. */
+			_n( '%d setting', '%d settings', options, 'nfd-site-migrator' ),
+			options
+		);
+
+		if ( tables && options ) {
+			return sprintf(
+				/* translators: 1: e.g. "4 tables", 2: e.g. "12 settings". */
+				__( '%1$s and %2$s', 'nfd-site-migrator' ),
+				t,
+				o
+			);
+		}
+
+		return tables ? t : o;
+	};
+
+	const listing = ( entry ) => {
+		const all = owned( entry );
+		const shown = all.slice( 0, 3 ).join( ', ' );
+
+		if ( all.length <= 3 ) {
+			return shown;
+		}
+
+		return sprintf(
+			/* translators: 1: the first few table and setting names, 2: how many more there are. */
+			__( '%1$s and %2$d more', 'nfd-site-migrator' ),
+			shown,
+			all.length - 3
+		);
+	};
 
 	const toggleCarryTable = ( name ) =>
 		setSelection( ( current ) => {
@@ -652,20 +750,49 @@ export const Contents = () => {
 							</div>
 						) }
 
-						{ skipping && ! belongings && (
+						{ skipping && scanError && (
+							<div className="nfd-sm-note nfd-sm-note--stop">
+								<p>
+									{ __(
+										'Could not work out which plugins own what:',
+										'nfd-site-migrator'
+									) }
+								</p>
+								<p>{ scanError }</p>
+								<p>
+									{ __(
+										'You can still send the plugins and themes on their own — this only decides whether their tables and settings go with them.',
+										'nfd-site-migrator'
+									) }
+								</p>
+							</div>
+						) }
+
+						{ skipping && ! scanError && ! belongings?.done && (
 							<Loading>
-								{ __(
-									'Reading each plugin to see what it owns…',
-									'nfd-site-migrator'
-								) }
+								{ scan?.total
+									? sprintf(
+											/* translators: 1: number read, 2: total, 3: plugin name. */
+											__(
+												'Reading each plugin to see what it owns — %1$d of %2$d (%3$s)…',
+												'nfd-site-migrator'
+											),
+											scan.at,
+											scan.total,
+											scan.name || '…'
+									  )
+									: __(
+											'Reading each plugin to see what it owns…',
+											'nfd-site-migrator'
+									  ) }
 							</Loading>
 						) }
 
 						{ skipping &&
-							belongings &&
-							Object.keys( belongings.belongs || {} ).length >
+							! scanError &&
+							Object.keys( belongings?.belongs || {} ).length >
 								0 && (
-								<div className="nfd-sm-pick-sub">
+								<div className="nfd-sm-owns">
 									<p className="nfd-sm-hint">
 										{ __(
 											'These plugins and themes keep data of their own. Their tables and settings can travel with them and be merged into the destination, leaving everything else there alone. Found by reading each plugin’s code, so check the list rather than trusting it.',
@@ -714,39 +841,14 @@ export const Contents = () => {
 																	slug
 																] || slug }
 															</strong>
-															<span className="nfd-sm-pick-blurb">
-																{ sprintf(
-																	/* translators: 1: number of tables, 2: number of settings. */
-																	__(
-																		'%1$d table(s) and %2$d setting(s): %3$s',
-																		'nfd-site-migrator'
-																	),
-																	(
-																		entry.tables ||
-																		[]
-																	).length,
-																	(
-																		entry.options ||
-																		[]
-																	).length,
-																	[
-																		...(
-																			entry.tables ||
-																			[]
-																		).slice(
-																			0,
-																			4
-																		),
-																		...(
-																			entry.options ||
-																			[]
-																		).slice(
-																			0,
-																			4
-																		),
-																	].join(
-																		', '
-																	)
+															<span className="nfd-sm-pick-meta">
+																{ counts(
+																	entry
+																) }
+															</span>
+															<span className="nfd-sm-owns-names">
+																{ listing(
+																	entry
 																) }
 															</span>
 														</span>
@@ -758,7 +860,7 @@ export const Contents = () => {
 							) }
 
 						{ skipping &&
-							belongings &&
+							belongings?.done &&
 							( belongings.unclaimed || [] ).length > 0 && (
 								<details className="nfd-sm-details">
 									<summary>

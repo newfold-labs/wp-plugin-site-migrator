@@ -163,11 +163,20 @@ test.describe( 'Contents', () => {
 		// Matched on the route's last segment alone: apiFetch sends these as
 		// `?rest_route=%2F…%2Fexport%2Fbelongings`, so a matcher looking for `export/belongings`
 		// matches nothing and fails as a timeout, which reads like the request never happened.
-		const scan = page.waitForResponse(
-			( response ) =>
-				response.url().includes( 'belongings' ) &&
-				response.status() === 200
-		);
+		//
+		// And waited on until `done`, not until the first answer: the scan is stepped, so one
+		// 200 proves only that it started. What this is here to catch is a loop that never ends,
+		// which is what the screen did on a real site before the scan was budgeted.
+		const scan = page.waitForResponse( async ( response ) => {
+			if (
+				! response.url().includes( 'belongings' ) ||
+				response.status() !== 200
+			) {
+				return false;
+			}
+
+			return !! ( await response.json() ).done;
+		} );
 
 		await database.uncheck();
 
@@ -177,9 +186,16 @@ test.describe( 'Contents', () => {
 		).toHaveCount( 0 );
 		await expect( page.locator( '.nfd-sm-note--warn' ) ).toBeVisible();
 
-		// And the scan runs: the screen asking the server to read every plugin's code, which is
-		// the one expensive question here and must not be asked before somebody needs it.
-		expect( ( await ( await scan ).json() ).belongs ).toBeDefined();
+		// And the scan runs to the end: the screen asking the server to read every plugin's code,
+		// a few seconds at a time, which is the one expensive question here and must not be asked
+		// before somebody needs it.
+		const answer = await ( await scan ).json();
+
+		expect( answer.belongs ).toBeDefined();
+		expect( answer.done ).toBe( true );
+
+		// The spinner says so while it works, and stops saying so when it is finished.
+		await expect( page.locator( '.nfd-sm-loading' ) ).toHaveCount( 0 );
 		expect( errors ).toEqual( [] );
 	} );
 } );

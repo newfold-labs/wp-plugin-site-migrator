@@ -48,6 +48,17 @@ class TableOwners {
 	const MAX_BYTES = 16777216;
 
 	/**
+	 * How long the whole scan may take, in seconds.
+	 *
+	 * Measured before this existed: a real 13-plugin site -- Jetpack, WooCommerce, WPForms, Yoast
+	 * -- took **132 seconds** with a warm cache, which is not a slow answer but no answer at all.
+	 * The request outlives nothing and the screen waits on a spinner for ever. So the scan is
+	 * bounded by the clock and says when it stopped early, because a partial list somebody can
+	 * see is worth incomparably more than a complete one that never arrives.
+	 */
+	const MAX_SECONDS = 8.0;
+
+	/**
 	 * The tables this site actually has.
 	 *
 	 * @var array
@@ -69,14 +80,48 @@ class TableOwners {
 	protected $scanned = array();
 
 	/**
+	 * When the whole scan has to stop, whatever it has found by then.
+	 *
+	 * @var float
+	 */
+	protected $deadline = 0.0;
+
+	/**
+	 * Whether everything was read, or the clock ran out first.
+	 *
+	 * @var bool
+	 */
+	protected $complete = true;
+
+	/**
+	 * Whether to read every file rather than the ones that declare things.
+	 *
+	 * @var bool
+	 */
+	protected $deep = false;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param array  $tables Table names as the database reports them, with the prefix on.
-	 * @param string $prefix Table prefix. Defaults to this site's.
+	 * @param array  $tables  Table names as the database reports them, with the prefix on.
+	 * @param string $prefix  Table prefix. Defaults to this site's.
+	 * @param float  $seconds How long this instance may spend reading, across every directory.
+	 * @param bool   $deep    Read every file rather than the ones that declare things.
 	 */
-	public function __construct( array $tables, $prefix = '' ) {
-		$this->tables = \array_values( \array_filter( \array_map( 'strval', $tables ) ) );
-		$this->prefix = '' !== $prefix ? (string) $prefix : \nfd_sm_table_prefix();
+	public function __construct( array $tables, $prefix = '', $seconds = self::MAX_SECONDS, $deep = false ) {
+		$this->tables   = \array_values( \array_filter( \array_map( 'strval', $tables ) ) );
+		$this->prefix   = '' !== $prefix ? (string) $prefix : \nfd_sm_table_prefix();
+		$this->deadline = \microtime( true ) + (float) $seconds;
+		$this->deep     = (bool) $deep;
+	}
+
+	/**
+	 * Whether the scan read everything it meant to.
+	 *
+	 * @return bool
+	 */
+	public function is_complete() {
+		return $this->complete;
 	}
 
 	/**
@@ -94,12 +139,33 @@ class TableOwners {
 			return array();
 		}
 
+		return $this->matching( $names );
+	}
+
+	/**
+	 * The site's tables whose bare names a scan turned up, core's own excluded.
+	 *
+	 * Excluding core's is not tidiness. Plugins query `wp_posts`, `wp_options` and `wp_terms`
+	 * constantly and name them exactly the way they name their own, so a scan of WooCommerce came
+	 * back "owning" five of them — and a row reading *WooCommerce: 53 tables* with `wp_posts`
+	 * among them offers to carry the site's content under the heading of carrying a plugin's data.
+	 * The save would have refused them, which is not the point: it must not be offered.
+	 *
+	 * @param array $names Map of lowercased bare name => true.
+	 *
+	 * @return array
+	 */
+	protected function matching( array $names ) {
 		$found = array();
 
 		foreach ( $this->tables as $table ) {
 			$bare = $this->unprefixed( $table );
 
-			if ( '' !== $bare && isset( $names[ \strtolower( $bare ) ] ) ) {
+			if ( '' === $bare || Selection::is_required_table( $table ) ) {
+				continue;
+			}
+
+			if ( isset( $names[ \strtolower( $bare ) ] ) ) {
 				$found[] = $table;
 			}
 		}
@@ -199,7 +265,7 @@ class TableOwners {
 	}
 
 	/**
-	 * Read a directory's PHP once, collecting both the table names and the option names.
+	 * Read a directory's PHP, collecting both the table names and the option names.
 	 *
 	 * One walk rather than two: the directories are the same and the reading is the expensive
 	 * part. Cached per directory, because the picker asks about tables and options separately and
@@ -216,9 +282,40 @@ class TableOwners {
 			return $this->scanned[ $dir ];
 		}
 
+		$found = $this->scan_from( $dir, 0 );
+
+		$this->scanned[ $dir ] = $found;
+
+		return $found;
+	}
+
+	/**
+	 * Read part of a directory's PHP, starting where the last pass stopped.
+	 *
+	 * **This is why the scan is stepped.** Measured on a real thirteen-plugin site — Jetpack,
+	 * WooCommerce, WPForms, Yoast — reading every plugin's PHP took 132 seconds, and 43 even with
+	 * fixtures, tests and `node_modules` skipped and a substring check standing in front of every
+	 * regex. Jetpack alone is 19 of those seconds. No request survives that, so the screen waited
+	 * on a spinner that could never end: the scan has to hand back what it has and be asked again.
+	 *
+	 * The offset is a count of files already read, and the walk is re-entered and skipped forward
+	 * rather than remembered. Skipping is a stat per entry and reading is not, so the re-walk
+	 * costs a fraction of what it avoids — and nothing has to survive between two requests except
+	 * a number.
+	 *
+	 * @param string $dir    Directory.
+	 * @param int    $offset How many files earlier passes already read.
+	 *
+	 * @return array `tables`, `options`, and `next` — the offset to resume from, or 0 when the
+	 *               directory is finished.
+	 */
+	public function scan_from( $dir, $offset = 0 ) {
+		$dir = \rtrim( (string) $dir, '/\\' );
+
 		$found = array(
 			'tables'  => array(),
 			'options' => array(),
+			'next'    => 0,
 		);
 
 		if ( '' === $dir || ! \is_dir( $dir ) ) {
@@ -234,11 +331,35 @@ class TableOwners {
 			return $found;
 		}
 
+		$seen  = 0;
 		$spent = 0;
 
 		foreach ( $walk as $file ) {
 			if ( ! $file->isFile() || 'php' !== \strtolower( $file->getExtension() ) ) {
 				continue;
+			}
+
+			if ( self::is_uninteresting( $file->getPathname() ) ) {
+				continue;
+			}
+
+			if ( ! $this->worth_reading( $dir, $file, $walk->getDepth() ) ) {
+				continue;
+			}
+
+			++$seen;
+
+			// Already read by an earlier pass. The walk is deterministic for an unchanged tree,
+			// and a tree that changed mid-scan costs a suggestion, not correctness.
+			if ( $seen <= (int) $offset ) {
+				continue;
+			}
+
+			if ( \microtime( true ) > $this->deadline ) {
+				$this->complete = false;
+				$found['next']  = $seen - 1;
+
+				return $found;
 			}
 
 			$spent += (int) $file->getSize();
@@ -254,18 +375,109 @@ class TableOwners {
 				continue;
 			}
 
-			foreach ( $this->candidates( $source ) as $name ) {
-				$found['tables'][ \strtolower( $name ) ] = true;
+			// A substring search runs at memory speed and a regex does not, and the overwhelming
+			// majority of a plugin's files mention neither. Asking the cheap question first took
+			// the same real site from 132 seconds to 43.
+			if ( false !== \strpos( $source, 'prefix' ) ) {
+				foreach ( $this->candidates( $source ) as $name ) {
+					$found['tables'][ \strtolower( $name ) ] = true;
+				}
 			}
 
-			foreach ( $this->option_candidates( $source ) as $name ) {
-				$found['options'][ \strtolower( $name ) ] = true;
+			if ( false !== \strpos( $source, '_option' ) ) {
+				foreach ( $this->option_candidates( $source ) as $name ) {
+					$found['options'][ \strtolower( $name ) ] = true;
+				}
 			}
 		}
 
-		$this->scanned[ $dir ] = $found;
-
 		return $found;
+	}
+
+	/**
+	 * Turn the names one pass found into this site's real tables and options.
+	 *
+	 * @param array $names   Map of lowercased bare table name => true.
+	 * @param array $options Map of lowercased option name => true.
+	 * @param array $present Option names this site holds.
+	 *
+	 * @return array `tables` and `options`, as lists of real names.
+	 */
+	public function resolve( array $names, array $options, array $present ) {
+		$tables   = $this->matching( $names );
+		$settings = array();
+
+		foreach ( $present as $option ) {
+			$option = (string) $option;
+
+			if ( isset( $options[ \strtolower( $option ) ] ) && ! Selection::is_protected_option( $option ) ) {
+				$settings[] = $option;
+			}
+		}
+
+		return array(
+			'tables'  => $tables,
+			'options' => $settings,
+		);
+	}
+
+	/**
+	 * Whether a file is one of the few that would say what a plugin owns.
+	 *
+	 * **The scan is shallow on purpose, and this is the whole reason it finishes.** Reading every
+	 * PHP file of every plugin costs 20ms a file on an ordinary disk; WooCommerce and Jetpack have
+	 * thousands each, so a thorough scan of a real site is minutes of somebody's afternoon spent
+	 * confirming what they could have ticked by hand. Watched live on a 22-plugin site, one plugin
+	 * alone was still going after four requests.
+	 *
+	 * So it reads the files that actually declare things — everything in the plugin's own root and
+	 * one level below it, where the main file, `includes/` and `src/` live, plus anything named
+	 * like a schema (`install`, `activate`, `table`, `migration`, `upgrade`, `db`) however deep it
+	 * is buried. That is where `dbDelta()` calls and option defaults are, and it is a fraction of
+	 * the files.
+	 *
+	 * What it misses is a table named only in some leaf class, and that is why the list is a
+	 * suggestion with `unclaimed` beside it: anything not attributed is still offered to be ticked
+	 * by hand, which is the same answer as before at none of the cost.
+	 *
+	 * @param string       $dir   The directory being scanned.
+	 * @param \SplFileInfo $file  The file.
+	 * @param int          $depth How deep the walk is, 0 being the directory itself.
+	 *
+	 * @return bool
+	 */
+	protected function worth_reading( $dir, $file, $depth ) {
+		if ( $this->deep || $depth <= 1 ) {
+			return true;
+		}
+
+		return (bool) \preg_match(
+			'/(install|activat|schema|table|migrat|upgrade|db|database|setup)/i',
+			$file->getBasename( '.php' )
+		);
+	}
+
+	/**
+	 * Paths that cannot tell us anything about what a plugin owns.
+	 *
+	 * The same rule `CodeCompatibility` uses, and for the same reason: a fixture is a file written
+	 * to be wrong, and a test names tables that only ever exist while the test runs. `node_modules`
+	 * is build-time JavaScript that PHP never loads, and the export refuses to package it anyway,
+	 * so a table named only there could not travel even if it were real.
+	 *
+	 * Note `vendor/` is deliberately *not* here. Action Scheduler lives in WooCommerce's vendor
+	 * directory and owns four real tables, and a scan that skipped it would quietly leave them out
+	 * of the list somebody is choosing from.
+	 *
+	 * @param string $path File path.
+	 *
+	 * @return bool
+	 */
+	protected static function is_uninteresting( $path ) {
+		return (bool) \preg_match(
+			'#(^|/)(tests?|fixtures?|stubs?|examples?|node_modules|\.git)/#i',
+			\str_replace( '\\', '/', (string) $path )
+		);
 	}
 
 	/**

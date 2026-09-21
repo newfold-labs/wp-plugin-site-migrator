@@ -499,6 +499,27 @@
         @apply min-w-0;
         overflow-wrap: anywhere;
     }
+    /* A paragraph is not a column. `.nfd-sm-pick-sub` is a grid, so an intro sentence inside one
+       became a cell the width of a slug with the checkboxes flowing around it. */
+    .nfd-sm-pick-sub > .nfd-sm-hint { @apply col-span-full mt-0 mb-2 }
+
+    /* What a plugin owns: one row per plugin, and not a grid at all.
+       The rows beside it hold a slug and fit three to a line; these hold a name, a count and a
+       few table names, and in three columns every one of them wrapped mid-word. */
+    .nfd-sm-owns { @apply mt-3 ml-[26px] p-3.5 bg-sunk rounded-[8px] }
+    .nfd-sm-owns > .nfd-sm-hint { @apply mt-0 mb-3 }
+    .nfd-sm-owns .nfd-sm-check { @apply mb-2.5 text-[13px] }
+    .nfd-sm-owns .nfd-sm-check:last-child { @apply mb-0 }
+    .nfd-sm-owns .nfd-sm-check > span {
+        @apply min-w-0;
+        overflow-wrap: anywhere;
+    }
+    .nfd-sm-owns .nfd-sm-check strong { @apply inline text-[13px] }
+    .nfd-sm-owns-names {
+        @apply block mt-1 font-mono text-[12px] leading-[1.5] text-faint;
+        overflow-wrap: anywhere;
+    }
+
     .nfd-sm-details + .nfd-sm-details { @apply mt-2 }
 
     .nfd-sm-block {

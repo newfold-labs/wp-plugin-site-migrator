@@ -202,8 +202,12 @@ export const api = {
 	exportContents: () => call( { path: `${ BASE }/export/contents` } ),
 
 	// Asked only when the database has been turned off, because answering it means reading every
-	// plugin's PHP. See `ExportController::belongings()`.
-	exportBelongings: () => call( { path: `${ BASE }/export/belongings` } ),
+	// plugin's PHP -- 43 seconds on a real thirteen-plugin site. Stepped, so each call scans for a
+	// few seconds and says where to carry on from. See `ExportController::belongings()`.
+	exportBelongings: ( cursor = 0, offset = 0 ) =>
+		call( {
+			path: `${ BASE }/export/belongings?cursor=${ cursor }&offset=${ offset }`,
+		} ),
 	exportChoose: ( selection ) =>
 		call( {
 			path: `${ BASE }/export/contents`,
