@@ -241,7 +241,7 @@ export const Pair = ( { onResult } ) => {
 							/>
 							<p className="nfd-sm-hint">
 								{ __(
-									'Copy it from the destination’s pairing screen. This works when the destination cannot be reached over the network.',
+									'On the destination, open “Source cannot reach this site? Send it a profile instead” and copy what it shows. This is the way through when the destination cannot be reached over the network.',
 									'nfd-site-migrator'
 								) }
 							</p>

@@ -39,6 +39,18 @@ class PreflightController extends Controller {
 
 		\register_rest_route(
 			$this->namespace,
+			'/preflight/profile',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'own_profile' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
+
+		\register_rest_route(
+			$this->namespace,
 			'/preflight/compare',
 			array(
 				array(
@@ -191,6 +203,34 @@ class PreflightController extends Controller {
 			array(
 				'report'  => $report->to_array(),
 				'profile' => SiteProfile::gather( true )->to_array(),
+			)
+		);
+	}
+
+	/**
+	 * This site's own facts, as the text a source pastes.
+	 *
+	 * The other half of `compare`'s pasted-profile branch, which had no producer at all: the
+	 * source's pairing screen has always said "copy it from the destination's pairing screen", and
+	 * that screen never showed anything to copy. `SiteProfile::encode()` existed, `decode()` and
+	 * the REST branch that reads it existed, and the one route that would let somebody actually do
+	 * it did not -- so the escape hatch for a destination the source cannot reach over HTTP was
+	 * itself unreachable.
+	 *
+	 * Gathered as a destination, not `gather( true )`: this is the site being *compared against*,
+	 * and the source-only facts are the ones the source already has about itself. Behind
+	 * `manage_options` like everything else here -- it names versions, paths and free space, which
+	 * is the same reason `/pairing/profile` wants a code.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function own_profile() {
+		$profile = SiteProfile::gather();
+
+		return \rest_ensure_response(
+			array(
+				'profile'  => $profile->encode(),
+				'site_url' => \home_url(),
 			)
 		);
 	}

@@ -46,6 +46,21 @@ export const Receive = () => {
 	const [ busy, setBusy ] = useState( false );
 	const [ error, setError ] = useState( '' );
 	const [ waiting, setWaiting ] = useState( null );
+	const [ copied, setCopied ] = useState( '' );
+	const [ profile, setProfile ] = useState( '' );
+
+	// The same helper the source's Deliver screen uses. This screen's whole job is handing two
+	// strings to another machine, and it drew them as text somebody had to select by hand.
+	const copy = async ( value, what ) => {
+		try {
+			await window.navigator.clipboard.writeText( value );
+			setCopied( what );
+			window.setTimeout( () => setCopied( '' ), 2000 );
+		} catch ( e ) {
+			// Clipboard access can be refused outright, and both values are on screen to be
+			// selected by hand either way. Nothing here is worth an error message.
+		}
+	};
 
 	const refresh = () =>
 		api.pairing.status().then( ( s ) => ! s.failed && setStatus( s ) );
@@ -78,6 +93,23 @@ export const Receive = () => {
 			window.clearInterval( timer );
 		};
 	}, [] );
+
+	// Folded away, because it is the answer to a question most people never have: it matters only
+	// when the source cannot open an HTTP connection to this site, and offering it beside the
+	// pairing code would make a one-step screen look like a two-step one.
+	const reveal = async () => {
+		setBusy( true );
+		setError( '' );
+		const response = await api.ownProfile();
+		setBusy( false );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
+		setProfile( response.profile );
+	};
 
 	const issue = async () => {
 		setBusy( true );
@@ -207,6 +239,26 @@ export const Receive = () => {
 						<button
 							type="button"
 							className="nfd-sm-btn"
+							id="nfd-sm-copy-url"
+							onClick={ () => copy( siteUrl, 'url' ) }
+						>
+							{ 'url' === copied
+								? __( 'Copied', 'nfd-site-migrator' )
+								: __( 'Copy address', 'nfd-site-migrator' ) }
+						</button>
+						<button
+							type="button"
+							className="nfd-sm-btn nfd-sm-btn--primary"
+							id="nfd-sm-copy-code"
+							onClick={ () => copy( code, 'code' ) }
+						>
+							{ 'code' === copied
+								? __( 'Copied', 'nfd-site-migrator' )
+								: __( 'Copy code', 'nfd-site-migrator' ) }
+						</button>
+						<button
+							type="button"
+							className="nfd-sm-btn"
 							onClick={ issue }
 						>
 							{ __( 'New code', 'nfd-site-migrator' ) }
@@ -220,6 +272,84 @@ export const Receive = () => {
 					{ __( 'Paired with ', 'nfd-site-migrator' ) }
 					<span className="nfd-sm-mono">{ status.paired }</span>
 				</div>
+			) }
+
+			{ ! waiting && (
+				<details
+					className="nfd-sm-details"
+					id="nfd-sm-profile-fallback"
+				>
+					<summary>
+						{ __(
+							'Source cannot reach this site? Send it a profile instead',
+							'nfd-site-migrator'
+						) }
+					</summary>
+
+					<div className="nfd-sm-card">
+						<p className="nfd-sm-hint">
+							{ __(
+								'A pairing code only works if the source can open a connection to this site — which it cannot behind a firewall, on a local machine, or past an HTTP password. This is the same facts written down: paste it into “Paste a profile instead” on the source’s pairing screen and the compatibility check runs there without either site calling the other.',
+								'nfd-site-migrator'
+							) }
+						</p>
+
+						{ ! profile && (
+							<div className="nfd-sm-actions">
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									id="nfd-sm-show-profile"
+									disabled={ busy }
+									onClick={ reveal }
+								>
+									{ busy
+										? __( 'Reading…', 'nfd-site-migrator' )
+										: __(
+												'Show this site’s profile',
+												'nfd-site-migrator'
+										  ) }
+								</button>
+							</div>
+						) }
+
+						{ profile && (
+							<>
+								<p
+									className="nfd-sm-paircode nfd-sm-paircode--long"
+									id="nfd-sm-profile-blob"
+								>
+									{ profile }
+								</p>
+								<div className="nfd-sm-actions">
+									<button
+										type="button"
+										className="nfd-sm-btn nfd-sm-btn--primary"
+										onClick={ () =>
+											copy( profile, 'profile' )
+										}
+									>
+										{ 'profile' === copied
+											? __(
+													'Copied',
+													'nfd-site-migrator'
+											  )
+											: __(
+													'Copy profile',
+													'nfd-site-migrator'
+											  ) }
+									</button>
+								</div>
+								<p className="nfd-sm-hint">
+									{ __(
+										'Versions, paths and free space — no content, no logins. It goes stale after a week, so generate a fresh one if the export is not done by then.',
+										'nfd-site-migrator'
+									) }
+								</p>
+							</>
+						) }
+					</div>
+				</details>
 			) }
 
 			<div className="nfd-sm-card">

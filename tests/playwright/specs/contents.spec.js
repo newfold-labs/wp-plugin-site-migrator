@@ -198,4 +198,54 @@ test.describe( 'Contents', () => {
 		await expect( page.locator( '.nfd-sm-loading' ) ).toHaveCount( 0 );
 		expect( errors ).toEqual( [] );
 	} );
+
+	test( 'a plugin that is not travelling is not asked what it owns', async ( {
+		page,
+	} ) => {
+		await auth.navigateToAdminPage( page, CONTENTS );
+		await wordpress.waitForApp( page );
+
+		const first = page.waitForResponse( async ( response ) => {
+			return (
+				response.url().includes( 'belongings' ) &&
+				response.status() === 200 &&
+				!! ( await response.json() ).done
+			);
+		} );
+
+		await page.locator( '#nfd-sm-flag-skip_database' ).uncheck();
+		await first;
+
+		// The scan read every plugin on disk, including ones the picker had turned off -- so it
+		// spent time on plugins nobody was sending, and offered to carry the tables of a plugin
+		// whose files were staying behind. That leaves the destination holding rows nothing
+		// installed there can read, inside a package whose promise is "only what you chose".
+		const inside = page
+			.locator( 'details' )
+			.filter( { hasText: 'things inside' } )
+			.first();
+
+		await inside.evaluate( ( node ) => {
+			node.open = true;
+		} );
+
+		const refused = page
+			.locator( '.nfd-sm-pick-sub input[type=checkbox]' )
+			.first();
+		const slug = await refused.getAttribute( 'id' );
+		const name = slug.replace( 'nfd-sm-path-plugins-', '' );
+
+		const narrowed = page.waitForRequest(
+			( request ) =>
+				request.url().includes( 'belongings' ) &&
+				decodeURIComponent( request.url() ).includes(
+					`plugins/${ name }`
+				)
+		);
+
+		await refused.uncheck();
+
+		// The proof is in the request: the next scan is told, by name, not to read it.
+		await narrowed;
+	} );
 } );

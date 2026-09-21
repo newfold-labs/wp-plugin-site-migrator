@@ -1,5 +1,5 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Fragment, useEffect, useState } from '@wordpress/element';
+import { Fragment, useEffect, useMemo, useState } from '@wordpress/element';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
@@ -251,17 +251,57 @@ export const Contents = () => {
 	const wantsPath = ( part, path ) =>
 		! ( selection.paths[ part ] || [] ).includes( path );
 
+	// Its data goes with it. A plugin the package leaves behind must not leave its tables and
+	// settings ticked: they would travel on their own, and the destination would be holding rows
+	// that nothing installed there can read. Done here rather than at save time because this is
+	// the only place that knows which names belong to which plugin -- the next scan will not
+	// report a plugin that is no longer travelling, so the mapping is gone a moment later.
+	const dropData = ( database, entries ) => {
+		const tables = new Set( database.carry_tables || [] );
+		const options = new Set( database.carry_options || [] );
+
+		entries.forEach( ( entry ) => {
+			( entry?.tables || [] ).forEach( ( t ) => tables.delete( t ) );
+			( entry?.options || [] ).forEach( ( o ) => options.delete( o ) );
+		} );
+
+		const next = { ...database };
+
+		if ( tables.size ) {
+			next.carry_tables = [ ...tables ];
+		} else {
+			delete next.carry_tables;
+		}
+
+		if ( options.size ) {
+			next.carry_options = [ ...options ];
+		} else {
+			delete next.carry_options;
+		}
+
+		return next;
+	};
+
 	const togglePart = ( name ) =>
 		setSelection( ( current ) => {
 			const parts = { ...current.parts };
 
 			if ( parts[ name ] === false ) {
 				delete parts[ name ];
-			} else {
-				parts[ name ] = false;
+
+				return { ...current, parts };
 			}
 
-			return { ...current, parts };
+			parts[ name ] = false;
+
+			return {
+				...current,
+				parts,
+				database: dropData(
+					current.database,
+					Object.values( belongings?.belongs?.[ name ] || {} )
+				),
+			};
 		} );
 
 	const togglePath = ( part, path ) =>
@@ -277,14 +317,59 @@ export const Contents = () => {
 				} else {
 					delete paths[ part ];
 				}
-			} else {
-				paths[ part ] = [ ...list, path ];
+
+				return { ...current, paths };
 			}
 
-			return { ...current, paths };
+			paths[ part ] = [ ...list, path ];
+
+			return {
+				...current,
+				paths,
+				database: dropData( current.database, [
+					belongings?.belongs?.[ part ]?.[ path ],
+				] ),
+			};
 		} );
 
 	const skipping = !! selection.database.skip_database;
+
+	// What the picker currently refuses, as the `part/slug` keys the scan speaks. A whole part
+	// turned off takes every child with it. Only the code parts are asked about, because they are
+	// the only ones that can own a table.
+	const notTravelling = useMemo( () => {
+		if ( ! data ) {
+			return [];
+		}
+
+		const out = [];
+
+		data.parts.forEach( ( part ) => {
+			const name = part.name;
+
+			if (
+				'plugins' !== name &&
+				'mu-plugins' !== name &&
+				0 !== name.indexOf( 'themes' )
+			) {
+				return;
+			}
+
+			const off = selection.parts[ name ] === false;
+			const refused = selection.paths[ name ] || [];
+
+			part.children.forEach( ( slug ) => {
+				if ( off || refused.includes( slug ) ) {
+					out.push( name + '/' + slug );
+				}
+			} );
+		} );
+
+		return out.sort();
+	}, [ data, selection.parts, selection.paths ] );
+
+	// A string, because an array is a new object on every render and this is an effect dependency.
+	const notTravellingKey = notTravelling.join( '|' );
 
 	// The scan is stepped, so this is a loop rather than a request: each call reads for a few
 	// seconds and says where to carry on from, and what has been found so far is merged in as it
@@ -292,14 +377,27 @@ export const Contents = () => {
 	// real site this takes the best part of a minute, and *stop* on a failure, because a spinner
 	// that cannot end looks exactly like a screen that has crashed.
 	useEffect( () => {
-		if ( ! skipping || belongings?.done ) {
+		if ( ! skipping ) {
 			return undefined;
 		}
+
+		// Cleared here rather than in an effect of its own. A second effect reading `belongings`
+		// races this one: on the render where what is travelling changed, this effect ran first
+		// and returned at a `done` that was still the *old* scan's, and by the time the reset
+		// landed the dependencies had stopped changing — so unticking a plugin left the previous
+		// list on screen for good. One effect, and the state it owns is reset where it starts.
+		setBelongings( null );
+		setScan( null );
+		setScanError( '' );
 
 		let live = true;
 
 		const step = async ( cursor, offset, sofar ) => {
-			const response = await api.exportBelongings( cursor, offset );
+			const response = await api.exportBelongings(
+				cursor,
+				offset,
+				notTravelling
+			);
 
 			if ( ! live ) {
 				return;
@@ -342,9 +440,11 @@ export const Contents = () => {
 			live = false;
 		};
 		// `belongings` is written by the loop itself; re-running on every merge would start a
-		// second loop from the top.
+		// second loop from the top. `notTravellingKey` stands in for the array, which is a new
+		// object on every render — unticking a plugin has to start the scan again, and the cache
+		// makes the repeat nearly free.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [ skipping ] );
+	}, [ skipping, notTravellingKey ] );
 
 	const toggleFlag = ( flag ) =>
 		setSelection( ( current ) => {

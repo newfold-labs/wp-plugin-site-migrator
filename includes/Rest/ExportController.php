@@ -156,6 +156,11 @@ class ExportController extends Controller {
 							'type'    => 'boolean',
 							'default' => false,
 						),
+						'skip'   => array(
+							'type'    => 'array',
+							'items'   => array( 'type' => 'string' ),
+							'default' => array(),
+						),
 					),
 				),
 			)
@@ -243,7 +248,7 @@ class ExportController extends Controller {
 		$present = $this->option_names();
 		$cached  = $this->remembered( $deep );
 
-		$queue  = $this->scan_queue();
+		$queue  = $this->scan_queue( (array) $request->get_param( 'skip' ) );
 		$cursor = (int) $request->get_param( 'cursor' );
 		$offset = (int) $request->get_param( 'offset' );
 		$found  = array();
@@ -304,8 +309,12 @@ class ExportController extends Controller {
 		// claimed it", which is a question about all of them.
 		$claimed = array();
 
-		foreach ( $cached as $one ) {
-			$claimed[] = isset( $one['tables'] ) ? $one['tables'] : array();
+		foreach ( $queue as $entry ) {
+			$key = $entry['part'] . '/' . $entry['slug'];
+
+			if ( isset( $cached[ $key ]['tables'] ) ) {
+				$claimed[] = $cached[ $key ]['tables'];
+			}
 		}
 
 		return \rest_ensure_response(
@@ -328,13 +337,27 @@ class ExportController extends Controller {
 	/**
 	 * The directories to read, in a fixed order, so a cursor means the same thing twice.
 	 *
+	 * Narrowed by whatever the caller says is not travelling. A plugin left out of the package has
+	 * no business offering its tables: carrying them would leave the destination holding rows that
+	 * nothing installed there can read, inside a package whose whole promise is "only what you
+	 * chose" -- and reading its code to work that out is time spent on a plugin nobody is sending.
+	 * The screen sends what it has on screen rather than what was last saved, because unticking a
+	 * plugin and turning the database off happen in the same visit and in either order.
+	 *
+	 * @param array $skip Entries to leave out, each `part/slug`.
+	 *
 	 * @return array List of `part`, `slug`, `dir`.
 	 */
-	protected function scan_queue() {
+	protected function scan_queue( array $skip = array() ) {
 		$queue = array();
+		$out   = \array_flip( \array_map( 'strval', $skip ) );
 
 		foreach ( $this->code_directories() as $part => $children ) {
 			foreach ( $children as $slug => $dir ) {
+				if ( isset( $out[ $part . '/' . $slug ] ) ) {
+					continue;
+				}
+
 				$queue[] = array(
 					'part' => $part,
 					'slug' => $slug,

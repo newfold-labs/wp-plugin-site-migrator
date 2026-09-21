@@ -54,5 +54,55 @@ test.describe( 'Receive', () => {
 		await expect( page.locator( '#nfd-sm-start-transfer' ) ).toHaveCount(
 			0
 		);
+
+		// Both values exist to be carried to another machine, and for a while the only way to
+		// take them was to select the text by hand -- on the one screen whose whole job is
+		// handing two strings over.
+		await expect( page.locator( '#nfd-sm-copy-url' ) ).toBeVisible();
+		await expect( page.locator( '#nfd-sm-copy-code' ) ).toBeVisible();
+	} );
+
+	test( 'can write its own profile down for a source that cannot reach it', async ( {
+		page,
+	} ) => {
+		await auth.navigateToAdminPage( page, RECEIVE );
+		await wordpress.waitForApp( page );
+
+		// The source's pairing screen has always offered "paste a profile instead" for a
+		// destination behind a firewall, and told the user to copy it from this screen. This
+		// screen showed nothing to copy: `SiteProfile::encode()` had no caller anywhere, so the
+		// one way through for an unreachable destination was an instruction pointing at a
+		// control that did not exist.
+		const fallback = page.locator( '#nfd-sm-profile-fallback' );
+
+		await expect( fallback ).toBeVisible();
+
+		await fallback.evaluate( ( node ) => {
+			node.open = true;
+		} );
+
+		await page.locator( '#nfd-sm-show-profile' ).click();
+
+		const blob = page.locator( '#nfd-sm-profile-blob' );
+
+		await expect( blob ).toBeVisible();
+		await expect( blob ).toHaveText( /^NFDSM1-/ );
+
+		// And it is the thing the other half actually takes. Asserted through the REST API the
+		// source would call, because a blob this site cannot read back is the same bug in a new
+		// place.
+		const text = ( await blob.innerText() ).trim();
+
+		const accepted = await page.evaluate(
+			( profile ) =>
+				window.wp.apiFetch( {
+					path: '/nfd-site-migrator/v1/preflight/compare',
+					method: 'POST',
+					data: { profile },
+				} ),
+			text
+		);
+
+		expect( accepted.ok, accepted.error || '' ).not.toBe( false );
 	} );
 } );

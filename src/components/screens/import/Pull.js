@@ -390,7 +390,7 @@ export const Pull = () => {
 						{ sprintf(
 							/* translators: %s: the source's address. */
 							__(
-								'Paired with %s. Nothing is being offered yet — finish the export there and press “Offer it to the destination”, and this page will pick it up. Or enter a key below.',
+								'Paired with %s. Nothing is being offered yet — finish the export there and press “Offer it to the destination”, and this page will pick it up on its own. Nothing needs carrying.',
 								'nfd-site-migrator'
 							),
 							waiting.url
@@ -402,15 +402,17 @@ export const Pull = () => {
 					</div>
 				) }
 
-			{ /* When a package is on offer the button that takes it is above, and this form is the
-			    fallback nobody needs — left expanded it put a second identical "Start the
-			    transfer" on the screen, so which one to press became a question. Collapsed, it is
-			    still one click away for the case it exists for: an offer from a site this one was
-			    never paired with. With nothing offered it is the only way through, and stays
-			    open. */ }
+			{ /* Open only when there is no other way through. A package on offer has its own button
+			    above, and leaving this expanded put a second identical "Start the transfer" on the
+			    screen, so which one to press became a question. A *link* is the same answer one
+			    step earlier: the pairing is what makes a key unnecessary, so a screen that says
+			    "nothing needs carrying" and then draws a key form underneath is arguing with
+			    itself. Both cases fold it to one click, for the case it exists for — an offer from
+			    a site this one was never paired with, which is also the case where it is the only
+			    way through and stays open. */ }
 			{ state.hydrated && ! state.connected && (
 				<div className="nfd-sm-card">
-					<Manual open={ ! waiting?.offered }>
+					<Manual open={ ! waiting?.offered && ! waiting?.linked }>
 						<form className="nfd-sm-form" onSubmit={ submit }>
 							<label htmlFor="nfd-sm-source-url">
 								{ __(

@@ -1515,4 +1515,39 @@ class RegressionTest extends TestCase {
 		$this->assertSame( 'block', $compatibility->check()->get( 'collation' )['status'] );
 		$this->assertNull( $compatibility->check( false )->get( 'collation' ) );
 	}
+
+	/**
+	 * A pasted profile survives the trip, so the fallback for an unreachable destination works.
+	 *
+	 * `encode()` had no caller anywhere in the plugin. The source's pairing screen told the user
+	 * to copy a profile from the destination's pairing screen, which never showed one, so the one
+	 * way through for a destination behind a firewall was an instruction pointing at a control
+	 * that did not exist -- while `decode()` and the REST branch reading it sat there working.
+	 * This asserts the two halves still agree, because they are now each other's only test.
+	 */
+	public function test_a_profile_survives_being_written_down_and_pasted_back() {
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'minted_at'      => \time(),
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.2' ),
+			)
+		);
+
+		$blob = $destination->encode();
+
+		$this->assertStringStartsWith( 'NFDSM1-', $blob );
+
+		$back = SiteProfile::decode( $blob );
+
+		$this->assertInstanceOf( SiteProfile::class, $back );
+		$this->assertFalse( $back->is_stale() );
+		$this->assertSame( '6.4', $back->get( 'wp.version' ) );
+		$this->assertSame( '8.2', $back->get( 'php.version' ) );
+
+		// And nothing else is accepted, because a pasted blob is untrusted input.
+		$this->assertNull( SiteProfile::decode( 'NFDSM1-not-base64-at-all!!' ) );
+		$this->assertNull( SiteProfile::decode( '' ) );
+	}
 }
