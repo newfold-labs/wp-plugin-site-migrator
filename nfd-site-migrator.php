@@ -57,6 +57,32 @@ if ( PHP_VERSION_ID < 70400 ) {
 	return;
 }
 
+// Loaded once per request, whatever names the file is reached by.
+//
+// `require_once` promises this and cannot keep it when opcache is on. Opcache keys a compiled
+// file by the *literal* include path and answers the "already included" question from that key,
+// so the same file reached by two spellings is compiled and run twice -- which is what
+// `opcache.revalidate_path` exists to turn off, and it is `0` by default.
+//
+// Two spellings is the normal case during an import on a symlinked install, and symlinked
+// installs are a case this plugin already goes out of its way to support. The import writes
+// `mu-plugins/nfd-site-migrator-import.php`, which requires the plugin by its **real** path so it
+// keeps running once the swap has taken the migrator out of `active_plugins`; until that swap
+// happens the migrator is still in `active_plugins`, so `wp-settings.php` also includes it, by
+// the **symlink** path. Both fire, neither deduplicates, and the second pass redeclares every
+// function in `functions.php`.
+//
+// The result is a fatal on *every* request to the destination -- wp-admin included -- in the
+// middle of a migration, which is the worst possible moment and the hardest to read: the REST
+// call answers with WordPress's critical-error page, and the import screen shows that HTML where
+// an error message should be. Observed on a real site, at the precheck stage.
+//
+// A constant is the guard rather than `function_exists()`, because it is set before anything else
+// this file pulls in and costs nothing.
+if ( defined( 'NFD_SM_VERSION' ) ) {
+	return;
+}
+
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/constants.php';
 

@@ -110,6 +110,44 @@ class VersionTest extends TestCase {
 	}
 
 	/**
+	 * And it refuses to run twice, however many names the file is reached by.
+	 *
+	 * `require_once` looks like it already guarantees this. It does not when opcache is on:
+	 * opcache keys a compiled file by the literal include path and answers "already included?"
+	 * from that key, so one file reached by two spellings is executed twice. That is what
+	 * `opcache.revalidate_path` turns off, and its default is `0`.
+	 *
+	 * Two spellings is the ordinary case during an import on a symlinked install. The import's
+	 * `mu-plugins` loader requires the plugin by its real path so it survives the swap taking the
+	 * migrator out of `active_plugins`; before that swap the migrator is still in `active_plugins`
+	 * and `wp-settings.php` includes it by the symlink path. The second pass redeclares every
+	 * function in `functions.php` and the destination fatals on every request, mid-migration.
+	 *
+	 * Found on a real site: the import screen rendered WordPress's critical-error HTML where the
+	 * error message goes, and the site returned 500 to everyone until the loader was removed.
+	 *
+	 * Asserted on the source rather than by loading the file, because loading it runs the plugin.
+	 */
+	public function test_the_bootstrap_refuses_to_run_twice() {
+		$source = $this->bootstrap();
+
+		$this->assertMatchesRegularExpression(
+			'/if\s*\(\s*defined\(\s*\x27NFD_SM_VERSION\x27\s*\)\s*\)\s*\{\s*return;/',
+			$source,
+			'the bootstrap has no re-entry guard'
+		);
+
+		// And it has to come before the requires, or the work it is meant to skip is already
+		// done -- Composer's autoloader re-registered, constants redefined, functions redeclared.
+		$guard = \strpos( $source, "defined( 'NFD_SM_VERSION' )" );
+		$first = \strpos( $source, "require __DIR__" );
+
+		$this->assertIsInt( $guard );
+		$this->assertIsInt( $first );
+		$this->assertLessThan( $first, $guard );
+	}
+
+	/**
 	 * npm's copy agrees too. Harmless if it drifts, and free to check.
 	 */
 	public function test_the_package_manifest_agrees() {
