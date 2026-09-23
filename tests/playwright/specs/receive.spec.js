@@ -62,6 +62,43 @@ test.describe( 'Receive', () => {
 		await expect( page.locator( '#nfd-sm-copy-code' ) ).toBeVisible();
 	} );
 
+	test( 'copies on an origin with no clipboard API', async ( { page } ) => {
+		// `navigator.clipboard` exists only in a secure context. A WordPress site being migrated
+		// is very often neither HTTPS nor localhost -- `http://something.local` under Local, a
+		// staging box on plain HTTP -- and there the property is `undefined`, so the call threw
+		// before any permission was considered and the `catch` around it stayed quiet. Both copy
+		// buttons did nothing at all, on a real site, while passing here.
+		//
+		// They passed here because the site under test is served at `http://localhost:8888`, and
+		// localhost *is* a secure context: the one origin where the broken path cannot happen.
+		// So the API is removed on purpose, which is the only way this suite can stand where the
+		// user was standing.
+		await page.addInitScript( () => {
+			Object.defineProperty( window.navigator, 'clipboard', {
+				value: undefined,
+				configurable: true,
+			} );
+		} );
+
+		await auth.navigateToAdminPage( page, RECEIVE );
+		await wordpress.waitForApp( page );
+
+		expect(
+			await page.evaluate( () => typeof window.navigator.clipboard )
+		).toBe( 'undefined' );
+
+		await page.locator( '#nfd-sm-issue-code' ).click();
+		await expect( page.locator( '#nfd-sm-pairing-code' ) ).not.toBeEmpty();
+
+		// "Copied" is the button reporting that the fallback returned true. The label is the
+		// whole point: before this the button had no state to move to, in either direction.
+		await page.locator( '#nfd-sm-copy-code' ).click();
+
+		await expect( page.locator( '#nfd-sm-copy-code' ) ).toHaveText(
+			'Copied'
+		);
+	} );
+
 	test( 'can write its own profile down for a source that cannot reach it', async ( {
 		page,
 	} ) => {

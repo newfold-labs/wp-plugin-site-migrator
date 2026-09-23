@@ -220,18 +220,25 @@ test.describe( 'Contents', () => {
 		// spent time on plugins nobody was sending, and offered to carry the tables of a plugin
 		// whose files were staying behind. That leaves the destination holding rows nothing
 		// installed there can read, inside a package whose promise is "only what you chose".
-		const inside = page
-			.locator( 'details' )
-			.filter( { hasText: 'things inside' } )
-			.first();
+		// Found through the plugins row itself, never through the summary's wording. That
+		// sentence is pluralised -- "1 thing inside" against "3 things inside" -- so a filter on
+		// the plural quietly matched the *themes* block on a site with one plugin, opened that,
+		// and then timed out on a checkbox that was still behind a closed disclosure. The number
+		// of plugins on the site under test is not something this test should depend on.
+		//
+		// And opened by clicking, not by setting `open` from script: React re-creates the
+		// element as the scan settles and a property set on the old node goes with it.
+		const plugins = page
+			.locator( '.nfd-sm-pick' )
+			.filter( { has: page.locator( '#nfd-sm-part-plugins' ) } );
 
-		await inside.evaluate( ( node ) => {
-			node.open = true;
-		} );
+		await plugins.locator( 'summary' ).click();
 
-		const refused = page
+		const refused = plugins
 			.locator( '.nfd-sm-pick-sub input[type=checkbox]' )
 			.first();
+
+		await expect( refused ).toBeVisible();
 		const slug = await refused.getAttribute( 'id' );
 		const name = slug.replace( 'nfd-sm-path-plugins-', '' );
 

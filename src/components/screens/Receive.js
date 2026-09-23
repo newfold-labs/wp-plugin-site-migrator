@@ -3,6 +3,7 @@ import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { api } from '../../utils/api';
+import { copyText, copyLabel } from '../../utils/clipboard';
 import { DESTINATION_STEPS } from '../../steps';
 
 /**
@@ -51,15 +52,16 @@ export const Receive = () => {
 
 	// The same helper the source's Deliver screen uses. This screen's whole job is handing two
 	// strings to another machine, and it drew them as text somebody had to select by hand.
+	//
+	// A failure is reported rather than swallowed. `copyText` already falls back to the only
+	// thing that works on an insecure origin, so getting `false` back means the browser refused
+	// both ways — and a button that quietly does nothing reads as "copied" and pastes the wrong
+	// thing somewhere else.
 	const copy = async ( value, what ) => {
-		try {
-			await window.navigator.clipboard.writeText( value );
-			setCopied( what );
-			window.setTimeout( () => setCopied( '' ), 2000 );
-		} catch ( e ) {
-			// Clipboard access can be refused outright, and both values are on screen to be
-			// selected by hand either way. Nothing here is worth an error message.
-		}
+		const done = await copyText( value );
+
+		setCopied( done ? what : `failed:${ what }` );
+		window.setTimeout( () => setCopied( '' ), 2500 );
 	};
 
 	const refresh = () =>
@@ -242,9 +244,11 @@ export const Receive = () => {
 							id="nfd-sm-copy-url"
 							onClick={ () => copy( siteUrl, 'url' ) }
 						>
-							{ 'url' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy address', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'url',
+								__( 'Copy address', 'nfd-site-migrator' )
+							) }
 						</button>
 						<button
 							type="button"
@@ -252,9 +256,11 @@ export const Receive = () => {
 							id="nfd-sm-copy-code"
 							onClick={ () => copy( code, 'code' ) }
 						>
-							{ 'code' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy code', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'code',
+								__( 'Copy code', 'nfd-site-migrator' )
+							) }
 						</button>
 						<button
 							type="button"
@@ -329,15 +335,14 @@ export const Receive = () => {
 											copy( profile, 'profile' )
 										}
 									>
-										{ 'profile' === copied
-											? __(
-													'Copied',
-													'nfd-site-migrator'
-											  )
-											: __(
-													'Copy profile',
-													'nfd-site-migrator'
-											  ) }
+										{ copyLabel(
+											copied,
+											'profile',
+											__(
+												'Copy profile',
+												'nfd-site-migrator'
+											)
+										) }
 									</button>
 								</div>
 								<p className="nfd-sm-hint">

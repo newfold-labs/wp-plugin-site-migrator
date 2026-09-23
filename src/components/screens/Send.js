@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
 import { api } from '../../utils/api';
+import { copyText, copyLabel } from '../../utils/clipboard';
 import { SOURCE_STEPS } from '../../steps';
 
 const size = ( bytes ) => {
@@ -203,15 +204,14 @@ export const Send = () => {
 		refresh();
 	};
 
+	// Reported rather than swallowed, and through the shared helper. `navigator.clipboard` does
+	// not exist on an insecure origin — which a site mid-migration very often is — so this threw
+	// and said nothing, on the screen whose job is handing a key to another machine.
 	const copy = async ( value, what ) => {
-		try {
-			await window.navigator.clipboard.writeText( value );
-			setCopied( what );
-			window.setTimeout( () => setCopied( '' ), 2000 );
-		} catch ( e ) {
-			// Clipboard access can be refused outright, and the value is on screen to be
-			// selected by hand either way. Nothing here is worth an error message.
-		}
+		const done = await copyText( value );
+
+		setCopied( done ? what : `failed:${ what }` );
+		window.setTimeout( () => setCopied( '' ), 2500 );
 	};
 
 	const active = !! status?.active;
@@ -450,18 +450,22 @@ export const Send = () => {
 								copy( status?.site_url || '', 'url' )
 							}
 						>
-							{ 'url' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy address', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'url',
+								__( 'Copy address', 'nfd-site-migrator' )
+							) }
 						</button>
 						<button
 							type="button"
 							className="nfd-sm-btn nfd-sm-btn--primary"
 							onClick={ () => copy( key, 'key' ) }
 						>
-							{ 'key' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy key', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'key',
+								__( 'Copy key', 'nfd-site-migrator' )
+							) }
 						</button>
 					</div>
 
