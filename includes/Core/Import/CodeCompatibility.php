@@ -831,7 +831,99 @@ class CodeCompatibility {
 			}
 		}
 
+		foreach ( $this->brace_offset_sites( $tokens ) as $site ) {
+			$findings[] = array(
+				'kind'       => 'removed',
+				'symbol'     => 'a {} string offset',
+				'line'       => $site['line'],
+				'removed_in' => '8.0',
+			);
+		}
+
 		return \array_merge( $findings, $this->nested_ternaries( $tokens ) );
+	}
+
+	/**
+	 * `$str{0}` and the other curly offsets, which 8.0 removed and 8.0-8.3 still parse.
+	 *
+	 * This belongs with the (unset) cast rather than with the parse check, and finding that out
+	 * cost a green CI run on one version and a red one on another. PHP 8.4 dropped the grammar
+	 * rule, so `TOKEN_PARSE` raises a ParseError there and the file is refused as unparseable. PHP
+	 * 8.0 through 8.3 kept the rule purely to emit a friendlier compile-time error -- so the parse
+	 * succeeds, and a destination on 8.2 or 8.3, which is most of them, accepted a package whose
+	 * code fatals the moment WordPress includes the file. That is the exact failure this gate
+	 * exists to prevent, on the versions most likely to meet it.
+	 *
+	 * A `{` is an offset only straight after a variable, an index, another offset, or a property
+	 * name after `->`. Everywhere else in valid code it opens a block, and a block follows `)`, a
+	 * keyword or `;` -- never one of those. Inside a string the braces belong to the string's own
+	 * tokens, except within `{$...}` where an offset is still an offset.
+	 *
+	 * Public, and the single copy of the rule: `SyntaxFixer` rewrites exactly what is found here,
+	 * the same arrangement `ternary_sites()` has. Two copies of a rule this fiddly would drift,
+	 * and a fixer that rewrites more than the check refuses is how a "safe fix" stops being one.
+	 *
+	 * @param array $tokens Token stream.
+	 *
+	 * @return array List of `open`, `close` token indexes and the `line` of the offset.
+	 */
+	public function brace_offset_sites( array $tokens ) {
+		$skip   = \array_fill_keys( array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ), true );
+		$arrows = array( T_OBJECT_OPERATOR => true );
+
+		// Named rather than used directly so this still parses on 7.4.
+		if ( \defined( 'T_NULLSAFE_OBJECT_OPERATOR' ) ) {
+			$arrows[ \constant( 'T_NULLSAFE_OBJECT_OPERATOR' ) ] = true;
+		}
+
+		$sites        = array();
+		$braces       = array();
+		$previous     = null;
+		$earlier      = null;
+		$after_offset = false;
+		$line         = 1;
+
+		foreach ( $tokens as $i => $token ) {
+			$type = \is_array( $token ) ? $token[0] : $token;
+
+			if ( \is_array( $token ) ) {
+				$line = (int) $token[2] + \substr_count( $token[1], "\n" );
+			}
+
+			if ( isset( $skip[ $type ] ) ) {
+				continue;
+			}
+
+			$closed_offset = false;
+
+			if ( '{' === $type ) {
+				$offset = ( T_VARIABLE === $previous && '$' !== $earlier )
+					|| ']' === $previous
+					|| ( '}' === $previous && $after_offset )
+					|| ( T_STRING === $previous && isset( $arrows[ $earlier ] ) );
+
+				$braces[] = $offset ? array( $i, $line ) : false;
+			} elseif ( T_CURLY_OPEN === $type || T_DOLLAR_OPEN_CURLY_BRACES === $type ) {
+				$braces[] = false;
+			} elseif ( '}' === $type ) {
+				$open = \array_pop( $braces );
+
+				if ( \is_array( $open ) ) {
+					$sites[]       = array(
+						'open'  => $open[0],
+						'close' => $i,
+						'line'  => $open[1],
+					);
+					$closed_offset = true;
+				}
+			}
+
+			$after_offset = $closed_offset;
+			$earlier      = $previous;
+			$previous     = $type;
+		}
+
+		return $sites;
 	}
 
 	/**

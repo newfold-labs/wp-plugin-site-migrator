@@ -220,33 +220,65 @@ test.describe( 'Contents', () => {
 		// spent time on plugins nobody was sending, and offered to carry the tables of a plugin
 		// whose files were staying behind. That leaves the destination holding rows nothing
 		// installed there can read, inside a package whose promise is "only what you chose".
-		// Found through the plugins row itself, never through the summary's wording. That
-		// sentence is pluralised -- "1 thing inside" against "3 things inside" -- so a filter on
-		// the plural quietly matched the *themes* block on a site with one plugin, opened that,
-		// and then timed out on a checkbox that was still behind a closed disclosure. The number
-		// of plugins on the site under test is not something this test should depend on.
 		//
-		// And opened by clicking, not by setting `open` from script: React re-creates the
-		// element as the scan settles and a property set on the old node goes with it.
-		const plugins = page
+		// Which code part is used is decided from what the site under test actually has, and that
+		// has now been the source of two failures. Filtering the disclosure by the words "things
+		// inside" matched the *themes* block on a site with one plugin, because the sentence is
+		// pluralised. Pinning it to `plugins` then passed locally and timed out under wp-env,
+		// where a bare install has nothing inside that part at all. Themes always have something;
+		// the scan treats plugins, mu-plugins and themes identically, so any of them proves it.
+		const part = await page.evaluate( () => {
+			const code = ( name ) =>
+				'plugins' === name ||
+				'mu-plugins' === name ||
+				0 === name.indexOf( 'themes' );
+
+			for ( const block of document.querySelectorAll( '.nfd-sm-pick' ) ) {
+				const box = block.querySelector( 'input[id^="nfd-sm-part-"]' );
+
+				if ( ! box ) {
+					continue;
+				}
+
+				const name = box.id.replace( 'nfd-sm-part-', '' );
+
+				if ( code( name ) && block.querySelector( 'details' ) ) {
+					return name;
+				}
+			}
+
+			return '';
+		} );
+
+		expect(
+			part,
+			'no code part on this site has anything inside it'
+		).not.toBe( '' );
+
+		const block = page
 			.locator( '.nfd-sm-pick' )
-			.filter( { has: page.locator( '#nfd-sm-part-plugins' ) } );
+			.filter( { has: page.locator( `#nfd-sm-part-${ part }` ) } );
 
-		await plugins.locator( 'summary' ).click();
+		// Opened by clicking, not by setting `open` from script: React re-creates the element as
+		// the scan settles and a property set on the old node goes with it.
+		await block.locator( 'summary' ).click();
 
-		const refused = plugins
+		const refused = block
 			.locator( '.nfd-sm-pick-sub input[type=checkbox]' )
 			.first();
 
 		await expect( refused ).toBeVisible();
-		const slug = await refused.getAttribute( 'id' );
-		const name = slug.replace( 'nfd-sm-path-plugins-', '' );
+
+		const slug = ( await refused.getAttribute( 'id' ) ).replace(
+			`nfd-sm-path-${ part }-`,
+			''
+		);
 
 		const narrowed = page.waitForRequest(
 			( request ) =>
 				request.url().includes( 'belongings' ) &&
 				decodeURIComponent( request.url() ).includes(
-					`plugins/${ name }`
+					`${ part }/${ slug }`
 				)
 		);
 

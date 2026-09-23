@@ -894,10 +894,20 @@ class RegressionTest extends TestCase {
 			return;
 		}
 
+		// Caught either way, and which way depends on the running PHP rather than on the code.
+		// 8.4 dropped the grammar rule for `{}` offsets, so the parser refuses them; 8.0 to 8.3
+		// kept it to emit a friendlier compile-time error, so they parse and only the token check
+		// sees them. Asserting `parse` for both passed on 8.5 and failed on 8.3 -- a test pinned
+		// to one version's spelling of the same refusal.
 		foreach ( array( '$s = "abc"; echo $s{0};', '$x = (real) "1.5";' ) as $source ) {
 			$found = $checker->inspect( '<?php ' . $source, PHP_VERSION, 'wp-content/themes/t/functions.php' );
 
-			$this->assertSame( 'parse', isset( $found[0]['kind'] ) ? $found[0]['kind'] : null, $source );
+			$this->assertNotEmpty( $found, $source );
+			$this->assertContains(
+				isset( $found[0]['kind'] ) ? $found[0]['kind'] : null,
+				array( 'parse', 'removed' ),
+				$source
+			);
 		}
 	}
 

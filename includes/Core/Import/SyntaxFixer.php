@@ -178,59 +178,21 @@ class SyntaxFixer {
 	 */
 	protected function brace_offsets( $source, array &$changes ) {
 		$tokens = @\token_get_all( $source ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-		$skip   = \array_fill_keys( array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ), true );
-		$arrows = array( T_OBJECT_OPERATOR => true );
 
-		// Named rather than used directly so this still parses on 7.4.
-		if ( \defined( 'T_NULLSAFE_OBJECT_OPERATOR' ) ) {
-			$arrows[ \constant( 'T_NULLSAFE_OBJECT_OPERATOR' ) ] = true;
-		}
+		// The rule itself lives in `CodeCompatibility`, which is also what refuses these files --
+		// so a fix can only ever touch what the check found, the same arrangement the nested
+		// ternaries have.
+		$sites   = ( new CodeCompatibility( '' ) )->brace_offset_sites( $tokens );
+		$replace = array();
 
-		$braces       = array();
-		$replace      = array();
-		$previous     = null;
-		$earlier      = null;
-		$after_offset = false;
-		$line         = 1;
+		foreach ( $sites as $site ) {
+			$replace[ $site['open'] ]  = '[';
+			$replace[ $site['close'] ] = ']';
 
-		foreach ( $tokens as $i => $token ) {
-			$type = \is_array( $token ) ? $token[0] : $token;
-
-			if ( \is_array( $token ) ) {
-				$line = (int) $token[2] + \substr_count( $token[1], "\n" );
-			}
-
-			if ( isset( $skip[ $type ] ) ) {
-				continue;
-			}
-
-			$closed_offset = false;
-
-			if ( '{' === $type ) {
-				$offset = ( T_VARIABLE === $previous && '$' !== $earlier )
-					|| ']' === $previous
-					|| ( '}' === $previous && $after_offset )
-					|| ( T_STRING === $previous && isset( $arrows[ $earlier ] ) );
-
-				$braces[] = $offset;
-
-				if ( $offset ) {
-					$replace[ $i ] = '[';
-					$changes[]     = array(
-						'line' => $line,
-						'fix'  => 'a {} string offset written as []',
-					);
-				}
-			} elseif ( T_CURLY_OPEN === $type || T_DOLLAR_OPEN_CURLY_BRACES === $type ) {
-				$braces[] = false;
-			} elseif ( '}' === $type && true === \array_pop( $braces ) ) {
-				$replace[ $i ] = ']';
-				$closed_offset = true;
-			}
-
-			$after_offset = $closed_offset;
-			$earlier      = $previous;
-			$previous     = $type;
+			$changes[] = array(
+				'line' => $site['line'],
+				'fix'  => 'a {} string offset written as []',
+			);
 		}
 
 		return empty( $replace ) ? $source : $this->rebuild( $tokens, $replace );
