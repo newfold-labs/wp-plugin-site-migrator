@@ -22,7 +22,7 @@
         "wp-forge/wp-plugin-check": "^1.0"
     },
     "require-dev": {
-        "newfold-labs/wp-php-standards": "^1.2",
+        "newfold-labs/wp-php-standards": "^2.0",
         "phpunit/phpunit": "^9.6"
     },
     "autoload": {
