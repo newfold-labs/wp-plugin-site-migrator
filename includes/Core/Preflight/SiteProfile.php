@@ -7,6 +7,8 @@
 
 namespace NewfoldLabs\WP\SiteMigrator\Core\Preflight;
 
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
+
 /**
  * Gathers, serialises and parses the compatibility profile.
  *
@@ -84,6 +86,10 @@ class SiteProfile {
 					'disabled'      => \array_filter( \array_map( 'trim', \explode( ',', (string) \ini_get( 'disable_functions' ) ) ) ),
 					'open_basedir'  => (string) \ini_get( 'open_basedir' ),
 					'zip'           => \class_exists( 'ZipArchive' ),
+					// Reading a package is a different question from building one: without the
+					// extension a destination still unpacks with zlib. Additive, so a profile
+					// from an older plugin simply lacks it and is judged the way it always was.
+					'unzip'         => ZipReader::available(),
 				),
 				'database'       => self::database_facts(),
 				'host'           => array(
@@ -284,11 +290,13 @@ class SiteProfile {
 			// roughly 290 entries and dominates the profile, which matters because the profile
 			// is sometimes copied and pasted by hand.
 			$facts['collations'] = \array_values(
-				\array_filter(
-					$collations,
-					function ( $collation ) {
-						return (bool) \preg_match( '/^(utf8|utf8mb3|utf8mb4|latin1|ascii|binary)/', $collation );
-					}
+				\array_unique(
+					\array_filter(
+						\array_merge( $collations, self::full_collation_names() ),
+						function ( $collation ) {
+							return (bool) \preg_match( '/^(utf8|utf8mb3|utf8mb4|latin1|ascii|binary)/', $collation );
+						}
+					)
 				)
 			);
 		}
@@ -296,6 +304,33 @@ class SiteProfile {
 		$facts['can_rename'] = self::probe_rename();
 
 		return $facts;
+	}
+
+	/**
+	 * Collation names a table declares that `SHOW COLLATION` does not list.
+	 *
+	 * MariaDB 11.4.5 made the UCA 14.0 collations independent of character set: `SHOW COLLATION`
+	 * lists `uca1400_ai_ci` once, with no character set, while a table still reports -- and a dump
+	 * still declares -- `utf8mb4_uca1400_ai_ci`. That is the server default from 11.5, so every
+	 * WordPress installed on current MariaDB has tables in it, and a destination profiled from
+	 * `SHOW COLLATION` alone refused them on an identical server. The full names are only in
+	 * `FULL_COLLATION_NAME`, a column MySQL does not have, so there the query fails by design and
+	 * its error is kept off the page.
+	 *
+	 * @return array
+	 */
+	protected static function full_collation_names() {
+		global $wpdb;
+
+		$suppressed = $wpdb->suppress_errors( true );
+		$names      = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			'SELECT FULL_COLLATION_NAME FROM information_schema.COLLATION_CHARACTER_SET_APPLICABILITY'
+			. ' WHERE FULL_COLLATION_NAME <> COLLATION_NAME'
+		);
+
+		$wpdb->suppress_errors( $suppressed );
+
+		return \is_array( $names ) ? \array_values( \array_filter( $names ) ) : array();
 	}
 
 	/**

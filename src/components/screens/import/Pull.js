@@ -1,6 +1,6 @@
 import { __, sprintf } from '@wordpress/i18n';
-import { useEffect, useState } from '@wordpress/element';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from '@wordpress/element';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from '../../Layout';
 import { Loading } from '../../Loading';
 import { api } from '../../../utils/api';
@@ -93,6 +93,14 @@ const remaining = ( state ) => {
  */
 export const Pull = () => {
 	const navigate = useNavigate();
+
+	// Arriving from the receive screen's *Start the transfer*, which is a decision already made:
+	// asking again here would be the same button twice, one screen apart. `useRef` rather than
+	// state because it must fire once and never re-arm — the poll below keeps answering `offered`
+	// until the transfer is connected, and a second claim would mint a second key.
+	const asked = useRef( false );
+	const start = useLocation().state?.start;
+
 	const { state, connect, claim, disconnect, run, halt } = usePull();
 
 	const [ url, setUrl ] = useState( '' );
@@ -103,6 +111,28 @@ export const Pull = () => {
 	const [ cleared, setCleared ] = useState( 0 );
 	const [ verifying, setVerifying ] = useState( false );
 	const [ problems, setProblems ] = useState( null );
+	const [ discarding, setDiscarding ] = useState( false );
+
+	// `Puller::disconnect()` deliberately keeps the bytes -- they are the expensive part and a
+	// dropped connection is not a reason to throw away a transfer. It says the way to remove
+	// them is `Upload::reset()` "on the same screen", and until now that control did not exist
+	// on this screen at all: a staging directory holding the wrong bytes could be neither
+	// imported nor emptied without a shell.
+	const discardFetched = async () => {
+		setDiscarding( true );
+
+		const response = await api.import.uploadReset();
+
+		setDiscarding( false );
+
+		if ( response.failed ) {
+			setFormError( response.error );
+			return;
+		}
+
+		setProblems( null );
+		window.location.reload();
+	};
 
 	// A transfer that finished while this tab was away still has to be checked before it is
 	// handed to the import, and the check is the one thing here that cannot be split across
@@ -168,6 +198,28 @@ export const Pull = () => {
 		setCleared( response.cleared || 0 );
 		run();
 	};
+
+	// One press, not two. The receive screen shows the same offer with the same button, so
+	// arriving here with `start` means somebody has already pressed it: claim and begin, rather
+	// than drawing an identical card and waiting to be told again.
+	useEffect( () => {
+		if (
+			! start ||
+			asked.current ||
+			! state.hydrated ||
+			state.connected ||
+			! waiting?.offered ||
+			busy
+		) {
+			return;
+		}
+
+		asked.current = true;
+		accept();
+		// `accept` is recreated every render and is stable in what it does; the ref is what
+		// makes this fire once.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ start, state.hydrated, state.connected, waiting, busy ] );
 
 	const submit = async ( event ) => {
 		event.preventDefault();
@@ -338,7 +390,7 @@ export const Pull = () => {
 						{ sprintf(
 							/* translators: %s: the source's address. */
 							__(
-								'Paired with %s. Nothing is being offered yet — finish the export there and press “Offer it to the destination”, and this page will pick it up. Or enter a key below.',
+								'Paired with %s. Nothing is being offered yet — finish the export there and press “Offer it to the destination”, and this page will pick it up on its own. Nothing needs carrying.',
 								'nfd-site-migrator'
 							),
 							waiting.url
@@ -350,15 +402,17 @@ export const Pull = () => {
 					</div>
 				) }
 
-			{ /* When a package is on offer the button that takes it is above, and this form is the
-			    fallback nobody needs — left expanded it put a second identical "Start the
-			    transfer" on the screen, so which one to press became a question. Collapsed, it is
-			    still one click away for the case it exists for: an offer from a site this one was
-			    never paired with. With nothing offered it is the only way through, and stays
-			    open. */ }
+			{ /* Open only when there is no other way through. A package on offer has its own button
+			    above, and leaving this expanded put a second identical "Start the transfer" on the
+			    screen, so which one to press became a question. A *link* is the same answer one
+			    step earlier: the pairing is what makes a key unnecessary, so a screen that says
+			    "nothing needs carrying" and then draws a key form underneath is arguing with
+			    itself. Both cases fold it to one click, for the case it exists for — an offer from
+			    a site this one was never paired with, which is also the case where it is the only
+			    way through and stays open. */ }
 			{ state.hydrated && ! state.connected && (
 				<div className="nfd-sm-card">
-					<Manual open={ ! waiting?.offered }>
+					<Manual open={ ! waiting?.offered && ! waiting?.linked }>
 						<form className="nfd-sm-form" onSubmit={ submit }>
 							<label htmlFor="nfd-sm-source-url">
 								{ __(
@@ -552,6 +606,27 @@ export const Pull = () => {
 							<li key={ p }>{ p }</li>
 						) ) }
 					</ul>
+					<p>
+						{ __(
+							'A transfer continues from the bytes already on disk, so a directory holding part of another package is never replaced by fetching again. Clear it and the next fetch starts from nothing.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<div className="nfd-sm-actions">
+						<button
+							type="button"
+							className="nfd-sm-btn"
+							onClick={ discardFetched }
+							disabled={ discarding }
+						>
+							{ discarding
+								? __( 'Clearing…', 'nfd-site-migrator' )
+								: __(
+										'Clear what was fetched and start again',
+										'nfd-site-migrator'
+								  ) }
+						</button>
+					</div>
 				</div>
 			) }
 

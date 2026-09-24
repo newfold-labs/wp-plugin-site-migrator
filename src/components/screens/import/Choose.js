@@ -43,6 +43,12 @@ export const Choose = () => {
 	const [ busy, setBusy ] = useState( false );
 	const [ error, setError ] = useState( '' );
 
+	// Whether the failure that is showing is one a fresh start would cure, and whether that
+	// start is under way. Set only where an upload has actually been attempted, so the offer
+	// never appears beside an error about something else.
+	const [ staged, setStaged ] = useState( false );
+	const [ clearing, setClearing ] = useState( false );
+
 	// The path whose delete has been asked for but not yet confirmed, and the one being
 	// deleted. Two steps rather than a browser confirm dialog: this removes a whole site from
 	// the disk, and the sentence explaining that has nowhere to go in a native prompt.
@@ -189,6 +195,7 @@ export const Choose = () => {
 
 		const result = await uploadPackage( {
 			files: selected.files,
+			manifest: selected.manifest,
 			chunkSize: sources?.chunk_size || 1048576,
 			stop: stop.current,
 			onProgress: setProgress,
@@ -196,6 +203,7 @@ export const Choose = () => {
 
 		if ( ! result.ok ) {
 			setBusy( false );
+			setStaged( true );
 			setError(
 				result.error || __( 'The upload stopped.', 'nfd-site-migrator' )
 			);
@@ -207,6 +215,7 @@ export const Choose = () => {
 		setBusy( false );
 
 		if ( check.failed || ! check.ok ) {
+			setStaged( true );
 			setError(
 				check.failed
 					? check.error
@@ -223,6 +232,29 @@ export const Choose = () => {
 		}
 
 		navigate( '/import/review' );
+	};
+
+	// An upload resumes from the bytes already on disk, which is what makes a dropped connection
+	// survivable -- and what leaves a half-finished package behind when the thing being uploaded
+	// has changed since. Nothing else in the UI could empty that directory, so a destination
+	// whose staging directory held the wrong bytes had no way forward that did not involve a
+	// shell or an FTP client.
+	const clearStaged = async () => {
+		setClearing( true );
+
+		const response = await api.import.uploadReset();
+
+		setClearing( false );
+
+		if ( response.failed ) {
+			setError( response.error );
+			return;
+		}
+
+		setStaged( false );
+		setError( '' );
+		setSelected( null );
+		setProgress( null );
 	};
 
 	const openDiscovered = ( path ) => {
@@ -252,7 +284,34 @@ export const Choose = () => {
 			) }
 		>
 			{ error && (
-				<div className="nfd-sm-note nfd-sm-note--stop">{ error }</div>
+				<div className="nfd-sm-note nfd-sm-note--stop">
+					<p>{ error }</p>
+					{ staged && (
+						<>
+							<p>
+								{ __(
+									'Part of an earlier upload is still here, and a resumed upload continues from it rather than replacing it. Clear it and send the package again.',
+									'nfd-site-migrator'
+								) }
+							</p>
+							<div className="nfd-sm-actions">
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									onClick={ clearStaged }
+									disabled={ clearing }
+								>
+									{ clearing
+										? __( 'Clearing…', 'nfd-site-migrator' )
+										: __(
+												'Clear what was uploaded',
+												'nfd-site-migrator'
+										  ) }
+								</button>
+							</div>
+						</>
+					) }
+				</div>
 			) }
 
 			{ ! sources && ! error && (

@@ -197,18 +197,42 @@ class Manifest {
 	/**
 	 * Record the database dump.
 	 *
-	 * @param string $file   Path relative to the package.
-	 * @param int    $bytes  Size in bytes.
-	 * @param string $sha256 Checksum.
+	 * A dump is either the site's database or a chosen few tables of it, and the destination has
+	 * to be told which before it decides what to do with it: the first replaces everything in one
+	 * rename, the second merges into a database that stays where it is. `partial` carries the
+	 * lists as well as the fact, so the review screen can name the tables and the settings that
+	 * would arrive rather than describing "some of the database".
+	 *
+	 * @param string $file    Path relative to the package.
+	 * @param int    $bytes   Size in bytes.
+	 * @param string $sha256  Checksum.
+	 * @param array  $partial `tables` and `options` when this dump merges; empty when it replaces.
 	 *
 	 * @return void
 	 */
-	public function set_database( $file, $bytes, $sha256 ) {
+	public function set_database( $file, $bytes, $sha256, array $partial = array() ) {
 		$this->data['database'] = array(
 			'file'   => $file,
 			'bytes'  => (int) $bytes,
 			'sha256' => $sha256,
 		);
+
+		if ( ! empty( $partial ) ) {
+			$this->data['database']['partial'] = true;
+			$this->data['database']['tables']  = \array_values( (array) \nfd_sm_data_get( $partial, 'tables', array() ) );
+			$this->data['database']['options'] = \array_values( (array) \nfd_sm_data_get( $partial, 'options', array() ) );
+		}
+	}
+
+	/**
+	 * Whether the dump merges into the destination's database rather than replacing it.
+	 *
+	 * @return bool
+	 */
+	public function is_partial_database() {
+		$database = $this->get( 'database', array() );
+
+		return \is_array( $database ) && ! empty( $database['partial'] );
 	}
 
 	/**
@@ -286,6 +310,22 @@ class Manifest {
 				'excluded' => \array_values( $excluded ),
 			),
 		);
+	}
+
+	/**
+	 * Whether this package carries a database at all.
+	 *
+	 * Absent means code only: the source deliberately sent plugins and themes and no data, and
+	 * the destination keeps its own site. It is not the same as a dump that failed to arrive,
+	 * which is what `PackageReader::verify()` catches — a manifest naming a `database` file that
+	 * is not there, or is the wrong size, still fails as it always did.
+	 *
+	 * @return bool
+	 */
+	public function has_database() {
+		$database = $this->get( 'database', array() );
+
+		return \is_array( $database ) && ! empty( $database['file'] );
 	}
 
 	/**

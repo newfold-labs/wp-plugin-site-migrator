@@ -10,6 +10,7 @@ namespace NewfoldLabs\WP\SiteMigrator\Rest;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Exporter;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\PartSpecs;
 use NewfoldLabs\WP\SiteMigrator\Core\Export\Selection;
+use NewfoldLabs\WP\SiteMigrator\Core\Export\TableOwners;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
@@ -132,6 +133,41 @@ class ExportController extends Controller {
 
 		\register_rest_route(
 			$this->namespace,
+			'/export/belongings',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'belongings' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+					'args'                => array(
+						'cursor' => array(
+							'type'    => 'integer',
+							'default' => 0,
+						),
+						'offset' => array(
+							'type'    => 'integer',
+							'default' => 0,
+						),
+						'budget' => array(
+							'type'    => 'number',
+							'default' => 5,
+						),
+						'deep'   => array(
+							'type'    => 'boolean',
+							'default' => false,
+						),
+						'skip'   => array(
+							'type'    => 'array',
+							'items'   => array( 'type' => 'string' ),
+							'default' => array(),
+						),
+					),
+				),
+			)
+		);
+
+		\register_rest_route(
+			$this->namespace,
 			'/export/download',
 			array(
 				array(
@@ -179,6 +215,244 @@ class ExportController extends Controller {
 				'locked'    => $this->run_in_progress(),
 			)
 		);
+	}
+
+	/**
+	 * What each installed plugin and theme appears to own in the database, a few at a time.
+	 *
+	 * Its own endpoint rather than part of `/export/contents`, because it is the expensive one:
+	 * answering means reading plugin code, and the screen only needs it in the one case where
+	 * somebody has said the database is not travelling.
+	 *
+	 * **And it is stepped, like everything else here that does bulk work.** A real thirteen-plugin
+	 * site takes 43 seconds to read even with tests and `node_modules` skipped, which no request
+	 * survives — the first version of this returned nothing at all on such a site and left the
+	 * picker spinning for ever. Each call now scans for a few seconds and hands back a cursor;
+	 * the screen asks again until `done`, showing what it has so far. A directory finished in full
+	 * is remembered for a day, so coming back to the screen costs nothing.
+	 *
+	 * What comes back is a suggestion and is labelled as one on the screen. `TableOwners` says how
+	 * it is arrived at and what it cannot see.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function belongings( $request ) {
+		$budget = (float) $request->get_param( 'budget' );
+		$budget = $budget > 0 ? \min( $budget, 20.0 ) : 5.0;
+
+		$deep = ! empty( $request->get_param( 'deep' ) );
+
+		$owners  = new TableOwners( $this->table_names(), '', $budget, $deep );
+		$present = $this->option_names();
+		$cached  = $this->remembered( $deep );
+
+		$queue  = $this->scan_queue( (array) $request->get_param( 'skip' ) );
+		$cursor = (int) $request->get_param( 'cursor' );
+		$offset = (int) $request->get_param( 'offset' );
+		$found  = array();
+		$done   = true;
+
+		foreach ( $queue as $index => $entry ) {
+			if ( $index < $cursor ) {
+				continue;
+			}
+
+			$key = $entry['part'] . '/' . $entry['slug'];
+
+			// Finished earlier, by an earlier request or an earlier visit to the screen. A
+			// plugin's code changes when it is updated, and a suggestion a day stale is still a
+			// suggestion -- the cache holds for `DAY_IN_SECONDS` and nothing depends on it.
+			if ( isset( $cached[ $key ] ) && 0 === $offset ) {
+				if ( ! empty( $cached[ $key ]['tables'] ) || ! empty( $cached[ $key ]['options'] ) ) {
+					$found[ $entry['part'] ][ $entry['slug'] ] = $cached[ $key ];
+				}
+
+				++$cursor;
+				continue;
+			}
+
+			$scan = $owners->scan_from( $entry['dir'], $offset );
+			$one  = $owners->resolve( $scan['tables'], $scan['options'], $present );
+
+			if ( $scan['next'] > 0 ) {
+				// Stopped part way through this one. Its partial findings are not reported: half
+				// a plugin's tables read as "this is what it owns", which is worse than waiting.
+				$offset = (int) $scan['next'];
+				$done   = false;
+				break;
+			}
+
+			if ( ! empty( $one['tables'] ) || ! empty( $one['options'] ) ) {
+				$found[ $entry['part'] ][ $entry['slug'] ] = $one;
+			}
+
+			$cached[ $key ] = $one;
+			$offset         = 0;
+			++$cursor;
+
+			if ( ! $owners->is_complete() ) {
+				$done = false;
+				break;
+			}
+		}
+
+		$this->remember( $cached, $deep );
+
+		if ( $cursor >= \count( $queue ) ) {
+			$done = true;
+		}
+
+		// Taken from everything known, not from this request's share of it: the last call in a
+		// stepped scan sees only the plugins it read itself, and unclaimed means "no plugin
+		// claimed it", which is a question about all of them.
+		$claimed = array();
+
+		foreach ( $queue as $entry ) {
+			$key = $entry['part'] . '/' . $entry['slug'];
+
+			if ( isset( $cached[ $key ]['tables'] ) ) {
+				$claimed[] = $cached[ $key ]['tables'];
+			}
+		}
+
+		return \rest_ensure_response(
+			array(
+				'belongs'   => $found,
+				// Everything the scan could not attribute, so a table a plugin builds a name for
+				// at runtime is offered rather than quietly left behind. Only meaningful once
+				// every plugin has had its turn.
+				'unclaimed' => $done ? $owners->unclaimed( $claimed ) : array(),
+				'done'      => $done,
+				'cursor'    => $cursor,
+				'offset'    => $offset,
+				'total'     => \count( $queue ),
+				'deep'      => $deep,
+				'scanning'  => $done || ! isset( $queue[ $cursor ] ) ? '' : $queue[ $cursor ]['slug'],
+			)
+		);
+	}
+
+	/**
+	 * The directories to read, in a fixed order, so a cursor means the same thing twice.
+	 *
+	 * Narrowed by whatever the caller says is not travelling. A plugin left out of the package has
+	 * no business offering its tables: carrying them would leave the destination holding rows that
+	 * nothing installed there can read, inside a package whose whole promise is "only what you
+	 * chose" -- and reading its code to work that out is time spent on a plugin nobody is sending.
+	 * The screen sends what it has on screen rather than what was last saved, because unticking a
+	 * plugin and turning the database off happen in the same visit and in either order.
+	 *
+	 * @param array $skip Entries to leave out, each `part/slug`.
+	 *
+	 * @return array List of `part`, `slug`, `dir`.
+	 */
+	protected function scan_queue( array $skip = array() ) {
+		$queue = array();
+		$out   = \array_flip( \array_map( 'strval', $skip ) );
+
+		foreach ( $this->code_directories() as $part => $children ) {
+			foreach ( $children as $slug => $dir ) {
+				if ( isset( $out[ $part . '/' . $slug ] ) ) {
+					continue;
+				}
+
+				$queue[] = array(
+					'part' => $part,
+					'slug' => $slug,
+					'dir'  => $dir,
+				);
+			}
+		}
+
+		return $queue;
+	}
+
+	/**
+	 * What earlier passes worked out, kept for a day.
+	 *
+	 * A transient rather than the options facade: this is a cache of something derivable, it is
+	 * allowed to disappear, and it must not travel in the one option a package carries. The quick
+	 * read and the thorough one are kept apart, so asking for the second does not have to throw
+	 * away the first and cannot be answered with it.
+	 *
+	 * @param bool $deep Whether to read the thorough scan's cache.
+	 *
+	 * @return array Map of `part/slug` => `tables` and `options`.
+	 */
+	protected function remembered( $deep = false ) {
+		$cached = \get_transient( $deep ? 'nfd_sm_belongings_deep' : 'nfd_sm_belongings' );
+
+		return \is_array( $cached ) ? $cached : array();
+	}
+
+	/**
+	 * Keep what this pass worked out.
+	 *
+	 * @param array $found Map of `part/slug` => `tables` and `options`.
+	 * @param bool  $deep  Whether this was the thorough read, which is kept separately.
+	 *
+	 * @return void
+	 */
+	protected function remember( array $found, $deep = false ) {
+		\set_transient(
+			$deep ? 'nfd_sm_belongings_deep' : 'nfd_sm_belongings',
+			$found,
+			DAY_IN_SECONDS
+		);
+	}
+
+	/**
+	 * Every plugin and theme directory on this site, keyed by the part it belongs to.
+	 *
+	 * @return array Map of part name => map of slug => absolute directory.
+	 */
+	protected function code_directories() {
+		$dirs = array();
+
+		foreach ( PartSpecs::all() as $spec ) {
+			$name = $spec->name();
+
+			if ( 'plugins' !== $name && 'mu-plugins' !== $name && 0 !== \strpos( $name, 'themes' ) ) {
+				continue;
+			}
+
+			$root = \rtrim( $spec->root(), '/\\' );
+
+			foreach ( PartSpecs::children( $spec ) as $child ) {
+				$dirs[ $name ][ $child ] = $root . DIRECTORY_SEPARATOR . $child;
+			}
+		}
+
+		return $dirs;
+	}
+
+	/**
+	 * This site's table names.
+	 *
+	 * @return array
+	 */
+	protected function table_names() {
+		global $wpdb;
+
+		$rows = $wpdb->get_col( 'SHOW TABLES' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+
+		return \is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * This site's option names.
+	 *
+	 * @return array
+	 */
+	protected function option_names() {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$rows = $wpdb->get_col( "SELECT `option_name` FROM `{$wpdb->options}`" );
+
+		return \is_array( $rows ) ? $rows : array();
 	}
 
 	/**

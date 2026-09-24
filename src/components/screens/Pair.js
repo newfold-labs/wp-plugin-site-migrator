@@ -241,7 +241,7 @@ export const Pair = ( { onResult } ) => {
 							/>
 							<p className="nfd-sm-hint">
 								{ __(
-									'Copy it from the destination’s pairing screen. This works when the destination cannot be reached over the network.',
+									'On the destination, open “Source cannot reach this site? Send it a profile instead” and copy what it shows. This is the way through when the destination cannot be reached over the network.',
 									'nfd-site-migrator'
 								) }
 							</p>
@@ -279,7 +279,14 @@ export const Pair = ( { onResult } ) => {
 								className="nfd-sm-link"
 								onClick={ () => {
 									onResult( { skipped: true } );
-									navigate( '/export' );
+
+									// To the picker, not straight to the run.
+									// Choosing what goes in is part of packaging,
+									// and it hangs off the compatibility screen —
+									// which nobody who skipped pairing ever sees.
+									navigate( '/contents', {
+										state: { back: '/pair' },
+									} );
 								} }
 							>
 								{ __(

@@ -404,6 +404,9 @@ class Commands {
 	 *     # a plugin and a year of media, but keep everything else
 	 *     wp site-migrator contents --set='{"paths":{"plugins":["akismet"],"uploads":["2019"]}}'
 	 *
+	 *     # code only: plugins and themes, and none of the database
+	 *     wp site-migrator contents --set='{"database":{"skip_database":true}}'
+	 *
 	 *     # carry the whole site again
 	 *     wp site-migrator contents --reset
 	 *
@@ -666,12 +669,18 @@ class Commands {
 	 * [--restart]
 	 * : Throw away a recorded run and start from the beginning.
 	 *
+	 * [--fix-php]
+	 * : Rewrite syntax this PHP no longer accepts where the rewrite is exact -- `$str{0}` as
+	 * `$str[0]`, `(real)` as `(float)`, and a nested ternary given the parentheses PHP 7
+	 * applied -- keeping each original. Anything else still refuses the import.
+	 *
 	 * [--yes]
 	 * : Skip the confirmation prompt.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp site-migrator import /tmp/mysite --yes
+	 *     wp site-migrator import /tmp/mysite --fix-php
 	 *
 	 * @param array $args       Positional arguments.
 	 * @param array $assoc_args Associative arguments.
@@ -694,6 +703,8 @@ class Commands {
 			'site_url'    => isset( $assoc_args['url-to'] ) ? $assoc_args['url-to'] : '',
 			'home_url'    => isset( $assoc_args['url-to'] ) ? $assoc_args['url-to'] : '',
 			'keep_backup' => ! isset( $assoc_args['discard-backup'] ),
+			// Left null without the flag, so resuming a run the browser started keeps its choice.
+			'fix_php'     => isset( $assoc_args['fix-php'] ) ? true : null,
 		);
 
 		$importer = new Importer( $dir, $options );
@@ -732,11 +743,29 @@ class Commands {
 				return;
 			}
 
+			$code = self::code_check( $preview );
+
 			if ( empty( $preview['ok'] ) ) {
 				foreach ( Output::report_rows( (array) \nfd_sm_data_get( $preview, 'report', array() ) ) as $row ) {
 					if ( 'block' === $row['status'] ) {
 						Output::progress( '  ' . $row['detail'] );
+
+						// Which files, and where: "cannot run" alone gives nobody anything to fix.
+						if ( 'php_code' === $row['check'] ) {
+							foreach ( (array) \nfd_sm_data_get( $code, 'context.missing', array() ) as $line ) {
+								Output::progress( '    ' . $line );
+							}
+						}
 					}
+				}
+
+				if ( null !== $code && 'block' === $code['status'] && (int) \nfd_sm_data_get( $code, 'context.fixable', 0 ) > 0 && ! isset( $assoc_args['fix-php'] ) ) {
+					Output::progress(
+						\sprintf(
+							'  %d of those file(s) can be fixed as they are imported. Run the same command with --fix-php.',
+							(int) \nfd_sm_data_get( $code, 'context.fixable', 0 )
+						)
+					);
 				}
 
 				Output::fail(
@@ -745,6 +774,10 @@ class Commands {
 				);
 
 				return;
+			}
+
+			if ( null !== $code && 'warn' === $code['status'] && isset( $assoc_args['fix-php'] ) ) {
+				Output::progress( '  ' . $code['label'] );
 			}
 
 			Output::confirm(
@@ -962,6 +995,25 @@ class Commands {
 		} while ( empty( $state['done'] ) );
 
 		return $state;
+	}
+
+	/**
+	 * The package code check from a preview, if it reported anything other than a pass.
+	 *
+	 * @param array $preview `Importer::preview()` result.
+	 *
+	 * @return array|null
+	 */
+	protected static function code_check( array $preview ) {
+		foreach ( array( 'blocking', 'warnings' ) as $bucket ) {
+			foreach ( (array) \nfd_sm_data_get( $preview, 'report.' . $bucket, array() ) as $check ) {
+				if ( 'php_code' === \nfd_sm_data_get( $check, 'id', '' ) ) {
+					return (array) $check;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	/**

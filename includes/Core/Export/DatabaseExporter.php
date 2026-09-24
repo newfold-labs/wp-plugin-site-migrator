@@ -104,6 +104,14 @@ class DatabaseExporter {
 			return $tables;
 		}
 
+		// A partial dump is the other way round: an allowlist rather than a site minus refusals.
+		// It exists to carry a chosen plugin's own tables into a destination that keeps its
+		// database, so anything not on the list is not merely skipped -- it is somebody else's
+		// data that this package has no business moving.
+		if ( $this->selection->is_partial_database() ) {
+			return $this->carried( $rows, $prefix );
+		}
+
 		foreach ( $rows as $table ) {
 			if ( 0 !== \strpos( $table, $prefix ) ) {
 				continue;
@@ -118,6 +126,44 @@ class DatabaseExporter {
 			}
 
 			$tables[] = $table;
+		}
+
+		return $tables;
+	}
+
+	/**
+	 * The tables a partial dump carries: the chosen ones, plus `options` when settings travel.
+	 *
+	 * `wp_options` is in the dump but never in the swap. It arrives as a staging table, the rows
+	 * the source chose and nothing else, and the import copies those rows into the destination's
+	 * own options table one at a time. That is the only way a plugin's settings can travel without
+	 * the destination's identity -- its address, its permalinks, its active plugins -- travelling
+	 * with them.
+	 *
+	 * @param array  $rows   Every table in the database.
+	 * @param string $prefix This site's prefix.
+	 *
+	 * @return array
+	 */
+	protected function carried( array $rows, $prefix ) {
+		$wanted = array();
+
+		foreach ( $this->selection->carried_tables() as $table ) {
+			$name = 0 === \strpos( (string) $table, $prefix ) ? (string) $table : $prefix . $table;
+
+			$wanted[ $name ] = true;
+		}
+
+		if ( ! empty( $this->selection->carried_options() ) ) {
+			$wanted[ $prefix . 'options' ] = true;
+		}
+
+		$tables = array();
+
+		foreach ( $rows as $table ) {
+			if ( isset( $wanted[ $table ] ) ) {
+				$tables[] = $table;
+			}
 		}
 
 		return $tables;
@@ -158,6 +204,20 @@ class DatabaseExporter {
 	 * @return string
 	 */
 	protected function options_exclusion() {
+		$carried = $this->selection->carried_options();
+
+		// In a partial dump the options table is not the site's settings, it is the chosen
+		// plugins' settings: an allowlist of names, and no row that is not on it.
+		if ( ! empty( $carried ) ) {
+			$quoted = array();
+
+			foreach ( $carried as $name ) {
+				$quoted[] = "'" . \esc_sql( $name ) . "'";
+			}
+
+			return '`option_name` IN (' . \implode( ', ', $quoted ) . ')';
+		}
+
 		$names  = \defined( 'NFD_SM_OPTIONS_LIST' ) ? NFD_SM_OPTIONS_LIST : array();
 		$where  = array();
 		$quoted = array();

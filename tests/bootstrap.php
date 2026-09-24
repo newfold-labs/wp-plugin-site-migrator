@@ -86,6 +86,13 @@ class Fixture {
 	public static $tables = array();
 
 	/**
+	 * What other column queries answer, keyed by how the query starts.
+	 *
+	 * @var array
+	 */
+	public static $columns = array();
+
+	/**
 	 * Where `wp_get_upload_dir()` points.
 	 *
 	 * @var string
@@ -176,6 +183,7 @@ class Fixture {
 		self::$options    = array();
 		self::$transients = array();
 		self::$tables     = array();
+		self::$columns    = array();
 		self::$site_url   = 'http://source.test';
 		self::$current_user_id = 1;
 		self::$filters    = array();
@@ -448,6 +456,8 @@ class WPDB_Stub {
 	// property the code under test reads is a stub that fails as a fatal rather than as a test.
 	public $base_prefix = 'wp_';
 	public $dbname    = 'nfd_sm_tests';
+	// Real `$wpdb` carries the connection handle, and `DatabaseBase`'s constructor reads it.
+	public $dbh       = null;
 	public $users     = 'wp_users';
 	public $usermeta  = 'wp_usermeta';
 	public $options   = 'wp_options';
@@ -469,7 +479,17 @@ class WPDB_Stub {
 			return \Fixture::$tables;
 		}
 
+		foreach ( \Fixture::$columns as $start => $rows ) {
+			if ( 0 === \stripos( \ltrim( (string) $query ), $start ) ) {
+				return $rows;
+			}
+		}
+
 		return array();
+	}
+
+	public function suppress_errors( $suppress = true ) {
+		return false;
 	}
 
 	public function get_var( $query ) {
@@ -483,6 +503,51 @@ class WPDB_Stub {
 	public function get_results( $query, $output = null ) {
 		return array();
 	}
+}
+
+/**
+ * `DatabaseBase::prepare_table_values()` on its own, with no database behind it.
+ *
+ * That method turns one column value into the literal the dump writes, and it is pure -- it reads
+ * nothing but its two arguments. So the constructor is skipped deliberately rather than fed a fake
+ * `$wpdb`: connecting a stub handle would only prove the stub connects, and the nine abstract
+ * methods below exist to satisfy the class, not to be called.
+ */
+class DumpValues extends \NewfoldLabs\WP\SiteMigrator\Database\DatabaseBase {
+
+	public function __construct() {}
+
+	public function prepare( $input, $column_type ) {
+		return $this->prepare_table_values( $input, $column_type );
+	}
+
+	public function query( $input ) {}
+
+	public function escape( $input ) {
+		return \addslashes( (string) $input );
+	}
+
+	public function errno() {
+		return 0;
+	}
+
+	public function error() {
+		return '';
+	}
+
+	public function version() {
+		return '8.0.0';
+	}
+
+	public function fetch_assoc( $result ) {}
+
+	public function fetch_row( $result ) {}
+
+	public function num_rows( $result ) {
+		return 0;
+	}
+
+	public function free_result( $result ) {}
 }
 
 function wp_generate_password( $length = 12, $special = true, $extra = false ) {

@@ -16,9 +16,16 @@ use NewfoldLabs\WP\SiteMigrator\Core\Import\SearchReplace;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Report;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\ImportCheckpoint;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\CodeCompatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Import\Importer;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\PluginPresence;
+use NewfoldLabs\WP\SiteMigrator\Core\Import\Upload;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
 use PHPUnit\Framework\TestCase;
 
 class RegressionTest extends TestCase {
@@ -482,5 +489,1075 @@ class RegressionTest extends TestCase {
 		\switch_to_blog( 2 );
 		$this->assertDirectoryDoesNotExist( $purged );
 		\restore_current_blog();
+	}
+
+	/**
+	 * An empty blob dumped as `0x`, which is not a hex literal.
+	 *
+	 * A production import stopped at `INSERT INTO ... VALUES ('bannedURLs',0x,'yes')` with
+	 * "Unknown column '0x' in 'field list'" -- MySQL reads a hex literal with no digits as an
+	 * identifier. Wordfence keeps its configuration in a longblob and leaves unset settings
+	 * empty, so a site running it dumps a row like this for every option it has never written,
+	 * and the dump is refused at the first one. Nothing downstream could catch it: the package
+	 * was hashed after the dump was written, so `verify` confirmed the broken bytes arrived
+	 * intact.
+	 */
+	public function test_empty_blob_is_not_dumped_as_a_bare_hex_prefix() {
+		$db = new \DumpValues();
+
+		foreach ( array( 'blob', 'longblob', 'mediumblob', 'tinyblob', 'binary(16)', 'varbinary(255)' ) as $type ) {
+			$this->assertSame( "''", $db->prepare( '', $type ), $type . ' with an empty value' );
+		}
+
+		// The non-empty case is the one that has always worked, and has to keep working.
+		$this->assertSame( '0x00ff', $db->prepare( "\x00\xff", 'longblob' ) );
+
+		// A NULL is still a NULL, not an empty string -- Wordfence's `val` is NOT NULL, but
+		// other plugins' blobs are not, and collapsing the two loses a real distinction.
+		$this->assertSame( 'NULL', $db->prepare( null, 'longblob' ) );
+	}
+	/**
+	 * Build a manifest for a package whose dump hashes to `$sha`.
+	 *
+	 * @param string $sha Checksum the manifest declares for database.sql.
+	 *
+	 * @return array
+	 */
+	protected function package_manifest( $sha ) {
+		return array(
+			'schema_version' => 1,
+			'created_at'     => '2026-09-11T14:45:56+00:00',
+			'source'         => array( 'site_url' => 'https://source.test' ),
+			'database'       => array(
+				'file'   => 'database.sql',
+				'bytes'  => 4096,
+				'sha256' => $sha,
+			),
+			'parts'          => array(
+				array(
+					'file'   => 'parts/uploads.zip',
+					'bytes'  => 2048,
+					'sha256' => 'bb',
+				),
+			),
+			'totals'         => array(
+				'bytes' => 6144,
+				'files' => 2,
+			),
+		);
+	}
+
+	/**
+	 * Stage a package in the upload directory, as a part-finished upload leaves it.
+	 *
+	 * @param array $manifest Manifest to write.
+	 *
+	 * @return string The staging directory.
+	 */
+	protected function stage_upload( array $manifest ) {
+		$dir = Upload::dir();
+
+		\file_put_contents( $dir . '/manifest.json', \wp_json_encode( $manifest ) );
+		\file_put_contents( $dir . '/database.sql', \str_repeat( 'a', 4096 ) );
+
+		return $dir;
+	}
+
+	/**
+	 * A re-upload resuming into the package already staged.
+	 *
+	 * An upload resumes from the bytes on disk, which is what survives a dropped connection. A
+	 * package corrected in place is the case that breaks it: every file keeps its size, so each
+	 * one is skipped as already complete and the corrected bytes are never sent, while
+	 * `manifest.json` -- the one file whose size did move -- is appended to rather than
+	 * replaced, leaving JSON that will not parse. That is what happened on a real destination,
+	 * and the error it produced ("No manifest.json") named the only file that had actually
+	 * arrived.
+	 */
+	public function test_uploading_a_different_package_does_not_resume_into_the_old_one() {
+		$staged = $this->stage_upload( $this->package_manifest( 'aa' ) );
+
+		// Same source, same moment, same totals -- a dump corrected in place moves nothing but
+		// its checksum, so an identity built from how a package describes itself would miss it.
+		$cleared = Upload::reconcile( $this->package_manifest( 'cc' ) );
+
+		$this->assertGreaterThan( 0, $cleared, 'the stale bytes are reported as discarded' );
+		$this->assertFileDoesNotExist( $staged . '/database.sql' );
+		$this->assertFileDoesNotExist( $staged . '/manifest.json' );
+	}
+
+	/**
+	 * And the same package still resumes, which is the whole point of staging bytes at all.
+	 */
+	public function test_the_same_package_still_resumes() {
+		$manifest = $this->package_manifest( 'aa' );
+		$staged   = $this->stage_upload( $manifest );
+
+		$this->assertSame( 0, Upload::reconcile( $manifest ) );
+		$this->assertFileExists( $staged . '/database.sql' );
+		$this->assertSame( 4096, (int) \filesize( $staged . '/database.sql' ) );
+	}
+
+	/**
+	 * A finished-but-undecided import is not something a new upload may quietly discard.
+	 *
+	 * The same refusal `Upload::discard()` and `Puller::reconcile()` make, against the same
+	 * directory: its backup tables are the only copy of the site as it was.
+	 */
+	public function test_an_unsettled_import_blocks_the_clear() {
+		$staged = $this->stage_upload( $this->package_manifest( 'aa' ) );
+
+		$checkpoint = new ImportCheckpoint();
+		$state      = ImportCheckpoint::defaults();
+
+		$state['package'] = $staged;
+		$state['stage']   = 'database';
+
+		$checkpoint->save( $state );
+
+		$this->expectException( \RuntimeException::class );
+
+		Upload::reconcile( $this->package_manifest( 'cc' ) );
+	}
+	/**
+	 * A 5.7 source refused by an 8.0 destination over a rename.
+	 *
+	 * MySQL 8.0 renamed the three-byte `utf8` character set to `utf8mb3` and stopped listing
+	 * the old spellings in `SHOW COLLATION`, while still accepting them in DDL. So a source on
+	 * 5.7 whose tables are `utf8_general_ci` looked, to a destination on 8.0, like it needed a
+	 * collation that does not exist there -- and the gate blocks rather than warns, because a
+	 * missing collation really does kill an import partway with "Unknown collation". A real
+	 * localhost import was refused with "The destination does not support this site's text
+	 * encoding" by a server that supports every one of them.
+	 */
+	public function test_utf8_and_utf8mb3_are_the_same_collation() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array(
+						'utf8mb4_unicode_520_ci',
+						'utf8_general_ci',
+						'latin1_swedish_ci',
+						'utf8mb4_general_ci',
+					),
+				),
+			)
+		);
+
+		// What MySQL 8.0.35 actually answers: no `utf8_general_ci`, only the mb3 spelling.
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array(
+						'utf8mb4_unicode_520_ci',
+						'utf8mb3_general_ci',
+						'latin1_swedish_ci',
+						'utf8mb4_general_ci',
+						'utf8mb4_unicode_ci',
+					),
+				),
+			)
+		);
+
+		// Asserted on the collation check alone rather than on the whole report: these profiles
+		// carry nothing else, so every other gate is indeterminate, and indeterminate blocks.
+		$compatibility = new Compatibility( $source, $destination );
+		$collation     = $compatibility->check()->get( 'collation' );
+
+		$this->assertSame( 'pass', $collation['status'], 'a rename is not an incompatibility' );
+
+		// And the reverse move, which is the same rename read the other way round: an 8.0 source
+		// whose tables report `utf8mb3_general_ci`, onto a 5.7 destination that only ever calls
+		// it `utf8_general_ci`.
+		$newer = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'utf8mb3_general_ci' ),
+				),
+			)
+		);
+
+		$older = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array( 'utf8_general_ci', 'utf8mb4_general_ci' ),
+				),
+			)
+		);
+
+		$back = new Compatibility( $newer, $older );
+
+		$this->assertSame( 'pass', $back->check()->get( 'collation' )['status'] );
+	}
+
+	/**
+	 * A collation that is genuinely absent still blocks.
+	 *
+	 * The guard against curing the false refusal by never refusing at all.
+	 */
+	public function test_a_collation_that_really_is_missing_still_blocks() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'latin2_general_ci' ),
+				),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations' => array( 'utf8mb4_general_ci', 'utf8mb3_general_ci' ),
+				),
+			)
+		);
+
+		$compatibility = new Compatibility( $source, $destination );
+		$collation     = $compatibility->check()->get( 'collation' );
+
+		$this->assertSame( 'block', $collation['status'] );
+		$this->assertSame( array( 'latin2_general_ci' ), $collation['context']['missing'] );
+	}
+
+	/**
+	 * A site on current MariaDB refused by a destination on the very same server.
+	 *
+	 * MariaDB 11.4.5 lists its UCA 14.0 collations in `SHOW COLLATION` as `uca1400_ai_ci`, with no
+	 * character set, and 11.5 made `utf8mb4_uca1400_ai_ci` the server default. A fresh WordPress on
+	 * MariaDB 12.3.3 had 65 tables in the two UCA 14.0 collations, and a second install on the same
+	 * 12.3.3 refused its package with "The destination does not support this site's text encoding".
+	 * The answers below are what that server gave.
+	 */
+	public function test_mariadb_uca1400_collations_are_listed_by_their_full_names() {
+		\Fixture::$columns = array(
+			'SHOW COLLATION'             => array( 'latin1_swedish_ci', 'utf8mb4_general_ci', 'utf8mb4_unicode_520_ci', 'uca1400_ai_ci' ),
+			'SELECT FULL_COLLATION_NAME' => array( 'utf8mb3_uca1400_ai_ci', 'utf8mb4_uca1400_ai_ci', 'ucs2_uca1400_ai_ci' ),
+		);
+
+		$facts = ( new \ReflectionMethod( SiteProfile::class, 'database_facts' ) );
+		$facts->setAccessible( true );
+		$facts = $facts->invoke( null );
+
+		$this->assertContains( 'utf8mb4_uca1400_ai_ci', $facts['collations'] );
+		$this->assertContains( 'utf8mb3_uca1400_ai_ci', $facts['collations'] );
+		$this->assertNotContains( 'ucs2_uca1400_ai_ci', $facts['collations'], 'still only the families WordPress uses' );
+
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array(
+					'collations_used' => array( 'utf8mb4_unicode_520_ci', 'utf8mb3_uca1400_ai_ci', 'utf8mb4_uca1400_ai_ci', 'latin1_swedish_ci' ),
+				),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'database'       => array( 'collations' => $facts['collations'] ),
+			)
+		);
+
+		$this->assertSame( 'pass', ( new Compatibility( $source, $destination ) )->check()->get( 'collation' )['status'] );
+
+		// MySQL has no FULL_COLLATION_NAME column, so the second query fails and answers nothing;
+		// the list is then exactly what it always was.
+		\Fixture::$columns = array( 'SHOW COLLATION' => array( 'utf8mb4_0900_ai_ci', 'utf8mb4_general_ci' ) );
+
+		$this->assertSame( array( 'utf8mb4_0900_ai_ci', 'utf8mb4_general_ci' ), $facts = ( function () {
+			$method = new \ReflectionMethod( SiteProfile::class, 'database_facts' );
+			$method->setAccessible( true );
+
+			return $method->invoke( null )['collations'];
+		} )() );
+	}
+	/**
+	 * Reduce findings to the symbols they name.
+	 *
+	 * @param string $source  PHP source.
+	 * @param string $version PHP version to judge against.
+	 *
+	 * @return array
+	 */
+	protected function removals( $source, $version = '8.0' ) {
+		$checker  = new CodeCompatibility( '' );
+		$symbols  = array();
+
+		foreach ( $checker->inspect( '<?php ' . $source, $version ) as $finding ) {
+			$symbols[] = $finding['symbol'];
+		}
+
+		\sort( $symbols );
+
+		return $symbols;
+	}
+
+	/**
+	 * The two lines that took a production site down after a successful migration.
+	 *
+	 * Both came across in a theme, which declares no `Requires PHP` for the header gate to
+	 * read, and the version comparison called 7.4 to 8.5 a "heads up". The import verified,
+	 * swapped, and left a site that fatals in `wp-settings.php` on every request -- including
+	 * the REST call the screen offering to undo it depends on.
+	 */
+	public function test_the_two_removals_that_bricked_a_real_site() {
+		$this->assertSame(
+			array( 'create_function()' ),
+			$this->removals( 'add_action( "widgets_init", create_function( "", "return 1;" ) );' )
+		);
+
+		// The constructor case does not name itself at runtime: the class simply inherits its
+		// parent's constructor, and PHP blames `WP_Widget::__construct()` inside core.
+		$this->assertSame(
+			array( 'web_login::web_login() as a constructor' ),
+			$this->removals( 'class web_login extends WP_Widget { function web_login() { parent::__construct( "a", "b" ); } }' )
+		);
+	}
+
+	/**
+	 * And neither is reported on the version that still has them.
+	 */
+	public function test_nothing_is_removed_on_the_version_that_has_it() {
+		$this->assertSame(
+			array(),
+			$this->removals( 'add_action( "widgets_init", create_function( "", "return 1;" ) );', '7.4' )
+		);
+
+		$this->assertSame(
+			array(),
+			$this->removals( 'class web_login { function web_login() {} }', '7.4' )
+		);
+	}
+
+	/**
+	 * The false positives a regex pass produces, none of which are findings.
+	 *
+	 * Checked against a real theme first: matching `each` with a regex reported thirty-seven
+	 * hits in one theme and every one was wrong -- `_.each(` is Underscore and `$.each(` is
+	 * jQuery, both sitting inside PHP strings that render JavaScript templates, and a global
+	 * helper function named after a class is not that class's constructor. A check that cries
+	 * wolf on somebody's theme is worse than no check, because the habit it teaches is to press
+	 * on regardless.
+	 */
+	public function test_what_looks_like_a_removal_and_is_not() {
+		$cases = array(
+			'underscore in a template'  => '?><# _.each( data.items, function ( i ) { #><li></li><# } ); #><?php ',
+			'jquery in inline script'   => 'echo "<script>$.each( things, function () {} );</script>";',
+			'a method of the same name' => 'class Basket { public function each( $fn ) {} } $b = new Basket(); $b->each( "trim" );',
+			'a static of the same name' => 'Collection::each( $items );',
+			'somebody declaring it'     => 'function each( $thing ) { return $thing; }',
+			'a bare word, not a call'   => '$options = array( "each" => true ); echo $options["each"];',
+			'a modern constructor'      => 'class Widget { function __construct() {} }',
+			'a namespaced same name'    => 'namespace Vendor\\Pkg; class Thing { function Thing() {} }',
+			'an anonymous class'        => '$x = new class { function nope() {} };',
+		);
+
+		foreach ( $cases as $why => $source ) {
+			$this->assertSame( array(), $this->removals( $source ), $why );
+		}
+	}
+
+	/**
+	 * A same-named method in a plain class is still caught when it follows a namespaced one.
+	 *
+	 * The namespace check is per file and bails on the whole of it, which is right -- a file
+	 * with a namespace declaration has no PHP 4 constructors anywhere in it.
+	 */
+	public function test_a_removed_call_is_still_found_in_a_namespaced_file() {
+		$this->assertSame(
+			array( 'create_function()' ),
+			$this->removals( 'namespace A\\B; $f = create_function( "", "return 1;" );' )
+		);
+	}
+
+	/**
+	 * Syntax a PHP no longer accepts, found by asking the PHP that will run it.
+	 *
+	 * `$str{0}` and `(real)` are parse errors from 8.0 on, and no list of removed functions names
+	 * either. Only the running PHP can say what it parses, so no other version is parse-checked.
+	 */
+	public function test_code_this_php_cannot_parse_is_found() {
+		$checker = new CodeCompatibility( '' );
+		$broken  = $checker->inspect( '<?php function ( {', PHP_VERSION, 'wp-content/plugins/p/broken.php' );
+
+		$this->assertCount( 1, $broken );
+		$this->assertSame( 'parse', $broken[0]['kind'] );
+		$this->assertSame( array(), $checker->inspect( '<?php function ( {', '7.0' ), 'another version is not parsed' );
+
+		if ( \PHP_VERSION_ID < 80000 ) {
+			return;
+		}
+
+		// Caught either way, and which way depends on the running PHP rather than on the code.
+		// 8.4 dropped the grammar rule for `{}` offsets, so the parser refuses them; 8.0 to 8.3
+		// kept it to emit a friendlier compile-time error, so they parse and only the token check
+		// sees them. Asserting `parse` for both passed on 8.5 and failed on 8.3 -- a test pinned
+		// to one version's spelling of the same refusal.
+		foreach ( array( '$s = "abc"; echo $s{0};', '$x = (real) "1.5";' ) as $source ) {
+			$found = $checker->inspect( '<?php ' . $source, PHP_VERSION, 'wp-content/themes/t/functions.php' );
+
+			$this->assertNotEmpty( $found, $source );
+			$this->assertContains(
+				isset( $found[0]['kind'] ) ? $found[0]['kind'] : null,
+				array( 'parse', 'removed' ),
+				$source
+			);
+		}
+	}
+
+	/**
+	 * The two PHP 8.0 removals the parser accepts and only the compiler refuses.
+	 *
+	 * Each case is labelled by PHP 8.5's own `php -l`. The fine ones are the shapes a ternary
+	 * detector gets wrong: nullable types, `case` labels, closures, short chains, `print`.
+	 */
+	public function test_removed_syntax_the_parser_still_accepts() {
+		$fatal = array(
+			'$x = (unset) $y;',
+			'$x = $a ? 1 : $b ? 2 : 3;',
+			'$x = $a ?: $b ? 1 : 2;',
+			'$x = $a ? 1 : $b ?: 2;',
+			'$x = $a ? 1 : $b ?? $c ? 2 : 3;',
+			'f( $a ? 1 : $b ? 2 : 3 );',
+			'function f() { return $a ? 1 : $b ? 2 : 3; }',
+			// A closure does not end the expression it sits in.
+			'$x = $a ? function () { return 1; } : $b ? 2 : 3;',
+		);
+
+		$fine = array(
+			'$x = ( $a ? 1 : $b ) ? 2 : 3;',
+			'$x = $a ? $b ? 1 : 2 : 3;',
+			'$x = $a ?: $b ?: $c;',
+			'$x = $a ? 1 : $b ?? 2;',
+			'f( $a ? 1 : 2, $b ? 3 : 4 );',
+			'class K { public function a(): ?int { return 1; } public function b(): ?int { return $x ? 1 : 2; } public ?int $p = null; }',
+			'switch ( $a ) { case $b ? 1 : 2: break; case 3: $x = $c ? 1 : 2; }',
+			'$x = $a ? function () { return $b ? 1 : 2; } : null;',
+			'$f = fn( ?int $a ): ?int => $a ? 1 : 2;',
+			'$x = $a ? 1 : print $b ? 2 : 3;',
+			'unset( $y ); $x = "(unset)";',
+		);
+
+		foreach ( $fatal as $source ) {
+			$this->assertCount( 1, $this->removals( $source ), $source );
+		}
+
+		foreach ( $fine as $source ) {
+			$this->assertSame( array(), $this->removals( $source ), $source );
+		}
+
+		$this->assertSame( array(), $this->removals( '$x = (unset) $y; $z = $a ? 1 : $b ? 2 : 3;', '7.4' ), 'still accepted by 7.4' );
+	}
+
+	/**
+	 * Code that supports an old PHP, none of which fails on a new one.
+	 *
+	 * Both shapes were on a site the check refused. MetaSlider bundles HTMLPurifier, which calls
+	 * `get_magic_quotes_gpc()` only behind `function_exists()`, and core's `rss.php` keeps
+	 * `MagpieRSS::MagpieRSS()` beside a `__construct()`, which is what PHP has called since 5.
+	 */
+	public function test_old_php_support_that_never_runs_on_new_php() {
+		$this->assertSame(
+			array(),
+			$this->removals( '$mq = $fix && version_compare( PHP_VERSION, "7.4.0", "<" ) && function_exists( "get_magic_quotes_gpc" ) && get_magic_quotes_gpc();' )
+		);
+
+		// The guard and the call in different methods.
+		$this->assertSame(
+			array(),
+			$this->removals( 'class Loader { function ok() { return is_callable( "create_function" ); } function make() { return create_function( "", "" ); } }' )
+		);
+
+		$this->assertSame(
+			array(),
+			$this->removals( 'class MagpieRSS { function __construct( $s ) {} public function MagpieRSS( $s ) { self::__construct( $s ); } }' )
+		);
+
+		$this->assertSame( array(), $this->removals( 'class RSSCache { public function RSSCache() {} function __construct() {} }' ), 'declared after' );
+
+		// An unguarded call written fully qualified is still one, however the PHP tokenises it.
+		$this->assertSame( array( 'create_function()' ), $this->removals( 'namespace A; $f = \\create_function( "", "return 1;" );' ) );
+	}
+
+	/**
+	 * Tests and fixtures ship inside plugins and never run.
+	 *
+	 * Judged as PHP 8.5, a real site's plugins had 813 files that did not parse and 126 removals,
+	 * and every one sat in `tests/` inside a vendored PHP_CodeSniffer, whose fixtures are broken on
+	 * purpose. Refusing the site over them would have refused one that runs.
+	 */
+	public function test_tests_and_fixtures_are_not_read() {
+		$checker = new CodeCompatibility( '' );
+		$source  = '<?php function ( { $f = create_function( "", "" );';
+
+		$incidental = array(
+			'wp-content/plugins/p/vendor/squizlabs/php_codesniffer/tests/Core/Broken.inc',
+			'wp-content/plugins/p/src/Standards/Generic/Tests/Metrics/X.inc',
+			'wp-content/plugins/p/fixtures/a.php',
+			'wp-content/plugins/p/examples/b.php',
+			'wp-content/plugins/p/stubs/c.php',
+		);
+
+		foreach ( $incidental as $name ) {
+			$this->assertSame( array(), $checker->inspect( $source, PHP_VERSION, $name ), $name );
+		}
+
+		$this->assertNotEmpty( $checker->inspect( $source, PHP_VERSION, 'wp-content/plugins/p/tests.php' ), 'only a directory counts' );
+	}
+
+	/**
+	 * A file that does not parse blocks only when this PHP is newer than the source's.
+	 *
+	 * On the same version or an older one the source cannot have been loading it either.
+	 * WooCommerce 11.0 declares PHP 7.4 and carries 46 files of PHP 8 syntax that 7.4 cannot parse
+	 * and never loads; refusing to move it to a 7.4 host would refuse a site that works there.
+	 */
+	public function test_a_file_that_does_not_parse_blocks_only_on_a_newer_php() {
+		$package  = $this->code_package( '<?php function ( {' );
+		$statuses = array();
+
+		foreach ( array(
+			'source older' => '5.6.40',
+			'source same'  => PHP_VERSION,
+			'source newer' => '99.0.0',
+		) as $case => $version ) {
+			$report = new Report();
+
+			( new CodeCompatibility( $package, $this->code_manifest( $version ) ) )->check( $report );
+
+			$check             = $report->get( 'php_code' );
+			$statuses[ $case ] = $check['status'];
+
+			$this->assertStringContainsString( 'wp-content/plugins/p/broken.php:1 does not parse on PHP', $check['context']['missing'][0], $case );
+		}
+
+		$this->assertSame(
+			array(
+				'source older' => 'block',
+				'source same'  => 'warn',
+				'source newer' => 'warn',
+			),
+			$statuses
+		);
+
+		// A manifest that does not say where it came from refuses, like every check that cannot tell.
+		$report = new Report();
+
+		( new CodeCompatibility( $package, $this->code_manifest( '' ) ) )->check( $report );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
+	 * Code past the read budget is not reported as checked.
+	 *
+	 * The scan stopped at 64MB and returned what it had found, so a package whose first 64MB were
+	 * clean passed with the rest never read.
+	 */
+	public function test_a_scan_that_stops_early_does_not_pass() {
+		$package = $this->code_package( '<?php echo "a file larger than the budget below";' );
+		$report  = new Report();
+		$checker = new class( $package, $this->code_manifest( PHP_VERSION ) ) extends CodeCompatibility {
+			const MAX_BYTES = 10;
+		};
+
+		$checker->check( $report );
+
+		$this->assertSame( 'warn', $report->get( 'php_code' )['status'] );
+		$this->assertStringContainsString( 'only part of it was checked', $report->get( 'php_code' )['label'] );
+	}
+
+	/**
+	 * Tests and fixtures do not use up the read budget.
+	 *
+	 * A real site's plugins held 131MB of PHP, much of it vendored test suites. Read and then
+	 * discarded, those files ran the check out of budget and it warned that it had only checked
+	 * part of a package whose running code it could have read in full.
+	 */
+	public function test_tests_do_not_use_up_the_read_budget() {
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/p/vendor/lib/tests/Fixture.php' => '<?php echo "a fixture larger than the budget";',
+				'wp-content/plugins/p/p.php'                        => '<?php echo 1;',
+			)
+		);
+		$report  = new Report();
+		$checker = new class( $package, $this->code_manifest( PHP_VERSION ) ) extends CodeCompatibility {
+			const MAX_BYTES = 20;
+		};
+
+		$checker->check( $report );
+
+		$this->assertSame( 'pass', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
+	 * A package holding PHP files in a plugins part.
+	 *
+	 * @param string|array $files One file's contents, or contents keyed by entry name.
+	 *
+	 * @return string Package directory.
+	 */
+	protected function code_package( $files ) {
+		$package = $this->dir . '/package';
+		$files   = \is_array( $files ) ? $files : array( 'wp-content/plugins/p/broken.php' => $files );
+
+		\wp_mkdir_p( $package . '/parts' );
+
+		$writer = ZipWriter::create( $package . '/parts/plugins.001.zip' );
+
+		foreach ( $files as $name => $php ) {
+			$source = $this->dir . '/source-' . \md5( $name ) . '.php';
+
+			\file_put_contents( $source, $php );
+			$writer->add_file( $source, $name );
+		}
+
+		$writer->close();
+
+		return $package;
+	}
+
+	/**
+	 * A manifest naming that part, exported under the PHP version given.
+	 *
+	 * @param string $version Source PHP version, or empty for a manifest that does not say.
+	 *
+	 * @return Manifest
+	 */
+	protected function code_manifest( $version ) {
+		$data = array( 'parts' => array( array( 'file' => 'parts/plugins.001.zip' ) ) );
+
+		if ( '' !== $version ) {
+			$data['source'] = array( 'php_version' => $version );
+		}
+
+		return new Manifest( $data );
+	}
+
+	/**
+	 * The three removals with an exact replacement are rewritten, and only those.
+	 *
+	 * Chosen because each is a spelling rather than a meaning: `{}` offsets always meant `[]`,
+	 * `(real)` always meant `(float)`, and a ternary chain always associated to the left. The
+	 * parentheses go exactly where PHP 7 put them, so the fixed file runs the way the source did.
+	 */
+	public function test_safe_fixes_rewrite_only_the_exact_equivalents() {
+		$fixer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer();
+		$cases = array(
+			'$c = $s{0};'                                      => '$c = $s[0];',
+			'$c = $o->name{$i}{1} . $list[2]{0};'              => '$c = $o->name[$i][1] . $list[2][0];',
+			'$c = "{$s{0}} $s{0}";'                            => '$c = "{$s[0]} $s{0}";',
+			'$c = $a{"{$b}"};'                                 => '$c = $a["{$b}"];',
+			'$n = (real) $x + ( REAL )$y;'                     => '$n = (float) $x + (float)$y;',
+			'$x = $a ? 1 : $b ? 2 : 3;'                        => '$x = ($a ? 1 : $b) ? 2 : 3;',
+			'$x = $a ? 1 : $b ? 2 : $c ? 3 : 4;'               => '$x = (($a ? 1 : $b) ? 2 : $c) ? 3 : 4;',
+			'if ( $c ) return $a ? 1 : $b ? 2 : 3;'            => 'if ( $c ) return ($a ? 1 : $b) ? 2 : 3;',
+			'if ( $c ) f( $a ) ? 1 : $b ? 2 : 3;'              => 'if ( $c ) (f( $a ) ? 1 : $b) ? 2 : 3;',
+			'$x = array( "k" => $a ?: $b ? 1 : 2 );'           => '$x = array( "k" => ($a ?: $b) ? 1 : 2 );',
+			'$x = $a ? function () { return 1; } : $b ? 2 : 3;' => '$x = ($a ? function () { return 1; } : $b) ? 2 : 3;',
+			'$x = $a . $b ? 1 : 2 ? 3 : 4;'                    => '$x = ($a . $b ? 1 : 2) ? 3 : 4;',
+		);
+
+		foreach ( $cases as $before => $after ) {
+			$fixed = $fixer->fix( "<?php\n" . $before );
+
+			$this->assertNotNull( $fixed, $before );
+			$this->assertSame( "<?php\n" . $after, $fixed['source'], $before );
+			$this->assertNotEmpty( $fixed['changes'], $before );
+		}
+
+		// A string's own braces are the string's.
+		$this->assertNull( $fixer->fix( '<?php $c = "$s{0}"; $d = \'$s{0}\';' ) );
+
+		// And a rewrite that changes anything but the spelling is refused, even though the result
+		// parses and uses nothing removed.
+		$careless = new class() extends \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer {
+			protected function real_casts( $source, array &$changes ) {
+				$changes[] = array( 'line' => 1 );
+
+				return \str_replace( '(real)', '(int)', $source );
+			}
+		};
+
+		$this->assertNull( $careless->fix( '<?php $n = (real) $x;' ) );
+		$this->assertNotNull( $fixer->fix( '<?php $n = (real) $x;' ) );
+	}
+
+	/**
+	 * A file is fixed whole or not at all.
+	 *
+	 * Rewriting the braces in a file that also calls `create_function()` would change it and still
+	 * leave it unable to run, and the import would report it fixed.
+	 */
+	public function test_a_file_with_anything_else_wrong_is_left_alone() {
+		$fixer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer();
+
+		$this->assertNull( $fixer->fix( '<?php $a = $s{0}; function ( {' ) );
+		$this->assertNull( $fixer->fix( '<?php $a = $s[0]; $x = $a ? 1 : ( $b ? 2 : 3 );' ) );
+
+		// Removals only from 8.0, so on an older PHP these files are fine once fixed.
+		if ( PHP_VERSION_ID >= 80000 ) {
+			$this->assertNull( $fixer->fix( '<?php $a = $s{0}; $f = create_function( "", "" );' ) );
+			$this->assertNull( $fixer->fix( '<?php $a = $s{0}; $b = (unset) $c;' ) );
+		}
+	}
+
+	/**
+	 * Only a chosen file is changed, after it is written, and its original is kept.
+	 */
+	public function test_fixed_files_are_written_with_their_originals_kept() {
+		$broken  = "<?php\n\$c = \$s{0} . ( \$a ? 1 : \$b ? 2 : 3 );\n";
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/fixme/a.php'  => $broken,
+				'wp-content/plugins/fixme/b.php'  => $broken,
+				'wp-content/plugins/fixme/ok.php' => "<?php\n\$c = \$s[0];\n",
+			)
+		);
+
+		$manifest = new Manifest(
+			array(
+				'parts' => array(
+					array(
+						'name'   => 'plugins',
+						'prefix' => 'wp-content/plugins',
+						'file'   => 'parts/plugins.001.zip',
+					),
+				),
+				'large' => array(),
+			)
+		);
+
+		$state = array(
+			'part_index'       => 0,
+			'entry_index'      => 0,
+			'files_done'       => 0,
+			'bytes_done'       => 0,
+			'migrator_skipped' => 0,
+			'large_index'      => 0,
+			'large_offset'     => 0,
+		);
+
+		\NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::clear_backups();
+		\wp_mkdir_p( WP_PLUGIN_DIR );
+
+		// `b.php` is as broken as `a.php`, and was not chosen.
+		$restorer = new \NewfoldLabs\WP\SiteMigrator\Core\Import\FileRestorer(
+			$package,
+			$manifest,
+			array(
+				'wp-content/plugins/fixme/a.php'  => true,
+				'wp-content/plugins/fixme/ok.php' => true,
+			)
+		);
+
+		$this->assertTrue( $restorer->step( $state, 0 ) );
+
+		$target = ( new \NewfoldLabs\WP\SiteMigrator\Core\Import\PathMap() )->target( 'plugins', 'wp-content/plugins' );
+		$root   = \dirname( \NewfoldLabs\WP\SiteMigrator\Core\Import\PathMap::safe_path( $target['root'], 'wp-content/plugins/fixme/a.php', $target['strip'] ), 2 );
+		$backup = \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::backup_dir() . '/wp-content/plugins/fixme/a.php';
+
+		$this->assertSame( "<?php\n\$c = \$s[0] . ( (\$a ? 1 : \$b) ? 2 : 3 );\n", \file_get_contents( $root . '/fixme/a.php' ) );
+		$this->assertSame( $broken, \file_get_contents( $root . '/fixme/b.php' ) );
+		$this->assertSame( "<?php\n\$c = \$s[0];\n", \file_get_contents( $root . '/fixme/ok.php' ) );
+		$this->assertSame( $broken, \file_get_contents( $backup ) );
+		$this->assertFileDoesNotExist( $root . '/fixme/a.php.nfd-sm-fixing' );
+		$this->assertCount( 1, $restorer->fixed() );
+		$this->assertSame( 'wp-content/plugins/fixme/a.php', $restorer->fixed()[0]['file'] );
+		$this->assertSame( 3, $state['files_done'] );
+
+		\NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::clear_backups();
+
+		$this->assertDirectoryDoesNotExist( \NewfoldLabs\WP\SiteMigrator\Core\Import\SyntaxFixer::backup_dir() );
+
+		\Fixture::rmdir( ABSPATH );
+	}
+
+	/**
+	 * Choosing the fix turns a refusal into a notice only for the files it can fix.
+	 */
+	public function test_choosing_fixes_unblocks_only_what_they_fix() {
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->markTestSkipped( 'These are removals only from PHP 8.0.' );
+		}
+
+		$fixable = "<?php\n\$c = \$s{0};\n";
+		$checker = new CodeCompatibility( $this->code_package( $fixable ), $this->code_manifest( '7.4.33' ) );
+
+		$report = new Report();
+		$checker->check( $report );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'block', $check['status'] );
+		$this->assertSame( 1, $check['context']['fixable'] );
+		$this->assertSame( array( 'wp-content/plugins/p/broken.php' ), $checker->fixable_files() );
+
+		$report = new Report();
+		$checker->check( $report, '', true );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'warn', $check['status'] );
+		$this->assertCount( 1, $check['context']['missing'] );
+
+		// Beside a file no fix can help, the refusal stands and names only that one.
+		\Fixture::rmdir( $this->dir . '/package' );
+
+		$package = $this->code_package(
+			array(
+				'wp-content/plugins/p/fixable.php' => $fixable,
+				'wp-content/plugins/p/each.php'    => "<?php\nwhile ( list( \$k ) = each( \$a ) ) {}\n",
+			)
+		);
+		$checker = new CodeCompatibility( $package, $this->code_manifest( '7.4.33' ) );
+
+		$report = new Report();
+		$checker->check( $report, '', true );
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'block', $check['status'] );
+		$this->assertCount( 1, $check['context']['missing'] );
+		$this->assertStringContainsString( 'each.php', $check['context']['missing'][0] );
+		$this->assertSame( array( 'wp-content/plugins/p/fixable.php' ), $checker->fixable_files() );
+	}
+
+	/**
+	 * A function the source's own PHP had already removed is not this migration's problem.
+	 *
+	 * Reported from a real pair of sites, both on PHP 8.2: the destination refused a package over
+	 * `create_function()`, `mysql_query()` and `zip_entry_read()` inside WP Defender's vendored
+	 * copy of `thecodingmachine/safe`, whose generated wrappers call those functions in bodies
+	 * nothing invokes. PHP did not change at all in that migration, and the source was serving the
+	 * same files happily -- which is the proof the call is never reached. What must still block is
+	 * the real case: a function that was there on the source's PHP and is gone on this one.
+	 */
+	public function test_a_function_the_source_had_already_lost_does_not_block() {
+		$package = $this->code_package( "<?php\nfunction wrap( \$a, \$c ) { return create_function( \$a, \$c ); }\n" );
+
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '8.2.33' ) ) )->check( $report, '8.2.33' );
+
+		$check = $report->get( 'php_code' );
+
+		$this->assertSame( 'warn', $check['status'], 'PHP 8.2 to PHP 8.2 changes nothing about this call.' );
+		$this->assertStringContainsString( 'create_function()', $check['context']['missing'][0] );
+
+		// The same file from a site that still had the function: a real break, and refused.
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '7.4.33' ) ) )->check( $report, '8.2.33' );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+
+		// And a package that does not say which PHP it ran gets the strict reading.
+		$report = new Report();
+		( new CodeCompatibility( $package, $this->code_manifest( '' ) ) )->check( $report, '8.2.33' );
+
+		$this->assertSame( 'block', $report->get( 'php_code' )['status'] );
+	}
+
+	/**
+	 * A foreign key in the dump cannot travel into a staging table.
+	 *
+	 * Reported from a real import, which stopped at `Can't create table nfdimp_wp_defender_quarantine
+	 * (errno: 121 "Duplicate key on write or update")`. Constraint names are unique per *database*,
+	 * not per table, so staging a copy of a table whose constraint names the destination already
+	 * holds fails on the name alone — and a destination migrated from the same source before is
+	 * carrying exactly those names. The references are worse than the names: `REFERENCES wp_users`
+	 * binds the staged copy to the live table, and the swap then carries it onto `nfdold_wp_users`,
+	 * which is how another site ended up with an imported table pointing into the backup.
+	 */
+	public function test_foreign_keys_do_not_travel_into_staging() {
+		$create = "CREATE TABLE `nfdimp_wp_defender_quarantine` (\n"
+			. "  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"
+			. "  `defender_scan_item_id` int(10) unsigned DEFAULT NULL,\n"
+			. "  `created_by` bigint(20) unsigned DEFAULT NULL,\n"
+			. "  PRIMARY KEY (`id`),\n"
+			. "  KEY `wp_67fde6fa6276b_created_by` (`created_by`),\n"
+			. "  CONSTRAINT `wp_67fde6fa6276b_created_by` FOREIGN KEY (`created_by`) REFERENCES `wp_users` (`ID`) ON DELETE SET NULL ON UPDATE CASCADE,\n"
+			. "  CONSTRAINT `wp_67fde6fa6276b_defender_scan_item_id` FOREIGN KEY (`defender_scan_item_id`) REFERENCES `wp_defender_scan_item` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"
+			. ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
+
+		$loader = new class( $GLOBALS['wpdb'] ) extends \NewfoldLabs\WP\SiteMigrator\Database\DatabaseMysqli {
+			public function strip( $sql, $table, array &$state ) {
+				return $this->strip_foreign_keys( $sql, $table, $state );
+			}
+		};
+
+		$state   = array();
+		$staged  = $loader->strip( $create, 'wp_defender_quarantine', $state );
+
+		$this->assertStringNotContainsString( 'FOREIGN KEY', $staged );
+		$this->assertStringNotContainsString( 'wp_67fde6fa6276b_created_by` FOREIGN', $staged );
+		$this->assertSame( array( 'wp_defender_quarantine' => 2 ), $state['foreign_keys'], 'and it is counted, to be said in the notes' );
+
+		// The columns, the primary key and the indexes all stay: what is lost is enforcement.
+		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $staged );
+		$this->assertStringContainsString( 'KEY `wp_67fde6fa6276b_created_by` (`created_by`)', $staged );
+		$this->assertStringContainsString( '`created_by` bigint(20) unsigned DEFAULT NULL', $staged );
+		$this->assertStringEndsWith( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;', $staged );
+
+		// A table without one is handed back untouched, and counts nothing.
+		$plain = 'CREATE TABLE `nfdimp_wp_posts` ( `ID` bigint(20) unsigned NOT NULL, PRIMARY KEY (`ID`) );';
+		$state = array();
+
+		$this->assertSame( $plain, $loader->strip( $plain, 'wp_posts', $state ) );
+		$this->assertSame( array(), $state );
+	}
+
+	/**
+	 * A package without the plugins leaves a database that still expects them.
+	 *
+	 * Observed on a real destination: the header rendered five banners stacked instead of one,
+	 * and a page printed `[ninja_forms id=3]` as text. Nothing had failed -- `sidebars_widgets`
+	 * really does list five widgets and the page really does contain that shortcode. What was
+	 * missing was the code that reduces the first to one and turns the second into a form.
+	 * `Fixups::drop_missing_plugins()` deactivated twenty-one entries without comment, and the
+	 * review screen's only warning had been a part name.
+	 */
+	public function test_active_plugins_the_package_will_not_bring() {
+		$active = array(
+			'jetpack/jetpack.php',
+			'ninja-forms/ninja-forms.php',
+			'siteorigin-panels/siteorigin-panels.php',
+			'jobget-s2s.php',
+		);
+
+		// The destination already has one of them, and the package carries another.
+		$missing = PluginPresence::missing(
+			$active,
+			array( 'siteorigin-panels' ),
+			array( 'ninja-forms', 'index.php' )
+		);
+
+		$this->assertSame(
+			array( 'jetpack/jetpack.php', 'jobget-s2s.php' ),
+			$missing
+		);
+	}
+
+	/**
+	 * A plugin that is one loose file is not skipped as malformed.
+	 *
+	 * `jobget-s2s.php` has no directory, and it is exactly the kind that cannot be fetched from
+	 * wordpress.org afterwards -- so of the whole list it is the one that must not be dropped
+	 * by a parser expecting `slug/file.php`.
+	 */
+	public function test_a_loose_single_file_plugin_still_counts() {
+		$this->assertSame(
+			array( 'jobget-s2s.php' ),
+			PluginPresence::missing( array( 'jobget-s2s.php' ), array(), array() )
+		);
+
+		$this->assertSame(
+			array(),
+			PluginPresence::missing( array( 'jobget-s2s.php' ), array(), array( 'jobget-s2s.php' ) )
+		);
+	}
+
+	/**
+	 * The option is read out of the dump, where it is escaped for MySQL rather than for PHP.
+	 *
+	 * Unserializing would mean undoing that escaping exactly right first, on input from a
+	 * package this site did not build. Reading the strings out is enough and cannot be made to
+	 * do anything.
+	 */
+	public function test_reading_active_plugins_out_of_a_dump_line() {
+		$line = 'INSERT INTO `wp_options` VALUES (99,\'active_plugins\',\'a:2:{i:0;s:19:\\"jetpack/jetpack.php\\";'
+			. 'i:1;s:14:\\"jobget-s2s.php\\";}\',\'yes\');';
+
+		$this->assertSame(
+			array( 'jetpack/jetpack.php', 'jobget-s2s.php' ),
+			PluginPresence::parse_serialized_strings( $line )
+		);
+	}
+	/**
+	 * A package with no database is a package, not a broken one.
+	 *
+	 * `has_database()` is what the import branches on, and the distinction it draws is between a
+	 * source that deliberately sent no data and a dump that failed to arrive. The second is still
+	 * caught where it always was — `PackageReader::verify()` checks every file the manifest names.
+	 */
+	public function test_a_manifest_can_record_no_database() {
+		$manifest = new Manifest();
+
+		$this->assertFalse( $manifest->has_database() );
+
+		$manifest->set_database( 'database.sql', 120, 'abc' );
+
+		$this->assertTrue( $manifest->has_database() );
+	}
+
+	/**
+	 * And the gates that exist to move a database step aside when none is moving.
+	 *
+	 * A collation the destination's server does not have is a real refusal when tables written in
+	 * it are on their way. With a code-only package nothing is written to any table, so the same
+	 * refusal would block an import over an encoding it will never use — which is the shape of
+	 * every false refusal this plugin has shipped.
+	 */
+	public function test_a_code_only_package_is_not_refused_over_the_database() {
+		$source = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.1' ),
+				'database'       => array( 'collations_used' => array( 'latin2_general_ci' ) ),
+			)
+		);
+
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.2' ),
+				'database'       => array( 'collations' => array( 'utf8mb4_general_ci' ) ),
+			)
+		);
+
+		$compatibility = new Compatibility( $source, $destination );
+
+		$this->assertSame( 'block', $compatibility->check()->get( 'collation' )['status'] );
+		$this->assertNull( $compatibility->check( false )->get( 'collation' ) );
+	}
+
+	/**
+	 * A pasted profile survives the trip, so the fallback for an unreachable destination works.
+	 *
+	 * `encode()` had no caller anywhere in the plugin. The source's pairing screen told the user
+	 * to copy a profile from the destination's pairing screen, which never showed one, so the one
+	 * way through for a destination behind a firewall was an instruction pointing at a control
+	 * that did not exist -- while `decode()` and the REST branch reading it sat there working.
+	 * This asserts the two halves still agree, because they are now each other's only test.
+	 */
+	public function test_a_profile_survives_being_written_down_and_pasted_back() {
+		$destination = new SiteProfile(
+			array(
+				'schema_version' => SiteProfile::SCHEMA,
+				'minted_at'      => \time(),
+				'wp'             => array( 'version' => '6.4' ),
+				'php'            => array( 'version' => '8.2' ),
+			)
+		);
+
+		$blob = $destination->encode();
+
+		$this->assertStringStartsWith( 'NFDSM1-', $blob );
+
+		$back = SiteProfile::decode( $blob );
+
+		$this->assertInstanceOf( SiteProfile::class, $back );
+		$this->assertFalse( $back->is_stale() );
+		$this->assertSame( '6.4', $back->get( 'wp.version' ) );
+		$this->assertSame( '8.2', $back->get( 'php.version' ) );
+
+		// And nothing else is accepted, because a pasted blob is untrusted input.
+		$this->assertNull( SiteProfile::decode( 'NFDSM1-not-base64-at-all!!' ) );
+		$this->assertNull( SiteProfile::decode( '' ) );
 	}
 }

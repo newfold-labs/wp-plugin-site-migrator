@@ -199,12 +199,24 @@
         @apply items-start bg-warn-bg border-b-warn-edge border-l-[3px] border-l-warn px-5 py-[15px]
     }
     .nfd-sm-gate--block { @apply bg-red-50 border-b-red-200 border-l-red-600 }
+    /* A blocker and a warning are different kinds of news. Flush against each other the red row
+       ran straight into the yellow one with a hairline between them and read as one block, so
+       where the list changes from one to the other the box's own white shows through. */
+    .nfd-sm-gate--block + .nfd-sm-gate--warn { @apply mt-2.5 border-t border-t-warn-edge }
     .nfd-sm-gate-label { @apply m-0 text-[14px] text-row-ink }
     .nfd-sm-gate--warn .nfd-sm-gate-label { @apply text-[14px] font-semibold text-warn-title }
     .nfd-sm-gate--block .nfd-sm-gate-label { @apply text-[14px] font-semibold text-red-900 }
     .nfd-sm-gate-fix { @apply m-0 mt-0.5 text-[13.5px] leading-[1.5] text-warn-body }
     .nfd-sm-gate--pass .nfd-sm-gate-fix { @apply text-muted }
     .nfd-sm-gate--block .nfd-sm-gate-fix { @apply text-red-800 }
+    /* File paths and plugin slugs, often long and unbroken, so they wrap anywhere rather than
+       widening the row past a phone's screen. */
+    .nfd-sm-gate-list { @apply m-0 mt-1.5 pl-4 list-disc font-mono text-[12.5px] leading-[1.5] text-warn-body [overflow-wrap:anywhere] }
+    .nfd-sm-gate-list li { @apply m-0 }
+    .nfd-sm-gate--block .nfd-sm-gate-list { @apply text-red-800 }
+    .nfd-sm-note--stop .nfd-sm-gate-list,
+    .nfd-sm-note--stop .nfd-sm-gate-fix { @apply text-red-800 }
+    .nfd-sm-note--stop li + li { @apply mt-1.5 }
 
     /* The status marker on a check. A tick in a tinted disc when it passed, the handoff's
        badge when it did not. */
@@ -487,6 +499,27 @@
         @apply min-w-0;
         overflow-wrap: anywhere;
     }
+    /* A paragraph is not a column. `.nfd-sm-pick-sub` is a grid, so an intro sentence inside one
+       became a cell the width of a slug with the checkboxes flowing around it. */
+    .nfd-sm-pick-sub > .nfd-sm-hint { @apply col-span-full mt-0 mb-2 }
+
+    /* What a plugin owns: one row per plugin, and not a grid at all.
+       The rows beside it hold a slug and fit three to a line; these hold a name, a count and a
+       few table names, and in three columns every one of them wrapped mid-word. */
+    .nfd-sm-owns { @apply mt-3 ml-[26px] p-3.5 bg-sunk rounded-[8px] }
+    .nfd-sm-owns > .nfd-sm-hint { @apply mt-0 mb-3 }
+    .nfd-sm-owns .nfd-sm-check { @apply mb-2.5 text-[13px] }
+    .nfd-sm-owns .nfd-sm-check:last-child { @apply mb-0 }
+    .nfd-sm-owns .nfd-sm-check > span {
+        @apply min-w-0;
+        overflow-wrap: anywhere;
+    }
+    .nfd-sm-owns .nfd-sm-check strong { @apply inline text-[13px] }
+    .nfd-sm-owns-names {
+        @apply block mt-1 font-mono text-[12px] leading-[1.5] text-faint;
+        overflow-wrap: anywhere;
+    }
+
     .nfd-sm-details + .nfd-sm-details { @apply mt-2 }
 
     .nfd-sm-block {
