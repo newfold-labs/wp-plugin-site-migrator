@@ -409,4 +409,58 @@ class SelectionTest extends TestCase {
 
 		$this->assertSame( array( 'wp_posts', 'wp_acme_log' ), $tables );
 	}
+	/**
+	 * The database can be refused whole, which is a different thing from refusing tables.
+	 *
+	 * The twelve core tables may never be skipped one at a time, because a package holding some of
+	 * them describes a site that cannot boot. Refusing all of it is not that: what travels is code,
+	 * and the destination keeps its own database. So the two rules have to coexist -- the required
+	 * list still refuses `wp_posts`, and `skip_database` still comes through.
+	 */
+	public function test_the_whole_database_can_be_left_out() {
+		$clean = Selection::sanitize(
+			array(
+				'database' => array(
+					'skip_database' => true,
+					'skip_tables'   => array( 'wp_posts', 'wp_acme_log' ),
+				),
+			)
+		);
+
+		$this->assertTrue( $clean['database']['skip_database'] );
+		$this->assertSame( array( 'wp_acme_log' ), $clean['database']['skip_tables'] );
+
+		$selection = new Selection( $clean );
+
+		$this->assertFalse( $selection->wants_database() );
+		$this->assertFalse( $selection->is_everything() );
+	}
+
+	/**
+	 * And a selection that says nothing about it still carries it.
+	 */
+	public function test_the_database_travels_unless_it_is_refused() {
+		$this->assertTrue( Selection::everything()->wants_database() );
+		$this->assertTrue( ( new Selection( array() ) )->wants_database() );
+	}
+
+	/**
+	 * What the destination is told, and in what order.
+	 *
+	 * `describe()` is the one description of the choice: the picker shows it while the boxes are
+	 * being ticked, and the review screen shows it on the other site. A code-only package has to
+	 * say so before it says anything else, because every other phrase in the list describes a part
+	 * of a site that is arriving.
+	 */
+	public function test_a_code_only_package_says_so_first() {
+		$said = ( new Selection(
+			array(
+				'parts'    => array( 'uploads' => false ),
+				'database' => array( 'skip_database' => true ),
+			)
+		) )->describe();
+
+		$this->assertNotEmpty( $said );
+		$this->assertStringContainsString( 'code only', $said[0] );
+	}
 }

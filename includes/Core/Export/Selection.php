@@ -61,11 +61,171 @@ class Selection {
 	);
 
 	/**
+	 * Options that may never travel as rows, whatever a scan of a plugin's code turned up.
+	 *
+	 * This is the `$required_tables` of the options table, and it exists for a sharper reason. A
+	 * plugin's settings are found by reading the names it passes to `get_option()` -- and plugins
+	 * read core's options constantly, so a scan of almost any plugin comes back naming `home`,
+	 * `siteurl`, `template` or `active_plugins`. Carrying one of those into a destination that is
+	 * keeping its own site would move that site's address, its theme, or the list of plugins it
+	 * loads, out of a package that promised to bring a plugin's settings.
+	 *
+	 * Enforced on both sides: refused here when the selection is saved, and refused again by
+	 * `OptionMerger` when a package asks for one, because a package is input this site did not
+	 * write.
+	 *
+	 * @var array
+	 */
+	protected static $protected_options = array(
+		'siteurl',
+		'home',
+		'blogname',
+		'blogdescription',
+		'admin_email',
+		'new_admin_email',
+		'users_can_register',
+		'default_role',
+		'template',
+		'stylesheet',
+		'current_theme',
+		'theme_switched',
+		'active_plugins',
+		'recently_activated',
+		'permalink_structure',
+		'rewrite_rules',
+		'db_version',
+		'initial_db_version',
+		'upload_path',
+		'upload_url_path',
+		'cron',
+		'wp_user_roles',
+		'sidebars_widgets',
+		'show_on_front',
+		'page_on_front',
+		'page_for_posts',
+		'blog_charset',
+		'wplang',
+		'timezone_string',
+		'gmt_offset',
+		'site_icon',
+		'nfd_site_migrator',
+	);
+
+	/**
+	 * The rest of what WordPress itself puts in the options table.
+	 *
+	 * The list above is the dangerous half -- carrying one of those moves the destination's
+	 * address or its theme. This is the other half, and it is refused for a different reason: a
+	 * setting is not a plugin's just because the plugin read it. Contact Form 7 asks for
+	 * `date_format` to print a date and Yoast asks for `category_base` to build a URL, and a scan
+	 * that credits them with owning those names offers to carry the destination's date format and
+	 * permalink bases away under the heading of a plugin's own data. Nothing breaks, which is what
+	 * makes it worse: the destination quietly starts formatting its dates like another site.
+	 *
+	 * Taken from core's `populate_options()`, which is the definition of "core put this here",
+	 * plus the ones core writes from elsewhere.
+	 *
+	 * @var array
+	 */
+	protected static $core_options = array(
+		'admin_email_lifespan',
+		'adminhash',
+		'auto_plugin_theme_update_emails',
+		'auto_update_core_dev',
+		'auto_update_core_major',
+		'auto_update_core_minor',
+		'avatar_default',
+		'avatar_rating',
+		'blog_public',
+		'can_compress_scripts',
+		'category_base',
+		'close_comments_days_old',
+		'close_comments_for_old_posts',
+		'comment_max_links',
+		'comment_moderation',
+		'comment_order',
+		'comment_previously_approved',
+		'comment_registration',
+		'comments_notify',
+		'comments_per_page',
+		'date_format',
+		'default_category',
+		'default_comment_status',
+		'default_comments_page',
+		'default_email_category',
+		'default_link_category',
+		'default_ping_status',
+		'default_pingback_flag',
+		'default_post_format',
+		'disallowed_keys',
+		'finished_splitting_shared_terms',
+		'fresh_site',
+		'hack_file',
+		'html_type',
+		'https_detection_errors',
+		'https_migration_required',
+		'image_default_align',
+		'image_default_link_type',
+		'image_default_size',
+		'large_size_h',
+		'large_size_w',
+		'link_manager_enabled',
+		'links_updated_date_format',
+		'mailserver_login',
+		'mailserver_pass',
+		'mailserver_port',
+		'mailserver_url',
+		'medium_large_size_h',
+		'medium_large_size_w',
+		'medium_size_h',
+		'medium_size_w',
+		'moderation_keys',
+		'moderation_notify',
+		'nav_menu_options',
+		'page_comments',
+		'ping_sites',
+		'posts_per_page',
+		'posts_per_rss',
+		'recently_edited',
+		'recovery_keys',
+		'require_name_email',
+		'rss_use_excerpt',
+		'show_avatars',
+		'show_comments_cookies_opt_in',
+		'site_logo',
+		'start_of_week',
+		'sticky_posts',
+		'tag_base',
+		'thread_comments',
+		'thread_comments_depth',
+		'thumbnail_crop',
+		'thumbnail_size_h',
+		'thumbnail_size_w',
+		'time_format',
+		'uninstall_plugins',
+		'uploads_use_yearmonth_folders',
+		'use_balancetags',
+		'use_smilies',
+		'use_trackback',
+		'user_count',
+		'widget_block',
+		'widget_categories',
+		'widget_rss',
+		'widget_text',
+		'wp_attachment_pages_enabled',
+		'wp_calendar_block_has_published_posts',
+		'wp_force_deactivated_plugins',
+		'wp_notes_notify',
+		'wp_page_for_privacy_policy',
+	);
+
+	/**
 	 * The database filters this understands, and their defaults.
 	 *
 	 * @var array
 	 */
 	protected static $database_flags = array(
+		'skip_database'   => false,
 		'skip_revisions'  => false,
 		'skip_spam'       => false,
 		'skip_transients' => false,
@@ -221,6 +381,40 @@ class Selection {
 			$database['skip_tables'] = \array_values( \array_unique( $tables ) );
 		}
 
+		// The other direction, and only meaningful with `skip_database`: a package that carries no
+		// database can still carry a plugin's own tables and its settings, which is what makes
+		// "just the plugins" mean the plugins rather than their empty shells. Core's tables are
+		// refused here for the reason they may not be skipped there -- `wp_options` arriving whole
+		// would replace the destination's own settings, its permalinks and its active plugins,
+		// which is the opposite of keeping its site. Its *rows* travel through `carry_options`.
+		$carry = array();
+
+		foreach ( (array) \nfd_sm_data_get( $raw, 'carry_tables', array() ) as $table ) {
+			$table = \preg_replace( '/[^A-Za-z0-9_$\-]/', '', (string) $table );
+
+			if ( '' !== $table && ! self::is_required_table( $table ) ) {
+				$carry[] = $table;
+			}
+		}
+
+		if ( ! empty( $carry ) ) {
+			$database['carry_tables'] = \array_values( \array_unique( $carry ) );
+		}
+
+		$options = array();
+
+		foreach ( (array) \nfd_sm_data_get( $raw, 'carry_options', array() ) as $option ) {
+			$option = \preg_replace( '/[^A-Za-z0-9_\-.:\/]/', '', (string) $option );
+
+			if ( '' !== $option && ! self::is_protected_option( $option ) ) {
+				$options[] = $option;
+			}
+		}
+
+		if ( ! empty( $options ) ) {
+			$database['carry_options'] = \array_values( \array_unique( $options ) );
+		}
+
 		return array(
 			'parts'    => $parts,
 			'paths'    => $paths,
@@ -241,6 +435,44 @@ class Selection {
 	 */
 	public static function is_required_table( $table ) {
 		return \in_array( \strtolower( self::unprefixed( $table ) ), self::$required_tables, true );
+	}
+
+	/**
+	 * Whether an option belongs to the destination rather than to a plugin.
+	 *
+	 * Transients go too: they are a cache with a clock on it, and a cached value from another site
+	 * is the one kind of stale that looks like data.
+	 *
+	 * @param string $name Option name.
+	 *
+	 * @return bool
+	 */
+	public static function is_protected_option( $name ) {
+		$name = \strtolower( \trim( (string) $name ) );
+
+		if ( '' === $name ) {
+			return true;
+		}
+
+		if ( 0 === \strpos( $name, '_transient_' ) || 0 === \strpos( $name, '_site_transient_' ) ) {
+			return true;
+		}
+
+		if ( \defined( 'NFD_SM_OPTIONS_LIST' ) && \in_array( $name, (array) NFD_SM_OPTIONS_LIST, true ) ) {
+			return true;
+		}
+
+		return \in_array( $name, self::$protected_options, true )
+			|| \in_array( $name, self::$core_options, true );
+	}
+
+	/**
+	 * The options that may never travel, for a screen that wants to say so.
+	 *
+	 * @return array
+	 */
+	public static function protected_options() {
+		return \array_merge( self::$protected_options, self::$core_options );
 	}
 
 	/**
@@ -327,6 +559,22 @@ class Selection {
 	}
 
 	/**
+	 * Whether the package carries a database at all.
+	 *
+	 * The twelve tables in `$required_tables` may never be skipped one at a time, because a
+	 * package holding some of core's tables and not others describes a site that cannot boot. That
+	 * rule protects against a *half* database, which is exactly the thing this flag does not
+	 * produce: refusing the database refuses all of it, and what arrives is code with no data —
+	 * plugins and themes for a destination that keeps its own site. So the two settings are not in
+	 * conflict, and the required list is simply not consulted when there is no dump to put them in.
+	 *
+	 * @return bool
+	 */
+	public function wants_database() {
+		return ! $this->skips( 'skip_database' );
+	}
+
+	/**
 	 * Whether a part is carried.
 	 *
 	 * @param string $name Part name.
@@ -393,6 +641,44 @@ class Selection {
 	}
 
 	/**
+	 * The tables a code-only package carries anyway.
+	 *
+	 * Empty unless the database was refused: with a dump on its way every table is in it, and a
+	 * list of tables to carry would be a list of tables that are already coming.
+	 *
+	 * @return array
+	 */
+	public function carried_tables() {
+		return $this->wants_database()
+			? array()
+			: (array) \nfd_sm_data_get( $this->database, 'carry_tables', array() );
+	}
+
+	/**
+	 * The option rows a code-only package carries anyway.
+	 *
+	 * Rows, not the table: a plugin's settings can travel without its settings *table* travelling,
+	 * and the difference is whether the destination keeps being itself.
+	 *
+	 * @return array
+	 */
+	public function carried_options() {
+		return $this->wants_database()
+			? array()
+			: (array) \nfd_sm_data_get( $this->database, 'carry_options', array() );
+	}
+
+	/**
+	 * Whether this selection produces a dump that merges rather than replaces.
+	 *
+	 * @return bool
+	 */
+	public function is_partial_database() {
+		return ! $this->wants_database()
+			&& ( ! empty( $this->carried_tables() ) || ! empty( $this->carried_options() ) );
+	}
+
+	/**
 	 * Whether a database filter is on.
 	 *
 	 * @param string $flag One of `database_flags()`.
@@ -427,6 +713,24 @@ class Selection {
 	 */
 	public function describe() {
 		$said = array();
+
+		// First, and phrased as the whole thing rather than as one more omission: a package with
+		// no database is a different kind of package, and a destination reading this list has to
+		// see that before it reads which parts of a site it is not getting.
+		if ( ! $this->wants_database() ) {
+			$carried  = \count( $this->carried_tables() );
+			$settings = \count( $this->carried_options() );
+
+			if ( $carried < 1 && $settings < 1 ) {
+				$said[] = 'the database — this package carries code only';
+			} else {
+				$said[] = \sprintf(
+					'the database, apart from %d table(s) and %d setting(s) belonging to what was chosen',
+					$carried,
+					$settings
+				);
+			}
+		}
 
 		foreach ( $this->refused_parts() as $part ) {
 			$said[] = self::part_phrase( $part );

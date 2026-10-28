@@ -36,22 +36,37 @@ class Checker {
 	}
 
 	/**
-	 * ZipArchive is how parts are written.
+	 * How parts will be written: `ZipArchive`, or zlib where the extension is missing.
 	 *
 	 * @param Report $report Report to add to.
 	 *
 	 * @return void
 	 */
 	protected static function check_zip( Report $report ) {
-		if ( \class_exists( 'ZipArchive' ) ) {
+		$backend = \NewfoldLabs\WP\SiteMigrator\Core\Package\ZipWriter::backend();
+
+		if ( 'zip' === $backend ) {
 			$report->pass( 'zip', 'PHP can create zip archives.' );
+
+			return;
+		}
+
+		// A warning rather than a pass. The zlib writer produces the same archives and every
+		// volume is read back before it counts, but it is the younger of the two paths, and the
+		// person exporting should know which one their package came out of.
+		if ( 'zlib' === $backend ) {
+			$report->warn(
+				'zip',
+				'PHP\'s zip extension is not available, so the package will be built with zlib instead.',
+				array( 'detail' => 'Every volume is read back and checked as it is written. Enabling the zip extension makes this the usual path again.' )
+			);
 
 			return;
 		}
 
 		$report->block(
 			'zip',
-			'PHP\'s zip extension is not available, so a package cannot be built.',
+			'PHP has neither the zip extension nor zlib, so a package cannot be built here.',
 			array( 'fix' => 'Ask your host to enable the zip extension.' )
 		);
 	}

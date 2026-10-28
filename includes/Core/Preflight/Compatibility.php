@@ -44,17 +44,33 @@ class Compatibility {
 	/**
 	 * Run every gate.
 	 *
+	 * Two of them are about moving a database and nothing else: whether the destination's server
+	 * can store the source's text, and whether it can rename tables atomically. A package that
+	 * carries no database asks neither question, and asking them anyway refuses code-only imports
+	 * over a collation no table in them uses. Everything else still applies -- the destination has
+	 * to run the PHP and hold the files whatever else is true.
+	 *
+	 * @param bool $with_database Whether a database is coming with the package.
+	 *
 	 * @return Report
 	 */
-	public function check() {
+	public function check( $with_database = true ) {
 		$report = new Report();
 
 		$this->check_wordpress( $report );
 		$this->check_multisite( $report );
 		$this->check_php( $report );
-		$this->check_collations( $report );
+
+		if ( $with_database ) {
+			$this->check_collations( $report );
+		}
+
 		$this->check_space( $report );
-		$this->check_swap( $report );
+
+		if ( $with_database ) {
+			$this->check_swap( $report );
+		}
+
 		$this->check_extensions( $report );
 		$this->check_environment( $report );
 
@@ -208,6 +224,26 @@ class Compatibility {
 	}
 
 	/**
+	 * One spelling for a collation that has two.
+	 *
+	 * `utf8` has been a deprecated alias for `utf8mb3` since MySQL 8.0, and the two servers on
+	 * either side of a migration rarely agree on which name to use. Only the exact `utf8_`
+	 * prefix is rewritten -- `utf8mb4_` is a different character set and must not be folded
+	 * into the three-byte one.
+	 *
+	 * @param string $collation Collation name.
+	 *
+	 * @return string
+	 */
+	protected static function canonical_collation( $collation ) {
+		$collation = (string) $collation;
+
+		return 0 === \strpos( $collation, 'utf8_' )
+			? 'utf8mb3_' . \substr( $collation, 5 )
+			: $collation;
+	}
+
+	/**
 	 * Text encoding.
 	 *
 	 * The commonest hard failure when moving between hosts of different vintage: a collation
@@ -228,7 +264,31 @@ class Compatibility {
 			return;
 		}
 
-		$missing = \array_values( \array_diff( $needed, $available ) );
+		// Compared under canonical names, because the same collation has two of them. MySQL 8.0
+		// renamed the three-byte `utf8` character set to `utf8mb3` and stopped listing the old
+		// spellings, while still accepting them in DDL -- so a 5.7 source using
+		// `utf8_general_ci` looks unsupported on an 8.0 destination that supports it perfectly
+		// well under the other name. That is a 5.7-to-8.0 move, which is most of the migrations
+		// this plugin exists for, blocked by a rename.
+		$canonical = array();
+
+		foreach ( $needed as $collation ) {
+			$canonical[ self::canonical_collation( $collation ) ] = (string) $collation;
+		}
+
+		$supported = array();
+
+		foreach ( $available as $collation ) {
+			$supported[] = self::canonical_collation( $collation );
+		}
+
+		// Reported under the names the *source* used, since those are the ones its tables carry
+		// and the ones a person would go looking for.
+		$missing = array();
+
+		foreach ( \array_diff( \array_keys( $canonical ), $supported ) as $name ) {
+			$missing[] = $canonical[ $name ];
+		}
 
 		if ( empty( $missing ) ) {
 			$report->pass( 'collation', 'Text encoding is supported on the destination.' );
@@ -380,11 +440,21 @@ class Compatibility {
 		}
 
 		if ( ! \in_array( 'zip', $dst, true ) ) {
-			$report->block(
-				'zip',
-				'The destination does not have PHP\'s zip extension, which is needed to unpack the site.',
-				array( 'fix' => 'Ask the host to enable the zip extension.' )
-			);
+			// `true ===`, not truthiness: a profile from a plugin that predates the zlib reader
+			// has no `unzip` at all, and that destination genuinely cannot unpack without zip.
+			if ( true === $this->destination->get( 'php.unzip', null ) ) {
+				$report->warn(
+					'zip',
+					'The destination does not have PHP\'s zip extension, so it will unpack the site with zlib instead.',
+					array( 'detail' => 'Every file is still checked against the size and checksum the package recorded as it is written. The destination cannot build a package of its own until the extension is enabled.' )
+				);
+			} else {
+				$report->block(
+					'zip',
+					'The destination does not have PHP\'s zip extension, which is needed to unpack the site.',
+					array( 'fix' => 'Ask the host to enable the zip extension, or update this plugin on the destination -- newer versions unpack without it.' )
+				);
+			}
 		}
 
 		$missing = \array_values( \array_diff( $src, $dst ) );

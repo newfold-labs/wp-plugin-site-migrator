@@ -1,7 +1,8 @@
 import { __ } from '@wordpress/i18n';
-import { useEffect, useRef } from '@wordpress/element';
+import { useEffect, useRef, useState } from '@wordpress/element';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '../../Layout';
+import { api } from '../../../utils/api';
 import { STAGES, useImport } from '../../../utils/useImport';
 import { DESTINATION_STEPS } from '../../../steps';
 
@@ -21,6 +22,22 @@ export const Running = () => {
 
 	const { state, running, swapped, error, run } = useImport( dir );
 	const started = useRef( false );
+	const [ clearing, setClearing ] = useState( false );
+
+	// Navigating away left the checkpoint where it was, and a saved checkpoint is what the next
+	// import refuses to start over: `assert_not_busy()` blocks a different package, and
+	// `nfd_sm_import_unsettled()` makes deleting the plugin refuse to purge, so a destination
+	// could reach a state with no way out of it that did not involve a shell. Cancelling drops
+	// the staged tables and forgets the run. Offered only before the swap, because after it the
+	// way back is a rollback and discarding the checkpoint would take that away.
+	const startOver = async () => {
+		setClearing( true );
+
+		await api.import.cancel();
+
+		setClearing( false );
+		navigate( '/import' );
+	};
 
 	useEffect( () => {
 		if ( ! started.current ) {
@@ -109,13 +126,18 @@ export const Running = () => {
 						>
 							{ __( 'Try again', 'nfd-site-migrator' ) }
 						</button>
-						<button
-							type="button"
-							className="nfd-sm-btn"
-							onClick={ () => navigate( '/import' ) }
-						>
-							{ __( 'Start over', 'nfd-site-migrator' ) }
-						</button>
+						{ ! swapped && (
+							<button
+								type="button"
+								className="nfd-sm-btn"
+								onClick={ startOver }
+								disabled={ clearing }
+							>
+								{ clearing
+									? __( 'Clearing…', 'nfd-site-migrator' )
+									: __( 'Start over', 'nfd-site-migrator' ) }
+							</button>
+						) }
 					</div>
 				</div>
 			) }

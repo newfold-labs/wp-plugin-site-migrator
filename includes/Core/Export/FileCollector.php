@@ -9,6 +9,8 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Export;
 
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PartSpec;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipReader;
+use NewfoldLabs\WP\SiteMigrator\Core\Package\ZipWriter;
 
 /**
  * One resumable implementation, driven by a PartSpec.
@@ -141,9 +143,24 @@ class FileCollector {
 	/**
 	 * The volume currently being filled, open until it is written out.
 	 *
-	 * @var \ZipArchive|null
+	 * `ZipWriter` on a host without the zip extension. Both are opened, filled and closed once;
+	 * what differs is when the work happens, which is what `$spent` is for.
+	 *
+	 * @var \ZipArchive|ZipWriter|null
 	 */
 	protected $zip = null;
+
+	/**
+	 * Seconds spent adding files to the open volume.
+	 *
+	 * Next to nothing for `ZipArchive`, which only records what it is given and does the reading
+	 * and compressing in `close()`. `ZipWriter` does that work as each file is added. Volumes are
+	 * sized by how long writing one takes, so the measurement has to be the two together or the
+	 * zlib writer would look infinitely fast and grow its volumes to the cap on the first close.
+	 *
+	 * @var float
+	 */
+	protected $spent = 0.0;
 
 	/**
 	 * Entries added to the open volume but not yet written to disk.
@@ -646,8 +663,21 @@ class FileCollector {
 			return;
 		}
 
-		$path = $this->package->part_path( $spec->name(), (int) $state['volume'] );
-		$zip  = new \ZipArchive();
+		$path    = $this->package->part_path( $spec->name(), (int) $state['volume'] );
+		$backend = ZipWriter::backend();
+
+		if ( '' === $backend ) {
+			throw new \RuntimeException( 'PHP here has neither the zip extension nor zlib, so a package cannot be built.' );
+		}
+
+		// Truncates on create, which is the OVERWRITE below and matters for the same reason.
+		if ( 'zlib' === $backend ) {
+			$this->zip = ZipWriter::create( $path );
+
+			return;
+		}
+
+		$zip = new \ZipArchive();
 
 		// OVERWRITE as well as CREATE. A volume is opened, filled and closed exactly once, so
 		// there is never a half-written archive here worth keeping — but CREATE on its own
@@ -676,15 +706,22 @@ class FileCollector {
 	 * @return void
 	 */
 	protected function add_batch( PartSpec $spec, array $files, array &$state ) {
-		$added = 0;
+		$added   = 0;
+		$started = \microtime( true );
 
 		foreach ( $files as $file ) {
-			if ( ! $this->zip->addFile( $file['source'], $file['relative'] ) ) {
-				continue;
-			}
+			if ( $this->zip instanceof ZipWriter ) {
+				if ( ! $this->zip->add_file( $file['source'], $file['relative'], $this->is_incompressible( $file['relative'] ) ) ) {
+					continue;
+				}
+			} else {
+				if ( ! $this->zip->addFile( $file['source'], $file['relative'] ) ) {
+					continue;
+				}
 
-			if ( $this->is_incompressible( $file['relative'] ) ) {
-				$this->zip->setCompressionName( $file['relative'], \ZipArchive::CM_STORE );
+				if ( $this->is_incompressible( $file['relative'] ) ) {
+					$this->zip->setCompressionName( $file['relative'], \ZipArchive::CM_STORE );
+				}
 			}
 
 			++$added;
@@ -693,6 +730,8 @@ class FileCollector {
 			$state['bytes_done']   = (int) $state['bytes_done'] + $file['size'];
 			++$state['files_done'];
 		}
+
+		$this->spent += \microtime( true ) - $started;
 
 		if ( $added < 1 ) {
 			return;
@@ -738,12 +777,21 @@ class FileCollector {
 		$written = (int) $state['volume_bytes'];
 		$entries = $this->pending;
 		$started = \microtime( true );
+		$native  = $this->zip instanceof ZipWriter;
 
 		$this->zip->close();
 
-		$elapsed       = \microtime( true ) - $started;
 		$this->zip     = null;
 		$this->pending = 0;
+
+		if ( $native && $entries > 0 ) {
+			$this->read_back( $spec, $state, $entries );
+		}
+
+		// Adding and closing together, and the read-back with them: it is part of what a volume
+		// costs this host, so it is part of what the next volume is sized by.
+		$elapsed     = \microtime( true ) - $started + $this->spent;
+		$this->spent = 0.0;
 
 		// What this host actually manages, smoothed, so one unusually warm or cold volume does
 		// not set the size for the rest of the run.
@@ -778,6 +826,48 @@ class FileCollector {
 
 		++$state['volume'];
 		$state['volume_bytes'] = 0;
+	}
+
+	/**
+	 * Read a volume `ZipWriter` just wrote back through the zlib reader, every entry.
+	 *
+	 * A writer's mistake is the one kind nothing downstream can catch. The volume's SHA-256 is
+	 * taken next, from whatever is on disk, so a malformed entry verifies perfectly on the
+	 * destination and fails there on import -- the shape of both export bugs this plugin has
+	 * already had. `ZipArchive` has libzip's years behind it; `ZipWriter` does not, so its output
+	 * is checked before it is recorded. The cost is small next to the first read of the source
+	 * files: the volume is warm in the page cache and inflating happens in C.
+	 *
+	 * Throwing leaves the checkpoint where it was, so the next step writes this volume again.
+	 *
+	 * @param PartSpec $spec     Part description.
+	 * @param array    $state    Run state.
+	 * @param int      $expected Entries added to the volume.
+	 *
+	 * @return void
+	 *
+	 * @throws \RuntimeException If the volume does not read back whole.
+	 */
+	protected function read_back( PartSpec $spec, array $state, $expected ) {
+		$path   = $this->package->part_path( $spec->name(), (int) $state['volume'] );
+		$reader = ZipReader::open( $path, true );
+		$count  = $reader->count();
+
+		if ( $count !== $expected ) {
+			throw new \RuntimeException(
+				\sprintf( 'The volume just written holds %d entries rather than %d: %s', $count, $expected, \basename( $path ) )
+			);
+		}
+
+		for ( $i = 0; $i < $count; $i++ ) {
+			if ( ! $reader->verify( $i ) ) {
+				throw new \RuntimeException(
+					\sprintf( 'The volume just written does not read back intact at %s: %s', (string) $reader->name( $i ), \basename( $path ) )
+				);
+			}
+		}
+
+		$reader->close();
 	}
 
 	/**

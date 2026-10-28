@@ -199,7 +199,48 @@ export const Done = () => {
 			) }
 		>
 			{ error && (
-				<div className="nfd-sm-note nfd-sm-note--stop">{ error }</div>
+				<div className="nfd-sm-note nfd-sm-note--stop">
+					<p>{ error }</p>
+				</div>
+			) }
+
+			{ /*
+			 * Undo has to be reachable when reading the state failed, not only when it
+			 * succeeded. Every control on this screen used to live inside the `state` block, so
+			 * one request answering with a PHP fatal instead of JSON took the rollback button
+			 * away with it -- on the one screen whose whole promise is that the migration is
+			 * still reversible, at the one moment somebody would want to reverse it. The
+			 * request is worth attempting regardless: whatever is fataling may not be in this
+			 * path, and if it is, the error says so rather than the button being absent.
+			 */ }
+			{ error && ! state && (
+				<div className="nfd-sm-card">
+					<p>
+						{ __(
+							'This site could not be asked what the import did, so the details below are missing. The import itself finished, and undoing it is still worth trying — it restores the database this site had before.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<div className="nfd-sm-actions">
+						<button
+							type="button"
+							className="nfd-sm-btn nfd-sm-btn--danger"
+							disabled={ '' !== busy }
+							onClick={ undo }
+						>
+							{ 'rollback' === busy
+								? __( 'Putting it back…', 'nfd-site-migrator' )
+								: __( 'Undo the import', 'nfd-site-migrator' ) }
+						</button>
+						<button
+							type="button"
+							className="nfd-sm-btn"
+							onClick={ refresh }
+						>
+							{ __( 'Check again', 'nfd-site-migrator' ) }
+						</button>
+					</div>
+				</div>
 			) }
 
 			{ ! state && ! error && (

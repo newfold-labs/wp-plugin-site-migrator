@@ -101,6 +101,13 @@ assert "and deactivation no longer purges" "no" \
 	"$(grep -q "register_deactivation_hook( __FILE__, 'nfd_sm_purge_all' )" \
 		"$SITE/wp-content/plugins/$SLUG/nfd-site-migrator.php" && echo yes || echo no)"
 
+# The version guard, for the same reason: WordPress enforces `Requires PHP` on activation and not
+# afterwards, so on a host that downgrades PHP under a running site this is the only thing standing
+# between the plugin and a fatal on every request.
+assert "the php version guard shipped" "yes" \
+	"$(grep -q 'PHP_VERSION_ID < 70400' \
+		"$SITE/wp-content/plugins/$SLUG/nfd-site-migrator.php" && echo yes || echo no)"
+
 # Licence obligations.
 assert "the GPL text shipped" "yes" \
 	"$([ -f "$SITE/wp-content/plugins/$SLUG/LICENSE" ] && echo yes || echo no)"

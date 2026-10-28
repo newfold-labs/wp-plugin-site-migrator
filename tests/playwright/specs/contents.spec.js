@@ -67,6 +67,41 @@ test.describe( 'Contents', () => {
 		expect( errors, 'the page threw while rendering' ).toEqual( [] );
 	} );
 
+	test( 'skipping pairing still reaches the picker', async ( { page } ) => {
+		// The picker hangs off the compatibility screen, which needs a paired destination — so
+		// *Export without checking* went straight to the run and an unpaired source could never
+		// choose its plugins and themes at all. Reported from a real site.
+		await auth.navigateToAdminPage( page, `${ utils.PLUGIN_PAGE }#/pair` );
+		await wordpress.waitForApp( page );
+
+		// An unpaired source is the whole point, and an earlier spec may have left a destination
+		// stored — in which case this screen offers to re-pair rather than to skip.
+		await page.evaluate( async () => {
+			const { restRouteUrl, nonce } = window.nfdSiteMigrator;
+
+			await fetch( restRouteUrl + 'preflight/destination', {
+				method: 'DELETE',
+				credentials: 'same-origin',
+				headers: { 'X-WP-Nonce': nonce },
+			} );
+		} );
+
+		await page.reload();
+		await wordpress.waitForApp( page );
+
+		await page
+			.getByRole( 'button', { name: /Export without checking/ } )
+			.click();
+
+		await expect( page.locator( '#nfd-sm-part-plugins' ) ).toBeVisible();
+		await expect( page.locator( '#nfd-sm-part-themes' ) ).toBeVisible();
+		expect( page.url() ).toContain( '#/contents' );
+
+		// And Back belongs to whoever sent us, or it lands on a comparison that was never made.
+		await page.getByRole( 'button', { name: 'Back' } ).click();
+		expect( page.url() ).toContain( '#/pair' );
+	} );
+
 	test( 'a refusal survives a reload', async ( { page } ) => {
 		await auth.navigateToAdminPage( page, CONTENTS );
 		await wordpress.waitForApp( page );
@@ -104,5 +139,152 @@ test.describe( 'Contents', () => {
 		await expect(
 			page.locator( '#nfd-sm-flag-skip_revisions' )
 		).toBeChecked();
+	} );
+	test( 'turning the database off changes what the screen asks', async ( {
+		page,
+	} ) => {
+		const errors = [];
+
+		page.on( 'pageerror', ( error ) => errors.push( error.message ) );
+
+		await auth.navigateToAdminPage( page, CONTENTS );
+		await wordpress.waitForApp( page );
+
+		// On by default: a package carries the site unless somebody says otherwise.
+		const database = page.locator( '#nfd-sm-flag-skip_database' );
+
+		await expect( database ).toBeChecked();
+		await expect(
+			page.locator( '#nfd-sm-flag-skip_revisions' )
+		).toBeVisible();
+
+		// Armed before the click, not after: the scan is one request and it can be finished
+		// before an assertion in between has run, which is a test that fails on being fast.
+		// Matched on the route's last segment alone: apiFetch sends these as
+		// `?rest_route=%2F…%2Fexport%2Fbelongings`, so a matcher looking for `export/belongings`
+		// matches nothing and fails as a timeout, which reads like the request never happened.
+		//
+		// And waited on until `done`, not until the first answer: the scan is stepped, so one
+		// 200 proves only that it started. What this is here to catch is a loop that never ends,
+		// which is what the screen did on a real site before the scan was budgeted.
+		const scan = page.waitForResponse( async ( response ) => {
+			if (
+				! response.url().includes( 'belongings' ) ||
+				response.status() !== 200
+			) {
+				return false;
+			}
+
+			return !! ( await response.json() ).done;
+		} );
+
+		await database.uncheck();
+
+		// The three row filters decide what a dump leaves out, and there is no dump now.
+		await expect(
+			page.locator( '#nfd-sm-flag-skip_revisions' )
+		).toHaveCount( 0 );
+		await expect( page.locator( '.nfd-sm-note--warn' ) ).toBeVisible();
+
+		// And the scan runs to the end: the screen asking the server to read every plugin's code,
+		// a few seconds at a time, which is the one expensive question here and must not be asked
+		// before somebody needs it.
+		const answer = await ( await scan ).json();
+
+		expect( answer.belongs ).toBeDefined();
+		expect( answer.done ).toBe( true );
+
+		// The spinner says so while it works, and stops saying so when it is finished.
+		await expect( page.locator( '.nfd-sm-loading' ) ).toHaveCount( 0 );
+		expect( errors ).toEqual( [] );
+	} );
+
+	test( 'a plugin that is not travelling is not asked what it owns', async ( {
+		page,
+	} ) => {
+		await auth.navigateToAdminPage( page, CONTENTS );
+		await wordpress.waitForApp( page );
+
+		const first = page.waitForResponse( async ( response ) => {
+			return (
+				response.url().includes( 'belongings' ) &&
+				response.status() === 200 &&
+				!! ( await response.json() ).done
+			);
+		} );
+
+		await page.locator( '#nfd-sm-flag-skip_database' ).uncheck();
+		await first;
+
+		// The scan read every plugin on disk, including ones the picker had turned off -- so it
+		// spent time on plugins nobody was sending, and offered to carry the tables of a plugin
+		// whose files were staying behind. That leaves the destination holding rows nothing
+		// installed there can read, inside a package whose promise is "only what you chose".
+		//
+		// Which code part is used is decided from what the site under test actually has, and that
+		// has now been the source of two failures. Filtering the disclosure by the words "things
+		// inside" matched the *themes* block on a site with one plugin, because the sentence is
+		// pluralised. Pinning it to `plugins` then passed locally and timed out under wp-env,
+		// where a bare install has nothing inside that part at all. Themes always have something;
+		// the scan treats plugins, mu-plugins and themes identically, so any of them proves it.
+		const part = await page.evaluate( () => {
+			const code = ( name ) =>
+				'plugins' === name ||
+				'mu-plugins' === name ||
+				0 === name.indexOf( 'themes' );
+
+			for ( const block of document.querySelectorAll( '.nfd-sm-pick' ) ) {
+				const box = block.querySelector( 'input[id^="nfd-sm-part-"]' );
+
+				if ( ! box ) {
+					continue;
+				}
+
+				const name = box.id.replace( 'nfd-sm-part-', '' );
+
+				if ( code( name ) && block.querySelector( 'details' ) ) {
+					return name;
+				}
+			}
+
+			return '';
+		} );
+
+		expect(
+			part,
+			'no code part on this site has anything inside it'
+		).not.toBe( '' );
+
+		const block = page
+			.locator( '.nfd-sm-pick' )
+			.filter( { has: page.locator( `#nfd-sm-part-${ part }` ) } );
+
+		// Opened by clicking, not by setting `open` from script: React re-creates the element as
+		// the scan settles and a property set on the old node goes with it.
+		await block.locator( 'summary' ).click();
+
+		const refused = block
+			.locator( '.nfd-sm-pick-sub input[type=checkbox]' )
+			.first();
+
+		await expect( refused ).toBeVisible();
+
+		const slug = ( await refused.getAttribute( 'id' ) ).replace(
+			`nfd-sm-path-${ part }-`,
+			''
+		);
+
+		const narrowed = page.waitForRequest(
+			( request ) =>
+				request.url().includes( 'belongings' ) &&
+				decodeURIComponent( request.url() ).includes(
+					`${ part }/${ slug }`
+				)
+		);
+
+		await refused.uncheck();
+
+		// The proof is in the request: the next scan is told, by name, not to read it.
+		await narrowed;
 	} );
 } );

@@ -11,7 +11,7 @@
  * Plugin Name:       Site Migrator
  * Plugin URI:        https://github.com/newfold-labs/wp-plugin-site-migrator
  * Description:       Move a WordPress site between hosts. Export this site to a package, or import one exported from elsewhere.
- * Version:           0.2.0
+ * Version:           0.2.5
  * Requires PHP:      7.4
  * Requires at least: 5.8
  * Author:            Newfold Labs
@@ -22,21 +22,85 @@
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  */
 
+// Nothing below this is loaded on a PHP older than the header promises, and the check is
+// deliberately the first statement in the file. WordPress enforces `Requires PHP` when a plugin is
+// activated or updated through the admin, and nowhere else: a plugin that is *already* active is
+// loaded on whatever PHP the server is running today, so a host downgrade, a restored backup, or
+// files replaced over FTP or a file manager all put this code in front of a PHP it was never
+// written for. The first line any of it cannot compile is then a fatal error on every request,
+// wp-admin included -- which is a locked-out site with no clue on the screen, and the plugin cannot
+// even be switched off from the plugins page to clear it. A refusal that names the version is
+// recoverable; a white screen is not.
+//
+// Keep this block compilable by every PHP a WordPress has ever run on. It is the one piece of the
+// plugin that has to parse on a version the rest of it does not support, so nothing here may use
+// syntax newer than the floor it is checking for.
+if ( PHP_VERSION_ID < 70400 ) {
+
+	/**
+	 * Say why the plugin did not load.
+	 *
+	 * Declared inside the guard because the file returns before anything else is defined, so this
+	 * is the only thing the site gets from the plugin and it cannot collide with the real one.
+	 *
+	 * @return void
+	 */
+	function nfd_sm_php_version_notice() {
+		echo '<div class="notice notice-error"><p><strong>Site Migrator</strong> '
+			. 'needs PHP 7.4 or newer and this server is running PHP '
+			. esc_html( PHP_VERSION ) . '. The plugin has not loaded; nothing else on the site is '
+			. 'affected. Ask your host to update PHP, or deactivate the plugin.</p></div>';
+	}
+
+	add_action( 'admin_notices', 'nfd_sm_php_version_notice' );
+
+	return;
+}
+
+// Loaded once per request, whatever names the file is reached by.
+//
+// `require_once` promises this and cannot keep it when opcache is on. Opcache keys a compiled
+// file by the *literal* include path and answers the "already included" question from that key,
+// so the same file reached by two spellings is compiled and run twice -- which is what
+// `opcache.revalidate_path` exists to turn off, and it is `0` by default.
+//
+// Two spellings is the normal case during an import on a symlinked install, and symlinked
+// installs are a case this plugin already goes out of its way to support. The import writes
+// `mu-plugins/nfd-site-migrator-import.php`, which requires the plugin by its **real** path so it
+// keeps running once the swap has taken the migrator out of `active_plugins`; until that swap
+// happens the migrator is still in `active_plugins`, so `wp-settings.php` also includes it, by
+// the **symlink** path. Both fire, neither deduplicates, and the second pass redeclares every
+// function in `functions.php`.
+//
+// The result is a fatal on *every* request to the destination -- wp-admin included -- in the
+// middle of a migration, which is the worst possible moment and the hardest to read: the REST
+// call answers with WordPress's critical-error page, and the import screen shows that HTML where
+// an error message should be. Observed on a real site, at the precheck stage.
+//
+// A constant is the guard rather than `function_exists()`, because it is set before anything else
+// this file pulls in and costs nothing.
+if ( defined( 'NFD_SM_VERSION' ) ) {
+	return;
+}
+
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/constants.php';
 
 // Check plugin requirements. These have to agree with the header above: WordPress enforces
 // `Requires PHP` and `Requires at least` itself on activation, and this adds the extension check
-// it has no equivalent for. `zip` is on the list because every part of a package is a zip archive
-// -- it was missing, which meant a host without it activated the plugin cleanly and then failed
-// partway through the first export.
+// it has no equivalent for. `zip` is deliberately not on the list. It was, to stop a host without
+// it activating cleanly and failing partway through the first export -- but this check
+// *deactivates* the plugin on every visit to the Plugins screen, which also shut out a destination
+// that never needed zip: `ZipReader` unpacks a package with zlib, and `ZipWriter` builds one with
+// it. A host with neither is still refused by `Checker::check_zip()` before anything is written,
+// which is the failure the list was there to prevent.
 global $pagenow;
 if ( 'plugins.php' === $pagenow ) {
 	$plugin_check = new WP_Forge_Plugin_Check( __FILE__ );
 
 	$plugin_check->min_php_version    = '7.4';
 	$plugin_check->min_wp_version     = '5.8';
-	$plugin_check->req_php_extensions = array( 'json', 'zlib', 'zip' );
+	$plugin_check->req_php_extensions = array( 'json', 'zlib' );
 
 	$plugin_check->check_plugin_requirements();
 }

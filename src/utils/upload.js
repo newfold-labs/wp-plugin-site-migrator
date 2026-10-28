@@ -161,15 +161,30 @@ async function sendFile( { path, file, offset, chunkSize, onProgress, stop } ) {
 /**
  * Upload a whole package.
  *
+ * The manifest travels with the file list. The server resumes from the bytes it already holds,
+ * which is what survives a dropped connection -- and what merges two packages when the thing
+ * being uploaded has changed since. It needs to know which package this is before it answers
+ * with offsets, not after.
+ *
  * @param {Object}   options
  * @param {Array}    options.files      `{ path, file }` pairs.
+ * @param {Object}   options.manifest   The package's parsed manifest.json.
  * @param {number}   options.chunkSize  Bytes per request.
  * @param {Function} options.onProgress Called with `{ sent, total, path }`.
  * @param {Object}   options.stop       `{ current: boolean }`.
  * @return {Promise<Object>} `{ ok, error }`.
  */
-export async function uploadPackage( { files, chunkSize, onProgress, stop } ) {
-	const state = await api.import.uploadState( files.map( ( f ) => f.path ) );
+export async function uploadPackage( {
+	files,
+	manifest,
+	chunkSize,
+	onProgress,
+	stop,
+} ) {
+	const state = await api.import.uploadState(
+		files.map( ( f ) => f.path ),
+		manifest
+	);
 
 	if ( state.failed ) {
 		return { ok: false, error: state.error };

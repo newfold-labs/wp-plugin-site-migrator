@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
 import { api } from '../../utils/api';
+import { copyText, copyLabel } from '../../utils/clipboard';
 import { SOURCE_STEPS } from '../../steps';
 
 const size = ( bytes ) => {
@@ -47,6 +48,34 @@ const ago = ( at ) => {
 		Math.round( seconds / 3600 )
 	);
 };
+
+/**
+ * The ways that are not the way, folded away when they are not needed.
+ *
+ * A pairing already carries a token, so a paired source has nothing for anybody to copy -- but the
+ * key and the download sat on this screen at full size regardless, which is what made a migration
+ * needing one code look like it needs two. Folded, they are one click away for anyone whose
+ * destination cannot be reached; unfolded, they are the only way through and must not be hidden.
+ *
+ * A plain `<details>`, like the manual form on the destination's pull screen: nothing to remember
+ * across a render, and `folded` is decided by the same fact the rest of the screen reads.
+ *
+ * @param {Object}  props          Props.
+ * @param {boolean} props.folded   Whether to tuck them away.
+ * @param {Object}  props.children The cards.
+ * @return {Object} The cards, wrapped or not.
+ */
+const Fallback = ( { folded, children } ) =>
+	folded ? (
+		<details className="nfd-sm-details" id="nfd-sm-other-ways">
+			<summary>
+				{ __( 'Other ways to deliver this', 'nfd-site-migrator' ) }
+			</summary>
+			{ children }
+		</details>
+	) : (
+		<>{ children }</>
+	);
 
 /**
  * Hand the package to the destination without anybody carrying it.
@@ -175,15 +204,14 @@ export const Send = () => {
 		refresh();
 	};
 
+	// Reported rather than swallowed, and through the shared helper. `navigator.clipboard` does
+	// not exist on an insecure origin — which a site mid-migration very often is — so this threw
+	// and said nothing, on the screen whose job is handing a key to another machine.
 	const copy = async ( value, what ) => {
-		try {
-			await window.navigator.clipboard.writeText( value );
-			setCopied( what );
-			window.setTimeout( () => setCopied( '' ), 2000 );
-		} catch ( e ) {
-			// Clipboard access can be refused outright, and the value is on screen to be
-			// selected by hand either way. Nothing here is worth an error message.
-		}
+		const done = await copyText( value );
+
+		setCopied( done ? what : `failed:${ what }` );
+		window.setTimeout( () => setCopied( '' ), 2500 );
 	};
 
 	const active = !! status?.active;
@@ -213,10 +241,17 @@ export const Send = () => {
 			step="deliver"
 			eyebrow={ __( 'Source', 'nfd-site-migrator' ) }
 			title={ __( 'Send it to the destination', 'nfd-site-migrator' ) }
-			intro={ __(
-				'The destination fetches the package straight from here — nothing is downloaded to your computer. Offer it to the site you paired with, or generate a key to paste by hand, then leave both tabs open.',
-				'nfd-site-migrator'
-			) }
+			intro={
+				link?.linked
+					? __(
+							'The destination fetches the package straight from here — nothing is downloaded to your computer, and there is nothing to copy. This site is paired with it: offer the package and it appears over there, ready to start.',
+							'nfd-site-migrator'
+					  )
+					: __(
+							'The destination fetches the package straight from here — nothing is downloaded to your computer. Generate a key, paste it into the destination, and leave both tabs open.',
+							'nfd-site-migrator'
+					  )
+			}
 			working={ reading }
 		>
 			{ error && (
@@ -320,46 +355,76 @@ export const Send = () => {
 				</div>
 			) }
 
-			{ status?.ready && ! active && (
+			<Fallback folded={ !! link?.linked }>
+				{ status?.ready && ! active && (
+					<div className="nfd-sm-card">
+						<p className="nfd-sm-eyebrow">
+							{ link?.linked
+								? __(
+										'Or carry a key yourself',
+										'nfd-site-migrator'
+								  )
+								: __( 'Ready to send', 'nfd-site-migrator' ) }
+						</p>
+						<p className="nfd-sm-hint">
+							{ sprintf(
+								/* translators: %s: package size. */
+								__(
+									'%s, held here until the destination has taken all of it. The key you generate is the only way in, and it works for one site only.',
+									'nfd-site-migrator'
+								),
+								size( total )
+							) }
+						</p>
+						<div className="nfd-sm-actions">
+							<button
+								type="button"
+								className={ `nfd-sm-btn${
+									link?.linked ? '' : ' nfd-sm-btn--primary'
+								}` }
+								id="nfd-sm-issue-transfer"
+								disabled={ busy }
+								onClick={ issue }
+							>
+								{ busy
+									? __( 'Generating…', 'nfd-site-migrator' )
+									: __(
+											'Generate a transfer key',
+											'nfd-site-migrator'
+									  ) }
+							</button>
+						</div>
+					</div>
+				) }
+
 				<div className="nfd-sm-card">
 					<p className="nfd-sm-eyebrow">
-						{ link?.linked
-							? __(
-									'Or carry a key yourself',
-									'nfd-site-migrator'
-							  )
-							: __( 'Ready to send', 'nfd-site-migrator' ) }
+						{ __(
+							'Or move the files yourself',
+							'nfd-site-migrator'
+						) }
 					</p>
 					<p className="nfd-sm-hint">
-						{ sprintf(
-							/* translators: %s: package size. */
-							__(
-								'%s, held here until the destination has taken all of it. The key you generate is the only way in, and it works for one site only.',
-								'nfd-site-migrator'
-							),
-							size( total )
+						{ __(
+							'If the destination cannot reach this site over the internet — it is behind a firewall, or on a laptop — download the package and upload it there instead. Slower, and it works everywhere.',
+							'nfd-site-migrator'
 						) }
 					</p>
 					<div className="nfd-sm-actions">
 						<button
 							type="button"
-							className={ `nfd-sm-btn${
-								link?.linked ? '' : ' nfd-sm-btn--primary'
-							}` }
-							id="nfd-sm-issue-transfer"
-							disabled={ busy }
-							onClick={ issue }
+							className="nfd-sm-btn"
+							id="nfd-sm-go-download"
+							onClick={ () => navigate( '/download' ) }
 						>
-							{ busy
-								? __( 'Generating…', 'nfd-site-migrator' )
-								: __(
-										'Generate a transfer key',
-										'nfd-site-migrator'
-								  ) }
+							{ __(
+								'Download the package instead',
+								'nfd-site-migrator'
+							) }
 						</button>
 					</div>
 				</div>
-			) }
+			</Fallback>
 
 			{ key && (
 				<div className="nfd-sm-card" id="nfd-sm-transfer-key">
@@ -385,18 +450,22 @@ export const Send = () => {
 								copy( status?.site_url || '', 'url' )
 							}
 						>
-							{ 'url' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy address', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'url',
+								__( 'Copy address', 'nfd-site-migrator' )
+							) }
 						</button>
 						<button
 							type="button"
 							className="nfd-sm-btn nfd-sm-btn--primary"
 							onClick={ () => copy( key, 'key' ) }
 						>
-							{ 'key' === copied
-								? __( 'Copied', 'nfd-site-migrator' )
-								: __( 'Copy key', 'nfd-site-migrator' ) }
+							{ copyLabel(
+								copied,
+								'key',
+								__( 'Copy key', 'nfd-site-migrator' )
+							) }
 						</button>
 					</div>
 
@@ -496,31 +565,6 @@ export const Send = () => {
 					</div>
 				</div>
 			) }
-
-			<div className="nfd-sm-card">
-				<p className="nfd-sm-eyebrow">
-					{ __( 'Or move the files yourself', 'nfd-site-migrator' ) }
-				</p>
-				<p className="nfd-sm-hint">
-					{ __(
-						'If the destination cannot reach this site over the internet — it is behind a firewall, or on a laptop — download the package and upload it there instead. Slower, and it works everywhere.',
-						'nfd-site-migrator'
-					) }
-				</p>
-				<div className="nfd-sm-actions">
-					<button
-						type="button"
-						className="nfd-sm-btn"
-						id="nfd-sm-go-download"
-						onClick={ () => navigate( '/download' ) }
-					>
-						{ __(
-							'Download the package instead',
-							'nfd-site-migrator'
-						) }
-					</button>
-				</div>
-			</div>
 		</Layout>
 	);
 };

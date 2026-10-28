@@ -21,9 +21,22 @@ namespace NewfoldLabs\WP\SiteMigrator\Core\Import;
  * must-use plugins are loaded from disk with no reference to any option, so nothing the swap
  * does to the database can unload it.
  *
- * It is removed on completion, on rollback, and on cancel. A stale one is harmless — it only
- * loads the plugin that is installed anyway — but leaving litter in `mu-plugins` is not
+ * It is removed on completion, on rollback, and on cancel. Leaving litter in `mu-plugins` is not
  * acceptable, so its removal is part of every exit path rather than a cleanup step.
+ *
+ * It used to say here that a stale one is harmless, because it only loads a plugin that is
+ * installed anyway. That was wrong wherever the plugin directory is a symlink. This file requires
+ * the **real** path, so that it keeps working once the swap has taken the migrator out of
+ * `active_plugins`; before the swap the migrator is still in that list and `wp-settings.php`
+ * includes it by the **symlink** path. Two spellings of one file, and `require_once` does not
+ * deduplicate them when opcache is on — it keys compiled files by the literal path, which is what
+ * `opcache.revalidate_path` turns off and its default is `0`. So both ran, and the second pass
+ * redeclared every function in `functions.php`: a fatal on every request to the destination,
+ * wp-admin included, in the middle of a migration. Seen on a real site at the precheck stage,
+ * where the import screen showed WordPress's critical-error HTML in place of an error message.
+ *
+ * The bootstrap now returns early when `NFD_SM_VERSION` is already defined, which makes the
+ * original sentence true rather than merely hoped for. Do not rely on `require_once` alone here.
  */
 class Loader {
 

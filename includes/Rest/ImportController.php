@@ -202,12 +202,31 @@ class ImportController extends Controller {
 	 * @return \WP_REST_Response
 	 */
 	public function upload_state( $request ) {
-		$files = (array) $request->get_param( 'files' );
+		$files    = (array) $request->get_param( 'files' );
+		$manifest = (array) $request->get_param( 'manifest' );
+		$cleared  = 0;
+
+		// Asked before any offset is handed back, because the offsets are the answer: a resume
+		// into a directory holding a different package is how two packages become one file.
+		// A client that sends no manifest is an older one, and gets the old behaviour rather
+		// than having its upload cleared by a check it does not know about.
+		if ( ! empty( $manifest ) ) {
+			try {
+				$cleared = Upload::reconcile( $manifest );
+			} catch ( \Exception $e ) {
+				return new \WP_Error(
+					'nfd_sm_upload_staged',
+					$e->getMessage(),
+					array( 'status' => 409 )
+				);
+			}
+		}
 
 		return \rest_ensure_response(
 			array(
 				'chunk_size' => Upload::chunk_size(),
 				'received'   => Upload::received( \array_map( 'strval', $files ) ),
+				'cleared'    => $cleared,
 			)
 		);
 	}
@@ -476,6 +495,8 @@ class ImportController extends Controller {
 			$importer->restart();
 		}
 
+		$importer->choose_fixes( \rest_sanitize_boolean( $request->get_param( 'fix_php' ) ) );
+
 		$claim = $importer->begin( \get_current_user_id() );
 
 		return \rest_ensure_response(
@@ -679,6 +700,7 @@ class ImportController extends Controller {
 	protected function importer( $request ) {
 		$requested = (string) $request->get_param( 'mode' );
 		$mode      = UserMerger::MODE_REPLACE === $requested ? UserMerger::MODE_REPLACE : UserMerger::MODE_MERGE;
+		$fix       = $request->get_param( 'fix_php' );
 
 		return new Importer(
 			$this->dir( $request ),
@@ -686,6 +708,8 @@ class ImportController extends Controller {
 				'mode'        => $mode,
 				'acting_user' => \get_current_user_id(),
 				'keep_backup' => true,
+				// Absent on a step, which then follows what `start` recorded.
+				'fix_php'     => null === $fix ? null : \rest_sanitize_boolean( $fix ),
 			)
 		);
 	}

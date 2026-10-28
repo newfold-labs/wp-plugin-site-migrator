@@ -82,7 +82,9 @@ class Importer {
 	 * Constructor.
 	 *
 	 * @param string $dir     Absolute package directory.
-	 * @param array  $options `mode`, `acting_user`, `site_url`, `home_url`, `keep_backup`.
+	 * @param array  $options `mode`, `acting_user`, `site_url`, `home_url`, `keep_backup`, and
+	 *                        `fix_php` -- true or false to decide whether safe syntax fixes run,
+	 *                        null to keep whatever the recorded run chose.
 	 */
 	public function __construct( $dir, array $options = array() ) {
 		$this->dir        = \rtrim( $dir, '/\\' );
@@ -97,9 +99,54 @@ class Importer {
 				'site_url'    => '',
 				'home_url'    => '',
 				'keep_backup' => true,
+				'fix_php'     => null,
 			),
 			$options
 		);
+	}
+
+	/**
+	 * Record whether the next run applies safe syntax fixes.
+	 *
+	 * The browser's steps are separate requests that carry only the package, so the choice made on
+	 * the review screen has to live in the checkpoint. Only a run that has not yet claimed the site
+	 * takes it: one already restoring files was checked and planned under the choice it began with.
+	 *
+	 * @param bool $wanted Whether to fix.
+	 *
+	 * @return void
+	 */
+	public function choose_fixes( $wanted ) {
+		$state = $this->checkpoint->load();
+
+		if ( ImportCheckpoint::is_settled( $state ) ) {
+			$this->checkpoint->clear();
+
+			$state = $this->checkpoint->load();
+		}
+
+		if ( '' !== $state['package'] ) {
+			return;
+		}
+
+		$state['fix_php'] = (bool) $wanted;
+
+		$this->checkpoint->save( $state );
+	}
+
+	/**
+	 * Whether this run applies safe syntax fixes: this request's choice, else the recorded one.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return bool
+	 */
+	protected function fixes_wanted( array $state ) {
+		if ( null !== $this->options['fix_php'] ) {
+			return (bool) $this->options['fix_php'];
+		}
+
+		return ! empty( $state['fix_php'] );
 	}
 
 	/**
@@ -225,15 +272,63 @@ class Importer {
 		$manifest = $this->package->manifest();
 		$report   = $this->compatibility( $manifest );
 
+		// Version numbers and plugin headers between them missed the failure that actually
+		// happened: a theme calling `create_function()`, which PHP 8.0 removed. A theme
+		// declares no `Requires PHP` for the header gate to read, and comparing 7.4 to 8.5 only
+		// ever produced a "heads up". Read on the destination rather than recorded at export,
+		// so a package built before this existed is still checked -- including one already
+		// sitting on a server.
+		$code = new CodeCompatibility( $this->dir, $manifest );
+		$code->check( $report, '', ! empty( $this->options['fix_php'] ) );
+
+		// And what the database switches on that will not be here to run. Said in plugin names
+		// rather than in part names, because "uploads and plugins were left out" does not read
+		// as "the contact form and the page layouts will be gone".
+		$plugins = new PluginPresence( $this->dir, $manifest );
+
+		// The warning `PluginPresence` exists to give -- "the database switches these on and the
+		// code will not be here" -- is about a database that is arriving. None is, so this site's
+		// own `active_plugins` is the one that will still be in force, naming plugins that are
+		// still installed.
+		if ( $manifest->has_database() && ! $manifest->is_partial_database() ) {
+			$plugins->check( $report );
+		} elseif ( $manifest->is_partial_database() ) {
+			$report->pass(
+				'partial_database',
+				'This package merges a few tables and settings into this site. Your content, users and '
+					. 'everything else here stay as they are.'
+			);
+		} else {
+			$report->pass(
+				'files_only',
+				'This package carries no database. Your content, users and settings stay exactly as they are.'
+			);
+		}
+
 		return array(
 			'ok'         => ! $report->is_blocked(),
 			'problems'   => array(),
 			'package'    => $this->package->inspect(),
 			'report'     => $report->to_array(),
-			'users'      => $this->user_plan( $manifest ),
+			'users'      => $manifest->has_database() && ! $manifest->is_partial_database()
+				? $this->user_plan( $manifest )
+				: array(),
 			'manual'     => $this->manual_steps(),
 			'target'     => $this->target(),
-			'has_backup' => $this->previous_backup_present(),
+			'files_only' => ! $manifest->has_database(),
+			'partial'    => $manifest->is_partial_database(),
+			'merging'    => $manifest->is_partial_database()
+				? array(
+					'tables'  => \array_values( (array) \nfd_sm_data_get( $manifest->get( 'database', array() ), 'tables', array() ) ),
+					'options' => \array_values( (array) \nfd_sm_data_get( $manifest->get( 'database', array() ), 'options', array() ) ),
+				)
+				: array(),
+			// A code-only import replaces nothing, so a previous import's backup is not in its
+			// way and is not spent by it. The screen only warns about what starting this run
+			// would cost.
+			'has_backup' => $manifest->has_database()
+				&& ! $manifest->is_partial_database()
+				&& $this->previous_backup_present(),
 		);
 	}
 
@@ -513,8 +608,20 @@ class Importer {
 		$state['backup_prefix'] = self::BACKUP_PREFIX . $wpdb->prefix;
 		$state['source_prefix'] = isset( $source['table_prefix'] ) ? $source['table_prefix'] : '';
 		$state['compatibility'] = $report->to_array();
+		$state['files_only']    = ! $manifest->has_database();
+		$state['partial']       = $manifest->is_partial_database();
 
-		if ( '' === $state['source_prefix'] ) {
+		if ( $state['partial'] ) {
+			$declared = (array) $manifest->get( 'database', array() );
+
+			$state['carry_tables']  = \array_values( (array) \nfd_sm_data_get( $declared, 'tables', array() ) );
+			$state['carry_options'] = \array_values( (array) \nfd_sm_data_get( $declared, 'options', array() ) );
+		}
+
+		// Only a package that carries data needs somewhere to put it. A code-only one never
+		// reaches the staging prefix or the swap, so the source's prefix is not something it has
+		// to have recorded.
+		if ( '' === $state['source_prefix'] && ! $state['files_only'] ) {
 			throw new \RuntimeException( 'The package does not record the source table prefix.' );
 		}
 
@@ -527,7 +634,23 @@ class Importer {
 			$state['notes'][] = \sprintf( 'Cleared %d table(s) left by an earlier attempt.', $dropped );
 		}
 
-		$this->check_previous_backup( $swap, $state );
+		// And only a package that replaces the site spends the previous import's undo. Discarding
+		// the backup is the price of *this* migration replacing the one before it -- a code-only
+		// import replaces nothing, touches no table, and has no business ending somebody else's
+		// way back.
+		if ( ! $state['files_only'] ) {
+			$this->check_previous_backup( $swap, $state );
+		}
+
+		// The originals an earlier import's fixes kept belong to a site that is about to be
+		// replaced again, which is the same reasoning that just discarded its tables.
+		SyntaxFixer::clear_backups();
+
+		// Decided from the package here rather than trusted from the review screen, with the same
+		// scan, so a run can only fix what that screen said it would.
+		$state['fix_php']   = $this->fixes_wanted( $state );
+		$state['php_fixes'] = $state['fix_php'] ? ( new CodeCompatibility( $this->dir, $manifest ) )->fixable_files() : array();
+		$state['php_fixed'] = array();
 
 		// Recorded only now, on the far side of every check: from here on the run owns the site.
 		$state['package'] = $this->dir;
@@ -567,13 +690,27 @@ class Importer {
 			return;
 		}
 
+		// Cut first: a table this site kept, holding a foreign key the previous swap left pointing
+		// at those backups, makes them undroppable -- and a drop that fails here used to be
+		// reported as a success and then read, on the next visit, as a migration still undecided.
+		$swap->detach_backup_references();
+
 		$dropped = $swap->discard_backup();
+		$left    = $swap->remaining( $swap->backup_prefix() );
 
 		$state['notes'][] = \sprintf(
 			'Discarded %d table(s) a previous import had kept. Starting this migration is what '
 			. 'ended that one\'s rollback window.',
 			$dropped
 		);
+
+		if ( ! empty( $left ) ) {
+			$state['notes'][] = \sprintf(
+				'%d of them could not be dropped and are still here: %s.',
+				\count( $left ),
+				\implode( ', ', \array_slice( $left, 0, 5 ) ) . ( \count( $left ) > 5 ? ', …' : '' )
+			);
+		}
 	}
 
 	/**
@@ -603,6 +740,27 @@ class Importer {
 
 		$this->checkpoint->save( $state );
 
+		// A code-only run replaced nothing, so there are no backup tables to let go of. Keeping
+		// it is still a decision worth recording -- it is what settles the run, and an unsettled
+		// one holds up the next migration.
+		if ( ! empty( $state['files_only'] ) ) {
+			return 0;
+		}
+
+		// A merge replaced a named few tables, so keeping it lets go of a named few copies --
+		// never `nfdold_` as a whole, which on this site may also hold what a full import before
+		// it put there.
+		if ( ! empty( $state['partial'] ) ) {
+			$replaced = \array_values(
+				\array_diff(
+					isset( $state['swapped_names'] ) ? (array) $state['swapped_names'] : array(),
+					isset( $state['added_names'] ) ? (array) $state['added_names'] : array()
+				)
+			);
+
+			return \count( $this->swap( $state )->clear_backup_names( $replaced ) );
+		}
+
 		return $this->swap( $state )->discard_backup();
 	}
 
@@ -617,12 +775,22 @@ class Importer {
 	protected function stage_files( array &$state, $deadline ) {
 		$this->progress->start( ImportCheckpoint::STAGE_FILES );
 
-		$restorer = new FileRestorer( $this->dir, $this->package->manifest() );
+		$restorer = new FileRestorer(
+			$this->dir,
+			$this->package->manifest(),
+			\array_fill_keys( (array) $state['php_fixes'], true )
+		);
 
 		$complete = $restorer->step( $state, $deadline );
 
 		foreach ( $restorer->refused() as $path ) {
 			$state['refused'][] = $path;
+		}
+
+		// Keyed by file, because a step that dies before its checkpoint is written restores and
+		// fixes the same entry again on the next one.
+		foreach ( $restorer->fixed() as $record ) {
+			$state['php_fixed'][ $record['file'] ] = \count( $record['changes'] );
 		}
 
 		if ( ! empty( $state['refused'] ) ) {
@@ -648,6 +816,28 @@ class Importer {
 			);
 		}
 
+		if ( ! empty( $state['php_fixed'] ) ) {
+			$state['notes'][] = \sprintf(
+				'Fixed syntax PHP %1$s no longer accepts in %2$d file(s), %3$d change(s) in all. The originals are kept in %4$s.',
+				\implode( '.', \array_slice( \explode( '.', PHP_VERSION ), 0, 2 ) ),
+				\count( $state['php_fixed'] ),
+				\array_sum( $state['php_fixed'] ),
+				SyntaxFixer::backup_dir()
+			);
+		}
+
+		$unfixed = \array_diff( (array) $state['php_fixes'], \array_keys( (array) $state['php_fixed'] ) );
+
+		// Found fixable at precheck and not fixed as written -- a backup that could not be saved,
+		// or an entry that was never written. Each is code that will not run here.
+		if ( ! empty( $unfixed ) ) {
+			$state['notes'][] = \sprintf(
+				'%d file(s) that were to be fixed were left as the package had them, and will not run on this PHP: %s',
+				\count( $unfixed ),
+				\implode( ', ', \array_slice( $unfixed, 0, 10 ) ) . ( \count( $unfixed ) > 10 ? ', …' : '' )
+			);
+		}
+
 		// Taken here rather than at rollback: by then the answer would include anything the
 		// user installed after the import, and rollback would delete that too.
 		if ( ! empty( $state['code_before'] ) ) {
@@ -656,7 +846,13 @@ class Importer {
 
 		$this->progress->finish( ImportCheckpoint::STAGE_FILES );
 
-		$state['stage'] = ImportCheckpoint::STAGE_DATABASE;
+		// Five stages exist to move a database safely and there is no database. Straight to
+		// fixups, which is where a run says what it did -- and notably *not* through the swap,
+		// which with nothing staged would rename this site's live tables into the backup set and
+		// put nothing back in their place.
+		$state['stage'] = empty( $state['files_only'] )
+			? ImportCheckpoint::STAGE_DATABASE
+			: ImportCheckpoint::STAGE_FIXUPS;
 	}
 
 	/**
@@ -697,6 +893,19 @@ class Importer {
 			return;
 		}
 
+		// Said rather than dropped quietly: a constraint the source enforced is not enforced here.
+		// See `DatabaseBase::strip_foreign_keys()` for why they cannot travel.
+		if ( ! empty( $state['foreign_keys'] ) ) {
+			$tables = \array_keys( (array) $state['foreign_keys'] );
+
+			$state['notes'][] = \sprintf(
+				'Did not carry %d foreign key(s), from %s. The tables and their indexes arrived; what is '
+					. 'gone is the database enforcing those relationships, which WordPress itself never relies on.',
+				\array_sum( (array) $state['foreign_keys'] ),
+				\implode( ', ', \array_slice( $tables, 0, 5 ) ) . ( \count( $tables ) > 5 ? ', …' : '' )
+			);
+		}
+
 		$this->progress->finish( ImportCheckpoint::STAGE_DATABASE );
 
 		$state['stage'] = ImportCheckpoint::STAGE_TRANSFORM;
@@ -731,7 +940,12 @@ class Importer {
 
 		$this->progress->finish( ImportCheckpoint::STAGE_TRANSFORM );
 
-		$state['stage'] = ImportCheckpoint::STAGE_USERS;
+		// No users table is in a partial dump, and the destination's own is not being replaced,
+		// so there is nobody to reconcile with anybody. Validation is skipped for the same
+		// reason: it asks whether the staged copy is a whole site, which this deliberately is not.
+		$state['stage'] = empty( $state['partial'] )
+			? ImportCheckpoint::STAGE_USERS
+			: ImportCheckpoint::STAGE_SWAP;
 	}
 
 	/**
@@ -795,7 +1009,11 @@ class Importer {
 	protected function stage_swap( array &$state ) {
 		$this->progress->start( ImportCheckpoint::STAGE_SWAP );
 
-		$this->swap( $state )->execute( $state );
+		if ( ! empty( $state['partial'] ) ) {
+			$this->swap( $state )->execute_only( $state, $this->carried_names( $state ) );
+		} else {
+			$this->swap( $state )->execute( $state );
+		}
 
 		$this->progress->finish( ImportCheckpoint::STAGE_SWAP );
 
@@ -812,8 +1030,39 @@ class Importer {
 	protected function stage_fixups( array &$state ) {
 		$this->progress->start( ImportCheckpoint::STAGE_FIXUPS );
 
+		// A code-only import has nothing to repair: no swap happened, so no view was dropped, no
+		// foreign key was left pointing at a backup, `active_plugins` still reads the way this
+		// site wrote it, and the session belongs to a user this import never touched. Running
+		// `Fixups` anyway would be repairing damage that was not done.
+		if ( ! empty( $state['files_only'] ) ) {
+			$this->finish_files_only( $state );
+
+			return;
+		}
+
+		if ( ! empty( $state['partial'] ) ) {
+			$this->finish_partial( $state );
+
+			return;
+		}
+
 		$swap = $this->swap( $state );
 		$swap->recreate_views( (array) $state['views'], $state );
+
+		// A table this site already had, that the package does not carry, keeps its foreign keys
+		// through the rename -- and they now name the backup copy of the parent rather than the
+		// one this site is about to serve. Cut here, while the reason is still in view: left in
+		// place they hold a plugin to the replaced site and make the backup undroppable.
+		$cut = $swap->detach_backup_references();
+
+		if ( ! empty( $cut ) ) {
+			$state['notes'][] = \sprintf(
+				'Removed %d foreign key(s) that the swap left pointing at the replaced tables: %s. The '
+					. 'rows are untouched; only the database-level rule is gone.',
+				\count( $cut ),
+				\implode( ', ', \array_slice( $cut, 0, 5 ) ) . ( \count( $cut ) > 5 ? ', …' : '' )
+			);
+		}
 
 		$fixups = new Fixups();
 
@@ -825,8 +1074,18 @@ class Importer {
 
 		if ( ! $this->options['keep_backup'] ) {
 			$dropped = $swap->discard_backup();
+			$left    = $swap->remaining( $swap->backup_prefix() );
 
 			$state['notes'][] = \sprintf( 'Discarded %d backup table(s) as requested.', $dropped );
+
+			// Counted by looking, so a table that refused to go is said rather than assumed away.
+			if ( ! empty( $left ) ) {
+				$state['notes'][] = \sprintf(
+					'%d backup table(s) could not be dropped and are still here: %s.',
+					\count( $left ),
+					\implode( ', ', \array_slice( $left, 0, 5 ) ) . ( \count( $left ) > 5 ? ', …' : '' )
+				);
+			}
 		} else {
 			$state['notes'][] = \sprintf(
 				'The previous site is kept in tables prefixed %s, so this import can be rolled back '
@@ -834,6 +1093,153 @@ class Importer {
 				$state['backup_prefix']
 			);
 		}
+
+		$state['manual'] = $this->manual_steps();
+
+		$this->progress->finish( ImportCheckpoint::STAGE_FIXUPS );
+
+		$this->release();
+
+		$state['finished_at'] = \gmdate( 'c' );
+		$state['stage']       = ImportCheckpoint::STAGE_DONE;
+	}
+
+	/**
+	 * The carried tables as bare names, with the source's prefix and this site's both taken off.
+	 *
+	 * The dump names them with the source's prefix and they were staged under this site's staging
+	 * prefix, so neither end can be assumed. What `Swap` wants is the name in the middle.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return array
+	 */
+	protected function carried_names( array $state ) {
+		$names  = array();
+		$source = (string) $state['source_prefix'];
+		$live   = (string) $state['live_prefix'];
+
+		foreach ( (array) \nfd_sm_data_get( $state, 'carry_tables', array() ) as $table ) {
+			$name = (string) $table;
+
+			if ( '' !== $source && 0 === \strpos( $name, $source ) ) {
+				$name = \substr( $name, \strlen( $source ) );
+			} elseif ( '' !== $live && 0 === \strpos( $name, $live ) ) {
+				$name = \substr( $name, \strlen( $live ) );
+			}
+
+			if ( '' !== $name ) {
+				$names[] = $name;
+			}
+		}
+
+		return \array_values( \array_unique( $names ) );
+	}
+
+	/**
+	 * Close a run that merged a few tables and a few settings into a site that stays itself.
+	 *
+	 * None of `Fixups` runs. Every repair it makes is a repair for a site that was replaced: the
+	 * plugin list, the theme, the session, the views, the foreign keys left pointing at a backup.
+	 * Here the destination's own `wp_options` is still in place and still correct, and the one
+	 * thing that had to reach it -- the chosen plugins' settings -- is written row by row, with
+	 * every previous value recorded so the undo is exact.
+	 *
+	 * @param array $state Import state, modified in place.
+	 *
+	 * @return void
+	 */
+	protected function finish_partial( array &$state ) {
+		$swapped = isset( $state['swapped_names'] ) ? (array) $state['swapped_names'] : array();
+		$added   = isset( $state['added_names'] ) ? (array) $state['added_names'] : array();
+		$names   = (array) \nfd_sm_data_get( $state, 'carry_options', array() );
+
+		$written = array();
+
+		if ( ! empty( $names ) ) {
+			$staged  = $state['stage_prefix'] . 'options';
+			$merger  = new OptionMerger( $staged );
+			$written = $merger->merge( $names, $state );
+		}
+
+		$state['notes'][] = \sprintf(
+			'Merged into this site rather than replacing it: %d table(s) and %d setting(s) arrived, '
+				. 'and everything else here — posts, pages, users, and every other plugin — is untouched.',
+			\count( $swapped ),
+			\count( $written )
+		);
+
+		if ( ! empty( $swapped ) ) {
+			$replaced = \array_values( \array_diff( $swapped, $added ) );
+
+			$state['notes'][] = \sprintf(
+				'Tables: %s.%s',
+				\implode( ', ', \array_slice( $swapped, 0, 10 ) ) . ( \count( $swapped ) > 10 ? ', …' : '' ),
+				empty( $replaced )
+					? ' None of them were here before.'
+					: \sprintf(
+						' %d of them replaced a table this site already had, which is kept for the undo.',
+						\count( $replaced )
+					)
+			);
+		}
+
+		// The staged copy of the source's options table has done its one job. It is not swapped
+		// in and never could be -- it holds a handful of another site's rows -- so it goes now
+		// rather than sitting in the database looking like a migration that stopped half way.
+		$dropped = $this->swap( $state )->discard_staged();
+
+		if ( $dropped > 0 && empty( $written ) && ! empty( $names ) ) {
+			$state['notes'][] = 'No settings were written: the package declared some, and the dump held none of them.';
+		}
+
+		$state['manual'] = $this->manual_steps();
+
+		$this->progress->finish( ImportCheckpoint::STAGE_FIXUPS );
+
+		$this->release();
+
+		\wp_cache_flush();
+
+		$state['finished_at'] = \gmdate( 'c' );
+		$state['stage']       = ImportCheckpoint::STAGE_DONE;
+	}
+
+	/**
+	 * Close a run that carried code and no data.
+	 *
+	 * Deliberately plain about what did *not* happen. A plugin that arrives without its tables and
+	 * its settings is a plugin that has never been set up, and one that WordPress has not been
+	 * told to switch on: `active_plugins` lives in `wp_options`, which is this site's own and was
+	 * not written to. Saying it here is the difference between a user expecting a configured
+	 * plugin and a user knowing to go and activate one.
+	 *
+	 * @param array $state Import state, modified in place.
+	 *
+	 * @return void
+	 */
+	protected function finish_files_only( array &$state ) {
+		$added = isset( $state['code_added'] ) ? (array) $state['code_added'] : array();
+
+		$state['notes'][] = \sprintf(
+			'This package carried code only. %d plugin(s) and theme(s) arrived; the database was not '
+				. 'touched, so this site keeps its own content, users and settings.',
+			\count( $added )
+		);
+
+		if ( ! empty( $added ) ) {
+			$state['notes'][] = \sprintf(
+				'Nothing new is switched on: %s %s on disk and inactive until you activate %s on the '
+					. 'Plugins or Themes screen.',
+				\implode( ', ', \array_slice( $added, 0, 10 ) ) . ( \count( $added ) > 10 ? ', …' : '' ),
+				1 === \count( $added ) ? 'is' : 'are',
+				1 === \count( $added ) ? 'it' : 'them'
+			);
+		}
+
+		// Undoing this one is a file deletion, not a rename, and `AddedCode` already knows
+		// exactly which files were not here before the run started.
+		$state['notes'][] = 'Undoing it removes those files again and changes nothing else.';
 
 		$state['manual'] = $this->manual_steps();
 
@@ -950,6 +1356,18 @@ class Importer {
 			throw new \RuntimeException( 'This import has already been undone.' );
 		}
 
+		// A code-only run never swaps, so the usual test for "did this actually happen" would
+		// refuse to undo the one kind of import whose undo is simplest: the files it added, and
+		// nothing else. It is still refused before it has finished, because `code_added` is only
+		// taken once the files stage completes.
+		if ( ! empty( $state['files_only'] ) ) {
+			return $this->rollback_files_only( $state );
+		}
+
+		if ( ! empty( $state['partial'] ) ) {
+			return $this->rollback_partial( $state );
+		}
+
 		if ( empty( $state['live_prefix'] ) || empty( $state['swapped'] ) ) {
 			throw new \RuntimeException( 'This import has not been swapped in, so there is nothing to undo.' );
 		}
@@ -991,6 +1409,114 @@ class Importer {
 				\implode( ', ', $removed )
 			);
 		}
+
+		$this->checkpoint->save( $state );
+
+		return $state;
+	}
+
+	/**
+	 * Undo a merge.
+	 *
+	 * Three things in the order that keeps each one recoverable if the next fails: the tables go
+	 * back by rename, the settings go back row by row from the values recorded before they were
+	 * overwritten, and the files that arrived are deleted last -- the same order, and the same
+	 * reasoning, as the whole-site rollback.
+	 *
+	 * A table this site never had before the import is not "put back": there is nothing to put.
+	 * It returns to the staging prefix with the rest and is dropped there, which leaves the
+	 * database holding exactly what it held before.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return array The state as saved.
+	 *
+	 * @throws \RuntimeException If nothing was ever swapped in.
+	 */
+	protected function rollback_partial( array $state ) {
+		if ( empty( $state['swapped'] ) ) {
+			throw new \RuntimeException( 'This import has not been swapped in, so there is nothing to undo.' );
+		}
+
+		$swap = $this->swap( $state );
+
+		$swap->rollback_only( $state );
+
+		$dropped = $swap->discard_staged();
+
+		$restored = OptionMerger::restore(
+			isset( $state['options_before'] ) ? (array) $state['options_before'] : array()
+		);
+
+		$removed = AddedCode::remove(
+			isset( $state['code_added'] ) ? (array) $state['code_added'] : array(),
+			isset( $state['code_before'] ) ? (array) $state['code_before'] : array()
+		);
+
+		$state['code_removed'] = $removed;
+
+		$this->release();
+
+		\wp_cache_flush();
+
+		$state['notes'][] = \sprintf(
+			'Undone: %d imported table(s) discarded, %d setting(s) put back as they were, and this site\'s '
+				. 'own content never moved.',
+			$dropped,
+			$restored
+		);
+
+		if ( ! empty( $removed ) ) {
+			$state['notes'][] = \sprintf(
+				'Removed %d plugin(s) and theme(s) the import installed: %s.',
+				\count( $removed ),
+				\implode( ', ', $removed )
+			);
+		}
+
+		$this->checkpoint->save( $state );
+
+		return $state;
+	}
+
+	/**
+	 * Undo an import that only ever wrote files.
+	 *
+	 * `AddedCode` is the whole of it: the difference between the plugin and theme directories as
+	 * they were at precheck and as they were when the files stage finished. What the destination
+	 * already had and the package overwrote stays, for the reason it always stays -- its own copy
+	 * is gone by then, and deleting it would turn an incomplete undo into a destructive one.
+	 *
+	 * @param array $state Import state.
+	 *
+	 * @return array The state as saved.
+	 *
+	 * @throws \RuntimeException If the run never got as far as writing anything.
+	 */
+	protected function rollback_files_only( array $state ) {
+		if ( ImportCheckpoint::STAGE_DONE !== $state['stage'] ) {
+			throw new \RuntimeException( 'This import has not finished, so there is nothing to undo yet.' );
+		}
+
+		$removed = AddedCode::remove(
+			isset( $state['code_added'] ) ? (array) $state['code_added'] : array(),
+			isset( $state['code_before'] ) ? (array) $state['code_before'] : array()
+		);
+
+		$state['code_removed'] = $removed;
+		$state['rolled_back']  = true;
+
+		$this->release();
+
+		\wp_cache_flush();
+
+		$state['notes'][] = empty( $removed )
+			? 'Undone: the package had added nothing this site did not already have, and the database was never touched.'
+			: \sprintf(
+				'Undone: removed %d plugin(s) and theme(s) the import installed, and nothing else changed. %s.',
+				\count( $removed ),
+				\implode( ', ', $removed )
+			);
 
 		$this->checkpoint->save( $state );
 
@@ -1086,7 +1612,7 @@ class Importer {
 
 		$compatibility = new Compatibility( new SiteProfile( $recorded ), SiteProfile::gather() );
 
-		return $compatibility->check();
+		return $compatibility->check( $manifest->has_database() );
 	}
 
 	/**

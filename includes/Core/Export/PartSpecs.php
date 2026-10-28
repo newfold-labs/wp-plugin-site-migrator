@@ -253,11 +253,14 @@ class PartSpecs {
 	 * names for an allowlisted one. Symlinks are left out because the export refuses them anyway,
 	 * and offering a choice about something that is never carried is a lie.
 	 *
+	 * Public because `catalog()` is not the only caller any more: the belongings scan needs the
+	 * same list *with* the part's root beside it, to read the code in each directory.
+	 *
 	 * @param PartSpec $spec Part description.
 	 *
 	 * @return array Names relative to the part root, sorted.
 	 */
-	protected static function children( PartSpec $spec ) {
+	public static function children( PartSpec $spec ) {
 		$root = $spec->root();
 
 		if ( ! \is_dir( $root ) ) {

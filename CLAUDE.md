@@ -138,6 +138,19 @@ four-place scheme made `WP_Admin::register_assets()` silently skip enqueueing on
 registers `Rest\Routes::register()` and `Cli\Commands::register()`, primes `Utils\Options::fetch()`,
 and persists options on `shutdown`. No activation hooks.
 
+**Nothing loads below the PHP the header promises, and the check is the file's first statement.**
+WordPress enforces `Requires PHP` when a plugin is activated or updated through the admin, and
+nowhere else — an *already active* plugin is loaded on whatever PHP the server runs today, so a host
+downgrade, a restored backup, or files replaced over FTP put this code in front of a PHP it was
+never written for. The first line that will not compile is then a fatal on every request, wp-admin
+included, which is a locked-out site that cannot even reach the plugins page to switch the thing
+off. `PHP_VERSION_ID < 70400` returns early and registers one admin notice naming both versions.
+Everything inside that block has to compile on a PHP the rest of the plugin does not support, so no
+syntax newer than the floor it is checking may appear in it, and `bin/verify-zip.sh` asserts the
+guard is in the zip. Checked on the real thing: all 81 shipped files pass `php -l` on PHP 7.2.34,
+and the bootstrap loaded there returns without a fatal, defines none of the plugin's classes and
+prints the notice.
+
 **Deactivation takes nothing with it, and deleting the plugin is what purges.** The deactivation
 hook pointed at `nfd_sm_purge_all()`, which recursively deletes the storage directory — so on a
 production site, switching the plugin off to see whether it was the cause destroyed a package that
@@ -225,6 +238,14 @@ run is not a check that passed. There are three checkpoints: at pairing, before 
 again on the destination immediately before the first write, against live facts rather than
 whatever the handshake saw days earlier.
 
+**A destination's collations come from two queries, not `SHOW COLLATION` alone.** MariaDB 11.4.5
+lists its UCA 14.0 collations there once, as `uca1400_ai_ci` with no character set, while tables
+still report `utf8mb4_uca1400_ai_ci` — the server default from 11.5, so every WordPress installed on
+current MariaDB uses it. Profiled from `SHOW COLLATION` alone, a MariaDB 12.3.3 destination refused
+a package from an identical 12.3.3 source over "text encoding". `SiteProfile::full_collation_names()`
+adds `FULL_COLLATION_NAME` from `COLLATION_CHARACTER_SET_APPLICABILITY`; MySQL has no such column,
+so there the query fails with its error suppressed and the list is what it always was.
+
 `Pairing::fetch_profile()` reaches the destination through **`?rest_route=` first**, `/wp-json/`
 only as a fallback: a site on plain permalinks serves only the query form and answers the path
 form with a redirect to its home page, which arrives as HTML and reads as "the plugin is not
@@ -303,6 +324,64 @@ for the same rule, that a manifest must never describe a package that is no long
 The comparison is order-insensitive (`canonical()`), because one side was typed into a form and the
 other read back out of JSON; and only a real difference counts, so saving an unchanged selection
 never costs somebody an hour of packaging.
+
+**A package can carry code and no data, and that is a different kind of import.** `skip_database`
+sits beside the three row filters in `Selection` but does something categorically different: the
+twelve tables in `$required_tables` may never be skipped one at a time, because a package holding
+*some* of core's tables describes a site that cannot boot — refusing all of it is not that. What
+travels is plugins and themes, and the destination keeps its own content, users and settings. The
+export writes no `database.sql` at all (never an empty one, which would arrive as a database that
+replaces everything with nothing) and the manifest simply has no `database` entry, which is how
+`Manifest::has_database()` tells "no data was sent" from "the data is missing" — the second is still
+caught by `PackageReader::verify()`, which checks every file the manifest names.
+
+On the destination it is five stages shorter. `stage_files` hands straight to fixups, skipping
+database, transform, users, validate and **swap** — which with nothing staged would rename the live
+tables into the backup set and put nothing back in their place. `Fixups` does not run either: no
+view was dropped, no foreign key was left pointing at a backup, `active_plugins` still reads the way
+this site wrote it, and the session belongs to a user the import never touched. Precheck does not
+discard a previous import's backup, because spending somebody's undo is the price of *replacing*
+a site and this replaces nothing; `Compatibility::check( false )` skips the collation and
+`RENAME TABLE` gates for the same reason, or a code-only import would be refused over an encoding no
+table in it uses. Rollback is `AddedCode` alone, which is the whole of what changed. The honest
+consequence, said on the review screen and again in the run's notes: what arrives is **inactive and
+unconfigured**, because what switches a plugin on and what holds its settings are rows in the
+destination's own `wp_options`. Proven between two real installs — the destination's posts, users and
+options untouched, the plugin's own table absent, no `nfdold_`/`nfdimp_` table created, and rollback
+removing exactly the files that arrived.
+
+**And a code-only package can still bring a plugin's own data, which is a third kind of import.**
+"Plugins and themes only" means nothing if the plugins arrive empty, so a selection that refuses the
+database may still name tables and option rows to carry: `carry_tables` and `carry_options`. The
+dump is then an *allowlist* rather than the site minus refusals, the manifest marks it
+`database.partial` with both lists in it, and the destination merges instead of swapping — five
+stages become three, `Swap::execute_only()` renames just those tables (live to `nfdold_`, staged
+into place, one statement as always), and the options table is the one place in the whole import
+where rows are written into a live table rather than renamed into it. That is `OptionMerger`, and
+it records every previous value — `null` meaning "there was no row" — so the undo is exact rather
+than approximate. Rollback is the same rename backwards plus those values going back; a table this
+site never had is not "put back" but dropped, which leaves the database holding what it held.
+
+**Which tables belong to a plugin is read out of the plugin, not guessed from its name.**
+WordPress keeps no registry, and naming is no guide — WooCommerce's tables are `wp_wc_*`,
+Wordfence's are `wp_wf*`. `TableOwners` scans each plugin's PHP for the two ways a table is really
+named (`$wpdb->prefix . 'acme_log'` and `"{$wpdb->prefix}acme_log"`) and for the option names it
+passes to `get_option()` and friends, then **intersects both with what the site actually has**.
+That is what makes a false positive harmless and keeps the limits easy to state: a name assembled
+at runtime is not found, and the table turns up in `unclaimed` for somebody to tick by hand. Two
+rules keep it honest. The result is a *suggestion*, shown in the picker with its tables and
+settings listed, never acted on by itself. And `Selection::is_protected_option()` refuses core's
+own options — `home`, `siteurl`, `active_plugins`, `template`, transients — in the scan, again when
+the selection is saved, and a third time in `OptionMerger`, because plugins read those constantly
+and a checkbox saying "bring this plugin's settings" must never mean "adopt the other site's
+address". The scan lives behind its own `/export/belongings` route: answering it means reading every
+plugin's code, and it is only asked once somebody has actually turned the database off.
+
+Proven between two real installs, 26 assertions: the scan finding both tables and both settings and
+refusing `home`, a dump holding only what was chosen, the destination keeping its posts and its own
+address, a table it already had replaced and kept for the undo, one it never had arriving, settings
+landing with their URLs rewritten to the destination, and a rollback putting its own table and its
+own setting back while deleting the row it never had.
 
 **What was left out travels in the manifest**, under `contents`, absent meaning the whole site. It
 is the only way the destination can tell a site with no media from a package that deliberately
@@ -388,6 +467,129 @@ export already excludes itself, so ordinarily nothing matches — this is the de
 to bet the running importer on a package it did not build. String comparison against a list built
 once, because it runs per entry. `UserMerger` is the one table that merges rather than replaces
 (plan §9.4). `Swap` also handles rollback and the backup tables.
+
+**The review screen reads the package's PHP, and blocks on code this server cannot run.**
+`CodeCompatibility` runs in `Importer::preview()` — the review screen and the CLI's pre-confirm —
+and does not rewrite anything by itself: it names the file and line, and the fix is made on the
+source unless somebody opts into the safe fixes below. It
+finds three kinds of thing. Functions PHP removed (`create_function`, `each`, `mysql_*`) and PHP 4
+constructors, from tokens. Anything the running PHP will not **parse**, by `token_get_all( $source,
+TOKEN_PARSE )` — `$str{0}`, `(real)`, a keyword used as a name, or PHP 8 syntax carried to 7.4 —
+with no list to maintain, because the PHP that will run the code is the one answering. And the two
+PHP 8.0 removals the parser accepts and only the compiler refuses, the `(unset)` cast and an
+unparenthesised nested ternary, from tokens again. The ternary detector agrees with `php -l` on every
+labelled case and on the whole corpus below, and neither can be compiled from inside a request to find out:
+`opcache_compile_file()` would take the request down with the file.
+
+Everything about how it decides was measured on 27,839 real plugin files, and three rules came out
+of that. **Directories named `tests`, `fixtures`, `stubs` or `examples` are not read**: parsed as
+PHP 8.5 those files produced 813 parse failures and 126 removals, every one inside a vendored
+PHP_CodeSniffer whose fixtures are broken on purpose, and outside them nothing at all. **A file that
+does not parse blocks only when this PHP is newer than the source's** (`source.php_version`); on the
+same version or older it warns, because the source could not have been loading it either —
+WooCommerce 11.0 declares PHP 7.4 and ships 46 files of PHP 8 syntax. **And a removed function only
+blocks when it went from PHP *above* the source's own version**, which is the same rule with a
+number attached: `removed_in` says which release took the function, and a source already past it was
+running that very file without it. Two real sites, both on PHP 8.2, were refused over
+`create_function()`, `mysql_query()` and `zip_entry_read()` inside WP Defender's vendored
+`thecodingmachine/safe`, whose generated wrappers call them in bodies nothing invokes — a migration
+where PHP did not change at all. The question a gate here has to answer is never "can this PHP run
+every line" but "does this migration break something that works", and a package carries whole
+plugins, compatibility shims and vendored legacy drivers included. A package that does not say which
+PHP it ran still gets the strict reading, because then there is nothing to compare against. **Code that supports an old
+PHP is not a removal**: a call to a function the same file names in `function_exists()` or
+`is_callable()` (MetaSlider's HTMLPurifier did this, and the check refused the Local test site
+over it), and a same-named method in a class that also declares `__construct()` (core's `rss.php`).
+Catch `\Throwable`, never `\ParseError`: one odd file must not take down the review screen. A scan
+that hits the read budget warns rather than passing — it used to return what it had, which read as
+a pass for code nobody looked at — and the budget is 256MB because the same site's plugins held
+120MB of PHP outside their tests, so the old 64MB would have hedged on every WooCommerce site. Test
+directories are skipped before they are read, so they cost no budget. The file list reaches the browser
+through `context.missing`, which `Gate.js` and the review screen render for every report that sets
+it — they rendered for none until this, so the collation and missing-plugin lists were never on
+screen either.
+
+**Three of those removals can be fixed as the files land, and only if somebody asks.** `SyntaxFixer`
+rewrites `$str{0}` as `$str[0]`, `(real)` as `(float)`, and `a ? b : c ? d : e` as
+`(a ? b : c) ? d : e` — the grouping PHP 7 actually ran, since the ternary associated left. Each is a
+spelling, not a meaning, which is the whole selection rule: `each()`, `create_function()`, `(unset)`
+and PHP 4 constructors need a replacement that depends on the code around them, and a guess there
+changes behaviour silently, so they still block. Nothing is assumed to have worked. A file is fixed
+whole or not at all: the result must parse on this PHP, pass `inspect()` again for *every* removal,
+and have the same token stream as the original once parentheses, `{}`/`[]` and the float cast's
+spelling are set aside. The ternary parentheses come from `CodeCompatibility::ternary_sites()`, the
+same scan that refuses them, so a fix can only touch what the check found; where the chain starts
+is the one new thing it tracks, and a wrong start produces a file that does not parse and is
+refused. Measured: 10,365 real plugin files with every offset turned into `{}` and every `(float)`
+into `(real)` came back byte for byte, no clean file was ever touched, and 8,121 random ternary
+chains in assignments, closures, `if` bodies, array items, `and` and `case` gave identical results
+on PHP 7.4 before and after — a check that does catch parentheses put on the right.
+
+It is opt-in on both surfaces — a checkbox on the review screen, which asks `preview` again with
+`fix_php` so the gate turns from a block into a warning only for the files it can fix, and
+`import --fix-php`. The browser's steps carry only the package, so `start` records the choice in
+the checkpoint (`Importer::choose_fixes()`), and precheck recomputes the file list from the package
+rather than trusting the screen. `FileRestorer` writes the package's bytes first and fixes after,
+saving the original under `import/php-originals/<entry name>` and renaming the fixed copy over the
+file, so an interrupted step leaves either the package's file or a checked fix. The originals keep
+their `.php` names on purpose — every one is code this PHP refused to compile, so requesting one
+runs nothing, where a `.txt` would serve the source to anyone on a server that ignores
+`.htaccess`. They are cleared as the next migration begins, with the previous import's tables, and
+the Done screen's notes say how many files changed and where the originals are.
+
+**A destination does not need PHP's zip extension.** Hosts ship without it, and every file in a
+package is inside a zip part, so an import used to be impossible there — and the bootstrap's
+requirement check deactivated the plugin before anyone got that far. `Core/Package/ZipReader` is
+the one way anything on the import side opens a part: `ZipArchive` when it exists, otherwise its
+own reader over the central directory, streaming each entry through zlib's `inflate_add()`. It
+reads only what this plugin writes (stored or deflated, zip64 included, never encrypted or split),
+checks every offset against the file before believing it, and refuses an entry whose size or
+CRC-32 does not match — more than `getStream()` checks. Not PclZip, which WordPress ships: it
+holds a whole entry in memory, compressed and inflated at once. `FileRestorer` deletes a file whose
+entry fails part way, because a truncated PHP file is a fatal and an absent one is not. Filter
+`nfd_sm_native_unzip` forces the zlib path on a server that has both, which is how
+`NFD_UNZIP=zlib tests/roundtrip.sh` runs it here: Homebrew's PHP and Local's both compile the
+extension in, so it cannot be switched off natively. The official `php:*-cli` Docker images ship
+without it, which is where the genuine case has been run.
+
+**And neither does a source.** `Core/Package/ZipWriter` writes a volume front to back with
+`deflate_add()`: local header, data, then each entry's size and CRC patched back into its header
+(two seeks, no data descriptor), and the central directory on `close()`. It keeps
+`FileCollector`'s rules — created with truncation, filled once, closed once — so a step that dies
+mid-volume leaves one the next step writes again, and the checkpoint still only moves at close.
+Two things differ and are handled. The work happens as files are *added* rather than in `close()`,
+so `$spent` carries adding time into the volume sizing; without it the writer looks infinitely fast
+and volumes jump to the cap. And a writer bug is the one kind nothing downstream catches — the
+SHA-256 is taken from whatever was written — so `read_back()` inflates every entry of every zlib
+volume through `ZipReader` and checks its CRC before the volume is recorded. It is deliberately
+32-bit and refuses past 4GB or 65,535 entries rather than writing zip64; the defaults cannot reach
+either. `ZipArchive` stays the default whenever it exists, `nfd_sm_native_zip` forces the writer
+(`NFD_ZIP=zlib tests/roundtrip.sh`), and `Checker::check_zip()` warns rather than blocks when the
+writer is what will run. Tests read its output with `ZipArchive::CHECKCONS`, the zlib reader and
+Info-ZIP's `unzip -t`, so it is never checked only against its own idea of the format.
+
+**Foreign keys do not travel, and the swap cuts the ones it would otherwise break.** A dump's
+`CREATE TABLE` carries its constraints, and staging that table fails three ways. A constraint name
+is unique per *database*, not per table, so a destination that already holds the source's names —
+which is what a site migrated from that source before looks like — dies on the name alone
+(`errno 121`, seen on a real import of a WP Defender quarantine table). `REFERENCES` names the live
+table, and `replace_table_name()` rewrites only the identifier the statement is *about*, so the
+staged copy would bind to the live `wp_users` and the swap would then carry it onto
+`nfdold_wp_users`, leaving the imported table pointing into the backup. And a parent the package
+does not carry cannot be referenced at all (`errno 150`). So `DatabaseBase::strip_foreign_keys()`
+removes them on the way into staging, counts them, and the run's notes say what was dropped: the
+columns, the primary key and the `KEY` indexes beside each constraint all travel, and what is lost
+is enforcement — which WordPress core never defines and plugins use as a convenience.
+`Swap::detach_backup_references()` then cuts any constraint left pointing from outside the backup
+set into it, because `RENAME TABLE` rewrites a foreign key to follow the table it names, and a
+reference into the replaced site both misleads and makes the backup undroppable.
+
+**And dropping a set of tables is one statement whose result is checked.** `discard_backup()` and
+`discard_staged()` used to loop, issuing one `DROP` per table and counting each as dropped without
+asking — so a table held by a foreign key stayed while the run reported success. That is how a site
+was left holding a single `nfdold_wp_users` that no later import would clear, and which the review
+screen then read as a migration still awaiting a decision. One `DROP TABLE a, b, c` lets a parent
+and its children go together, and the count is taken by listing what is left.
 
 **A backup lasts until its import is kept, or until the next migration starts — not 30 days**
 (plan D8, revised). The cap used to make a new import *refuse* while a previous backup was inside
@@ -613,6 +815,33 @@ directory, so the package path matches on every retry: this is the state *Try a 
 leads into. `ImportCheckpoint::is_settled()` already drew the line for `step()`, `Resume` and the
 Done screen; this was the one caller left out.
 
+**The review screen does not withhold the Import button over a previous backup.** It did, with a
+note telling the user to confirm or undo that import first — the same refusal plan D8 removed from
+the importer, rebuilt in the UI, and reachable only from a screen they had already left. Precheck
+discards those tables and says so in a note, so the screen now explains that starting this import
+ends the previous one's undo, and lets it start.
+
+**One code means the screens say one code.** The link has carried the whole handshake since phase
+9 — pairing leaves a token, *Offer* marks the package, the destination claims a key it never sees —
+and the screens went on teaching the older two-code model anyway. The source's Deliver screen
+opened with "offer it … *or generate a key to paste by hand*" and drew the key card and the
+download card at full size underneath, so a migration needing one code looked like it needed two.
+Both fallbacks now sit inside one `<details>`, *Other ways to deliver this*, folded exactly when
+`link.linked` says nobody has to carry anything — and unfolded, not hidden, for the two cases that
+still need them: a source that skipped pairing, and a destination paired by a version that never
+sent a token.
+
+**And the destination waits on the screen it is already on.** `/receive` mints the pairing code, and
+it was the one screen in the plugin that belonged to neither journey: after handing the code over it
+stood still, while the package that arrived for it announced itself on `/import`, which nobody had a
+reason to open. It is now `connect`, the first step of `DESTINATION_STEPS`, and it polls
+`import/pull/offer` every five seconds — the question the link already answers, costing the source
+nothing and returning no credential. When the answer turns to `offered` the screen becomes the offer:
+who is sending, how big, how many files, and one button. That button carries `state.start` to
+`/import/pull`, which claims and begins on arrival rather than drawing the same card and asking a
+second time — guarded by a ref, because the poll keeps saying `offered` until the transfer connects
+and a second claim would mint a second key.
+
 **Every screen that waits says so** — `components/Loading.js`, used in all nine places that fetch
 before they can render. The resume redirect used to `return null`: a blank admin page, on the
 first thing anybody sees.
@@ -629,6 +858,14 @@ Compatibility screen rather than sitting in everybody's way. The picker offers n
 a directory's size is a walk of the whole site, which is the expensive half of an export, and
 making somebody wait through most of one to decide what to leave out of it is a strange trade.
 Table sizes *are* shown, because `SHOW TABLE STATUS` is a single query.
+
+**Out of the way is not the same as out of reach**, and for a while it was: the compatibility
+screen was the only door to `/contents`, and it needs a paired destination — so *Export without
+checking* on the pairing screen went straight to the run, and a source that never paired could not
+choose its plugins and themes at all. That link now lands on the picker, whose primary button
+builds the package, and carries `state.back` so *Back* returns to `/pair` rather than to a
+comparison that was never made (`result` is `{ skipped: true }`, which is truthy enough to stop
+`Compatibility` redirecting and leaves it drawing an empty report).
 
 **The picker draws names and stores slugs.** A directory name is the identity — it is what a
 `Selection` refuses, what the manifest records and what `--set` takes — but `advanced-hiive-config`
@@ -726,11 +963,14 @@ literals that no symbol graph follows.
 
 ## Conventions
 
-- Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in three places that must agree:
-  the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, and the hard-coded
-  `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`. The last one is the one that gets
-  forgotten — it sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must list
-  `zip`, because every part of a package is a zip archive.
+- Minimum PHP is **7.4** and minimum WordPress **5.8**, declared in four places that must agree:
+  the plugin header, phpcs `testVersion`/`minimum_supported_wp_version`, the hard-coded
+  `WP_Forge_Plugin_Check` call in `nfd-site-migrator.php`, and the `PHP_VERSION_ID` guard above it.
+  `VersionTest` compares all four, because a guard that disagrees with the header refuses a PHP the
+  plugin supports or admits one it does not. The `WP_Forge_Plugin_Check` numbers are the ones that
+  get forgotten — they sat at 5.6/4.7 through the whole rework. Its `req_php_extensions` must **not**
+  list `zip`: that check deactivates the plugin on every visit to the Plugins screen, and neither
+  side needs the extension any more (see *A destination does not need PHP's zip extension*).
 - **The floor rising does not mean the style changed.** `array()` throughout, no typed properties,
   no arrow functions — modern syntax is now permitted, not mandated, and a mechanical rewrite of
   the codebase buys nothing. New code may use it where it earns its place.
@@ -897,6 +1137,14 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - No in-place fallback for a host without `RENAME TABLE` (plan §9.3). Preflight probes for it and
   reports it, so such a host is refused rather than half-migrated.
 - The lossy `utf8mb4` → `utf8` branch is coded and never exercised.
+- **The zlib reader and writer have run on a PHP without `ZipArchive` only in Docker** —
+  `php:8.3-cli` plus `mysqli`, MariaDB 12.3.3 beside it, driven through WP-CLI. The reader imported
+  a real 204MB production package: all 1,683 files byte for byte, the site rendering, rollback
+  clean. The writer then exported that site (1,691 files, 9 volumes) and a second zip-less install
+  imported it: every volume passed `unzip -t`, `ZipArchive::CHECKCONS` and Python's `zipfile`, all
+  1,691 files matched the source, and the site rendered with no fatals. That run is what found the
+  `uca1400` collation refusal. Not yet through the browser on a real host without the extension,
+  and never with `mbstring` or other extensions also missing.
 - The `LOOSE_THRESHOLD` (64MB) and `VOLUME_LIMIT` (128MB) have never met real shared hosting. Plan
   D3 shipped the first as proposed and cut the second to an eighth of it, and its validation clause
   is explicitly still open.

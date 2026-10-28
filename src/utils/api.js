@@ -162,6 +162,9 @@ async function call( options ) {
 export const api = {
 	preflight: () => call( { path: `${ BASE }/preflight` } ),
 
+	// This site's own facts as pasteable text, for a destination the source cannot reach over HTTP.
+	ownProfile: () => call( { path: `${ BASE }/preflight/profile` } ),
+
 	compare: ( body ) =>
 		call( {
 			path: `${ BASE }/preflight/compare`,
@@ -200,6 +203,21 @@ export const api = {
 			data: { paused },
 		} ),
 	exportContents: () => call( { path: `${ BASE }/export/contents` } ),
+
+	// Asked only when the database has been turned off, because answering it means reading every
+	// plugin's PHP -- 43 seconds on a real thirteen-plugin site. Stepped, so each call scans for a
+	// few seconds and says where to carry on from. See `ExportController::belongings()`.
+	// `skip` is what the picker currently has unticked, sent as repeated `skip[]` because that is
+	// what WordPress reads back as an array. A plugin that is not travelling is not asked what it
+	// owns.
+	exportBelongings: ( cursor = 0, offset = 0, skip = [] ) =>
+		call( {
+			path:
+				`${ BASE }/export/belongings?cursor=${ cursor }&offset=${ offset }` +
+				skip
+					.map( ( one ) => `&skip[]=${ encodeURIComponent( one ) }` )
+					.join( '' ),
+		} ),
 	exportChoose: ( selection ) =>
 		call( {
 			path: `${ BASE }/export/contents`,
@@ -214,10 +232,10 @@ export const api = {
 	import: {
 		sources: () => stableCall( 'import/sources' ),
 
-		uploadState: ( files ) =>
+		uploadState: ( files, manifest ) =>
 			stableCall( 'import/upload/state', {
 				method: 'POST',
-				data: { files },
+				data: { files, manifest },
 			} ),
 
 		uploadReset: () =>
@@ -232,16 +250,16 @@ export const api = {
 				data: { dir },
 			} ),
 
-		preview: ( dir ) =>
+		preview: ( dir, fixPhp = false ) =>
 			stableCall( 'import/preview', {
 				method: 'POST',
-				data: dir ? { dir } : {},
+				data: { ...( dir ? { dir } : {} ), fix_php: fixPhp },
 			} ),
 
-		start: ( dir, mode ) =>
+		start: ( dir, mode, fixPhp = false ) =>
 			stableCall( 'import/start', {
 				method: 'POST',
-				data: { dir, mode },
+				data: { dir, mode, fix_php: fixPhp },
 			} ),
 
 		step: ( dir, mode ) =>

@@ -32,6 +32,17 @@ export const Gate = ( { check } ) => (
 			{ check.context?.reason && (
 				<p className="nfd-sm-gate-fix">{ check.context.reason }</p>
 			) }
+			{ Array.isArray( check.context?.missing ) &&
+				check.context.missing.length > 0 && (
+					// What the check is about: the files that will not run, the plugins that will
+					// not be here, the collations the server lacks. Every report that sets it
+					// sends strings, and String() keeps a surprise from blanking the page.
+					<ul className="nfd-sm-gate-list">
+						{ check.context.missing.map( ( item, index ) => (
+							<li key={ index }>{ String( item ) }</li>
+						) ) }
+					</ul>
+				) }
 		</div>
 	</li>
 );
