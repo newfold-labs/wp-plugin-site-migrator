@@ -17,6 +17,7 @@ export const Start = () => {
 	const [ report, setReport ] = useState( null );
 	const [ profile, setProfile ] = useState( null );
 	const [ error, setError ] = useState( '' );
+	const [ moving, setMoving ] = useState( '' );
 	const navigate = useNavigate();
 
 	useEffect( () => {
@@ -41,6 +42,27 @@ export const Start = () => {
 	}, [] );
 
 	const blocked = report && ! report.ok;
+
+	// Uploads not writable is a permission somebody with only wp-admin cannot change, so the
+	// storage block carries the places that could be used instead.
+	const alternatives =
+		report?.blocking?.find( ( check ) => 'storage' === check.id )?.context
+			?.alternatives || [];
+
+	const moveStorage = ( location ) => {
+		setMoving( location );
+		setError( '' );
+
+		api.moveStorage( location ).then( ( response ) => {
+			if ( response.failed ) {
+				setError( response.error );
+			} else {
+				setReport( response.report );
+				setProfile( response.profile );
+			}
+			setMoving( '' );
+		} );
+	};
 
 	return (
 		<Layout
@@ -78,6 +100,54 @@ export const Start = () => {
 			) }
 
 			{ ! loading && report && <Gates report={ report } /> }
+
+			{ ! loading && alternatives.length > 0 && (
+				<div className="nfd-sm-card">
+					<h3>
+						{ __(
+							'Keep the migration files somewhere else',
+							'nfd-site-migrator'
+						) }
+					</h3>
+					<p className="nfd-sm-muted">
+						{ __(
+							'The package holds this site’s whole database, so it is kept in a folder only this site can read. Choose once; the plugin uses it until it is deleted.',
+							'nfd-site-migrator'
+						) }
+					</p>
+					<ul className="nfd-sm-gate-list">
+						{ alternatives.map( ( option ) => (
+							<li key={ option.id }>
+								<p className="nfd-sm-gate-label">
+									{ String( option.label ) }
+								</p>
+								<p className="nfd-sm-gate-fix">
+									<code>{ String( option.path ) }</code>
+								</p>
+								<p className="nfd-sm-gate-fix">
+									{ String( option.detail ) }
+								</p>
+								<button
+									type="button"
+									className="nfd-sm-btn"
+									disabled={ '' !== moving }
+									onClick={ () => moveStorage( option.id ) }
+								>
+									{ moving === option.id
+										? __(
+												'Setting up…',
+												'nfd-site-migrator'
+										  )
+										: __(
+												'Use this folder',
+												'nfd-site-migrator'
+										  ) }
+								</button>
+							</li>
+						) ) }
+					</ul>
+				</div>
+			) }
 
 			{ ! loading && (
 				<div className="nfd-sm-choices">

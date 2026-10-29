@@ -226,6 +226,18 @@ Protection used to be written only by `PackageWriter`, so `package/` and `incomi
 absolute server paths, the table prefix, and every plugin and theme the import installed. One
 `.htaccess` at the root covers everything beneath it.
 
+**When uploads cannot be written, storage moves, and the choice is a directory, not an option.**
+`Core/Preflight/Storage` offers two alternates on the Start screen's storage block — beside the
+WordPress folder, then the server's temp directory — and `POST /preflight/storage` creates the
+chosen one. An adopted alternate wins whenever it exists, because the import replaces `wp_options`
+and its checkpoint lives in this directory: a location read from the database would move under a
+running import. Alternates are created `0700` and one found already there counts only if it is a
+real directory closed to group and world, because `/tmp` is shared on shared hosting and a package
+is the whole database; the name hashes `AUTH_KEY` so it cannot be squatted in advance. Adoption is
+refused while the current location works, which is what keeps storage from moving under a run.
+`nfd_sm_purge_all()` deletes every location, which is also what moves storage back. The
+`nfd_sm_storage_path` filter overrides all of it for somebody with server access.
+
 **`wp site-migrator export` runs the local gates and refuses when they block.** It did not, so a
 site whose package directory was downloadable wrote a full database dump into it and reported
 success. The UI gated on this from the start; the CLI did not.

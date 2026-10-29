@@ -162,6 +162,14 @@ async function call( options ) {
 export const api = {
 	preflight: () => call( { path: `${ BASE }/preflight` } ),
 
+	// Keep the migration files outside uploads; answers with a fresh preflight report.
+	moveStorage: ( location ) =>
+		call( {
+			path: `${ BASE }/preflight/storage`,
+			method: 'POST',
+			data: { location },
+		} ),
+
 	// This site's own facts as pasteable text, for a destination the source cannot reach over HTTP.
 	ownProfile: () => call( { path: `${ BASE }/preflight/profile` } ),
 

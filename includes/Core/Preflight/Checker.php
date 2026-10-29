@@ -81,27 +81,36 @@ class Checker {
 	protected static function check_storage( Report $report ) {
 		$path = \nfd_sm_storage_path();
 
-		if ( ! \is_dir( $path ) ) {
-			$report->block( 'storage', 'The storage directory could not be created.', array( 'path' => $path ) );
+		if ( ! Storage::is_writable( $path ) ) {
+			// Somebody with only wp-admin cannot fix a permission, so the block offers somewhere
+			// else instead: whichever alternates could actually be created right now.
+			$options = Storage::options();
+			$fix     = 'Check the permissions on wp-content/uploads.';
+
+			if ( $options ) {
+				$fix = 'Ask your host to make wp-content/uploads writable, or keep the migration files in one of the places below.';
+			}
+
+			$report->block(
+				'storage',
+				\is_dir( $path ) ? 'The storage directory is not writable.' : 'The storage directory could not be created.',
+				array(
+					'path'         => $path,
+					'fix'          => $fix,
+					'alternatives' => $options,
+				)
+			);
 
 			return;
 		}
 
-		$probe  = $path . 'write-probe-' . \wp_generate_password( 8, false );
-		$wrote  = @\file_put_contents( $probe, 'probe' ); // phpcs:ignore
-		$exists = \is_readable( $probe );
-
-		if ( $exists ) {
-			@\unlink( $probe ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
-		}
-
-		if ( false === $wrote || ! $exists ) {
-			$report->block(
+		if ( Storage::TEMP === Storage::kind( $path ) ) {
+			$report->warn(
 				'storage',
-				'The storage directory is not writable.',
+				'Migration files are kept in the server\'s temporary directory.',
 				array(
-					'path' => $path,
-					'fix'  => 'Check the permissions on wp-content/uploads.',
+					'path'   => $path,
+					'detail' => 'Hosts clear this from time to time. Send or download the package soon after it is built.',
 				)
 			);
 
@@ -128,21 +137,29 @@ class Checker {
 	 * else can either. Refusing to export on those hosts would be the wrong answer far more often
 	 * than the right one. A fetch that *succeeds* is proof, and that is what blocks.
 	 *
+	 * Storage moved out of uploads (`Storage`) has a URL only when it sits inside a folder this
+	 * site maps to one. Otherwise there is no address to ask, and the answer is a pass: a web
+	 * server cannot serve what is outside the folders it serves.
+	 *
 	 * @param Report $report Report to add to.
 	 *
 	 * @return void
 	 */
 	protected static function check_storage_reachable( Report $report ) {
-		$uploads = \wp_get_upload_dir();
-		$base    = isset( $uploads['baseurl'] ) ? (string) $uploads['baseurl'] : '';
-		$path    = \nfd_sm_storage_path();
-		$folder  = \basename( \untrailingslashit( $path ) );
+		$path = \nfd_sm_storage_path();
+		$base = Storage::url( $path );
 
-		if ( '' === $base ) {
+		if ( null === $base ) {
 			$report->warn(
 				'storage_reachable',
 				'The uploads URL could not be worked out, so the package directory could not be tested.'
 			);
+
+			return;
+		}
+
+		if ( '' === $base ) {
+			$report->pass( 'storage_reachable', 'Migration files are kept outside the folders this site serves.' );
 
 			return;
 		}
@@ -157,7 +174,7 @@ class Checker {
 			return;
 		}
 
-		$probe = \trailingslashit( $base ) . $folder . '/index.php';
+		$probe = \trailingslashit( $base ) . 'index.php';
 
 		$response = \wp_remote_get(
 			$probe,
@@ -171,7 +188,7 @@ class Checker {
 		if ( \is_wp_error( $response ) ) {
 			$report->warn(
 				'storage_reachable',
-				'This site could not fetch its own uploads directory, so whether a package would be reachable from the web is unknown.',
+				'This site could not fetch its own storage directory over the web, so whether a package would be reachable from the web is unknown.',
 				array(
 					'detail' => 'Many hosts stop a site calling itself, which is all this may mean. If this host runs nginx, '
 						. 'check that ' . $probe . ' cannot be downloaded before you export.',
@@ -194,7 +211,7 @@ class Checker {
 		if ( 200 === $code && ! $is_ours ) {
 			$report->warn(
 				'storage_reachable',
-				'The uploads directory answered, but with something other than the expected file, so whether a package would be reachable is unclear.',
+				'The storage directory answered, but with something other than the expected file, so whether a package would be reachable is unclear.',
 				array( 'detail' => 'Check that ' . $probe . ' cannot be downloaded before you export.' )
 			);
 
@@ -208,7 +225,7 @@ class Checker {
 				array(
 					'url' => $probe,
 					'fix' => 'This server ignores the .htaccess the plugin writes, which is what nginx does. Deny web access to '
-						. $folder . ' under uploads in the server configuration, then check again.',
+						. \untrailingslashit( $path ) . ' in the server configuration, then check again.',
 				)
 			);
 

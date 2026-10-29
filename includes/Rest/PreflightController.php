@@ -12,6 +12,7 @@ use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Compatibility;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Destination;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Pairing;
 use NewfoldLabs\WP\SiteMigrator\Core\Preflight\SiteProfile;
+use NewfoldLabs\WP\SiteMigrator\Core\Preflight\Storage;
 use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
 
 /**
@@ -79,6 +80,26 @@ class PreflightController extends Controller {
 					'methods'             => \WP_REST_Server::DELETABLE,
 					'callback'            => array( $this, 'forget_destination' ),
 					'permission_callback' => array( $this, 'check_permission' ),
+				),
+			)
+		);
+
+		// Takes an id, never a path: what may be created is decided by `Storage`, not the caller.
+		\register_rest_route(
+			$this->namespace,
+			'/preflight/storage',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'move_storage' ),
+					'permission_callback' => array( $this, 'check_permission' ),
+					'args'                => array(
+						'location' => array(
+							'type'     => 'string',
+							'required' => true,
+							'enum'     => array( Storage::ABOVE_ROOT, Storage::TEMP ),
+						),
+					),
 				),
 			)
 		);
@@ -205,6 +226,23 @@ class PreflightController extends Controller {
 				'profile' => SiteProfile::gather( true )->to_array(),
 			)
 		);
+	}
+
+	/**
+	 * Keep the migration files somewhere other than uploads, then report again.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function move_storage( $request ) {
+		$moved = Storage::adopt( (string) $request->get_param( 'location' ) );
+
+		if ( \is_wp_error( $moved ) ) {
+			return $moved;
+		}
+
+		return $this->get_report();
 	}
 
 	/**
