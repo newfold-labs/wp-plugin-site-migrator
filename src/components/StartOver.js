@@ -103,7 +103,9 @@ export const StartOver = ( { builtAt } ) => {
 							disabled={ busy }
 							onClick={ () => setArmed( false ) }
 						>
-							{ __( 'Keep it', 'nfd-site-migrator' ) }
+							{ /* Not "Keep it": that is the Done screen's button for keeping an
+							     import, the one decision in the plugin that cannot be undone. */ }
+							{ __( 'Cancel', 'nfd-site-migrator' ) }
 						</button>
 						<p className="nfd-sm-hint">
 							{ __(

@@ -83,6 +83,11 @@ assert "the test suite did not ship" "no" \
 assert "nor did phpunit" "no" \
 	"$([ -e "$SITE/wp-content/plugins/$SLUG/vendor/phpunit" ] && echo yes || echo no)"
 
+# The walkthrough videos live beside the code and are a hundred megabytes of MP4; nothing in
+# `.distignore` stopped them riding along in a plugin that is otherwise half a megabyte.
+assert "nor did the demo videos" "no" \
+	"$([ -e "$SITE/wp-content/plugins/$SLUG/demo" ] && echo yes || echo no)"
+
 # The built assets are the whole point: without them the admin page renders an empty div, which
 # looks exactly like a working install until somebody opens it.
 assert "the JS bundle is there" "yes" \

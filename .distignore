@@ -6,6 +6,7 @@
 
 # Directories
 bin
+demo
 dist
 docs
 .git
