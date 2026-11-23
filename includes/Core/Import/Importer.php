@@ -968,6 +968,12 @@ class Importer {
 
 		$state['users'] = $merger->run();
 
+		// Who is running this, as the destination's own users table knows them. The merge may
+		// give that person a new ID and login, and the cookie re-issued after the swap names the
+		// new one -- so a rollback, which puts this table back, needs the old one to sign them
+		// back in as (T5).
+		$state['users']['acting_before'] = (int) $this->options['acting_user'];
+
 		$this->progress->finish( ImportCheckpoint::STAGE_USERS );
 
 		$state['stage'] = ImportCheckpoint::STAGE_VALIDATE;
@@ -1299,11 +1305,15 @@ class Importer {
 			$said     = $left_out->describe();
 
 			if ( ! empty( $said ) ) {
+				// The second half used to be fixed, so a code-only package -- which brings no
+				// database at all -- was said to bring one that refers to missing files (T17).
 				$steps[] = array(
 					'id'    => 'contents',
 					'label' => 'The source left this out of the package on purpose: ' . \implode( '; ', $said )
-						. '. Whatever this site already has in those places is kept, and the database that '
-						. 'arrives will still refer to files the package did not carry.',
+						. '. Whatever this site already has in those places is kept'
+						. ( $manifest->has_database()
+							? ', and the database that arrives will still refer to files the package did not carry.'
+							: '.' ),
 				);
 			}
 		}
@@ -1346,6 +1356,27 @@ class Importer {
 	 * @throws \RuntimeException If there is nothing to roll back to.
 	 */
 	public function rollback() {
+		$before = \count( (array) \nfd_sm_data_get( $this->checkpoint->load(), 'notes', array() ) );
+		$state  = $this->undo();
+
+		// What the rollback itself said, kept apart from the import's own notes. Shown together,
+		// the Done screen repeated "You are still signed in, now as admin" and "can be rolled
+		// back until you keep it" beneath a rollback that had made both untrue (T15).
+		$state['rollback_notes'] = \array_values( \array_slice( (array) $state['notes'], $before ) );
+
+		$this->checkpoint->save( $state );
+
+		return $state;
+	}
+
+	/**
+	 * The rollback itself, by kind of import.
+	 *
+	 * @return array The state as saved.
+	 *
+	 * @throws \RuntimeException When there is nothing to undo.
+	 */
+	protected function undo() {
 		$state = $this->checkpoint->load();
 
 		// Said separately from the check below, because "already undone" and "never swapped in"
@@ -1397,6 +1428,8 @@ class Importer {
 
 		\wp_cache_flush();
 
+		$this->restore_session( (int) \nfd_sm_data_get( $state, 'users.acting_before', 0 ) );
+
 		$state['notes'][] = \sprintf(
 			'Rolled back: the site\'s own tables are live again, and %d imported table(s) were discarded.',
 			$dropped
@@ -1413,6 +1446,41 @@ class Importer {
 		$this->checkpoint->save( $state );
 
 		return $state;
+	}
+
+	/**
+	 * Sign the person who ran the import back in as the account this site has again.
+	 *
+	 * The import re-issued their cookie for the merged account, whose login the rollback has just
+	 * taken away, so every rollback ended on `wp-login.php` with "Cookie check failed" (T5). The
+	 * same reasoning as `Fixups::reestablish_session()`, run in the other direction. Skipped
+	 * outside a web request, where there is no browser to hand a cookie to.
+	 *
+	 * The new logged-in cookie is also put where `wp_create_nonce()` will read it in this same
+	 * request, because the nonce is derived from the session the cookie names: without that, the
+	 * nonce handed back would belong to the session the rollback just ended.
+	 *
+	 * @param int $user_id The destination's own ID for the person running the import.
+	 *
+	 * @return void
+	 */
+	protected function restore_session( $user_id ) {
+		if ( $user_id < 1 || 'cli' === PHP_SAPI || \headers_sent() || ! \get_userdata( $user_id ) ) {
+			return;
+		}
+
+		$adopt = function ( $cookie ) {
+			if ( \defined( 'LOGGED_IN_COOKIE' ) ) {
+				$_COOKIE[ LOGGED_IN_COOKIE ] = $cookie;
+			}
+		};
+
+		\add_action( 'set_logged_in_cookie', $adopt );
+
+		\wp_set_current_user( $user_id );
+		\wp_set_auth_cookie( $user_id, false );
+
+		\remove_action( 'set_logged_in_cookie', $adopt );
 	}
 
 	/**
@@ -1458,6 +1526,8 @@ class Importer {
 		$this->release();
 
 		\wp_cache_flush();
+
+		$this->restore_session( (int) \nfd_sm_data_get( $state, 'users.acting_before', 0 ) );
 
 		$state['notes'][] = \sprintf(
 			'Undone: %d imported table(s) discarded, %d setting(s) put back as they were, and this site\'s '

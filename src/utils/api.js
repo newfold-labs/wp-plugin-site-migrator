@@ -150,6 +150,13 @@ async function call( options ) {
 	try {
 		return await apiFetch( options );
 	} catch ( error ) {
+		if ( signedOut( error ) && promptLogin() ) {
+			return {
+				failed: true,
+				error: 'Your WordPress session has ended. Sign in again in the box on screen, then try that once more.',
+			};
+		}
+
 		return {
 			failed: true,
 			error:
@@ -157,6 +164,52 @@ async function call( options ) {
 				'The site did not respond. It may still be working — try again in a moment.',
 		};
 	}
+}
+
+/**
+ * Whether a failure means the browser is no longer signed in.
+ *
+ * @param {Object} error What apiFetch threw.
+ * @return {boolean} True for an expired session or a nonce that belongs to one.
+ */
+function signedOut( error ) {
+	return [
+		'rest_cookie_invalid_nonce',
+		'rest_not_logged_in',
+		'rest_forbidden',
+	].includes( error?.code );
+}
+
+/**
+ * Open WordPress's own "your session has expired" sign-in box.
+ *
+ * wp-admin loads it on every screen and opens it when the heartbeat notices the session is
+ * gone — but the heartbeat asks every couple of minutes, and a button pressed in between used to
+ * fail with nothing on screen to say why (T6). This hands it the answer the heartbeat would have.
+ *
+ * @return {boolean} Whether the box was there to open.
+ */
+function promptLogin() {
+	const $ = window.jQuery;
+
+	if ( ! $ || ! document.getElementById( 'wp-auth-check-wrap' ) ) {
+		return false;
+	}
+
+	$( document ).trigger( 'heartbeat-tick', [ { 'wp-auth-check': false } ] );
+
+	return true;
+}
+
+// Signing back in through that box mints a new REST nonce, which the heartbeat delivers to
+// wp.apiFetch's own middleware — not to this one, which is a separate instance. Without this the
+// first call after signing in fails on the nonce of the session that just ended.
+if ( window.jQuery ) {
+	window.jQuery( document ).on( 'heartbeat-tick', ( event, data ) => {
+		if ( data?.rest_nonce ) {
+			updateNonce( data.rest_nonce );
+		}
+	} );
 }
 
 export const api = {

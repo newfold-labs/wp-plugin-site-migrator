@@ -67,6 +67,35 @@ class PartSpecs {
 	);
 
 	/**
+	 * Files a desktop leaves behind, which are nobody's content.
+	 *
+	 * A site uploaded from a Mac carries `.DS_Store` in every folder it ever opened, and one in
+	 * `plugins/` arrived on the destination looking like a plugin: the rollback listed
+	 * `plugins/.DS_Store` among what it removed (T4). Left out silently rather than listed in
+	 * `skipped_paths` -- a large site can hold thousands, and none of them is something anybody
+	 * would miss.
+	 *
+	 * @var array
+	 */
+	protected static $os_metadata = array( '.DS_Store', 'Thumbs.db', 'ehthumbs.db', 'desktop.ini' );
+
+	/**
+	 * Whether a file name is operating-system metadata rather than site content.
+	 *
+	 * `._name` is the AppleDouble file macOS writes beside a file on a volume that cannot hold
+	 * its metadata itself.
+	 *
+	 * @param string $name File name, not path.
+	 *
+	 * @return bool
+	 */
+	public static function is_os_metadata( $name ) {
+		$name = (string) $name;
+
+		return \in_array( $name, self::$os_metadata, true ) || 0 === \strpos( $name, '._' );
+	}
+
+	/**
 	 * Drop-ins WordPress recognises in wp-content.
 	 *
 	 * @var array

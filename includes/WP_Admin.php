@@ -69,7 +69,10 @@ final class WP_Admin {
 			\wp_register_script(
 				self::$slug,
 				\nfd_sm_plugin_url( 'build/nfd-site-migrator.js' ),
-				array_merge( $asset['dependencies'], array() ),
+				// The session-expired sign-in box, which `api.js` opens when a call is refused for
+				// want of a session. wp-admin loads it anyway; named so a filter that switches it
+				// off elsewhere does not leave this screen without it.
+				array_merge( $asset['dependencies'], array( 'wp-auth-check' ) ),
 				$asset['version'],
 				true
 			);

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
+import { StartOver } from '../StartOver';
 import { api } from '../../utils/api';
 import { copyText, copyLabel } from '../../utils/clipboard';
 import { SOURCE_STEPS } from '../../steps';
@@ -426,7 +427,9 @@ export const Send = () => {
 				</div>
 			</Fallback>
 
-			{ key && (
+			{ /* Once claimed the key has done its one job, and leaving it on screen under
+			     "Shown once" contradicted itself; the status card below says who has it (T18). */ }
+			{ key && ! claimed && (
 				<div className="nfd-sm-card" id="nfd-sm-transfer-key">
 					<p className="nfd-sm-eyebrow">
 						{ __( 'This site’s address', 'nfd-site-migrator' ) }
@@ -565,6 +568,8 @@ export const Send = () => {
 					</div>
 				</div>
 			) }
+
+			{ status?.ready && <StartOver builtAt={ status.built_at } /> }
 		</Layout>
 	);
 };

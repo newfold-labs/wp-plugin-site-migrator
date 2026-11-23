@@ -72,6 +72,11 @@ class Link {
 	public static function issue( $destination = '' ) {
 		$token = \bin2hex( \random_bytes( 24 ) );
 
+		// A key from before this pairing belongs to a destination this site has just moved on
+		// from, and the Deliver screen went on showing it as "Being fetched / Claimed by … 3 h
+		// ago" beside the new pairing (T7).
+		TransferKey::revoke();
+
 		self::save(
 			array(
 				'hash'        => \hash( 'sha256', $token ),
@@ -207,6 +212,10 @@ class Link {
 		$state['handed_to']  = '';
 
 		self::save( $state );
+
+		// A new offer is a new handover: the destination claims a fresh key for it, so whatever
+		// key an earlier one left behind is already superseded (T7).
+		TransferKey::revoke();
 
 		return true;
 	}

@@ -334,7 +334,7 @@ class FileCollector {
 		}
 
 		foreach ( $items as $name ) {
-			if ( '.' === $name || '..' === $name ) {
+			if ( '.' === $name || '..' === $name || PartSpecs::is_os_metadata( $name ) ) {
 				continue;
 			}
 
@@ -396,7 +396,7 @@ class FileCollector {
 
 						return false;
 					}
-				} elseif ( \in_array( $relative, $skip, true ) ) {
+				} elseif ( \in_array( $relative, $skip, true ) || PartSpecs::is_os_metadata( $current->getFilename() ) ) {
 					return false;
 				}
 

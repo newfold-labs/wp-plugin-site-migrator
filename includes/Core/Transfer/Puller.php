@@ -286,6 +286,9 @@ class Puller {
 
 		$report = array(
 			'connected'   => ! empty( $state ),
+			// Finished on an earlier visit. The screen treats that as history rather than as the
+			// transfer it is joining, or a finished pull would stand in front of the next one (T3).
+			'completed'   => ! empty( $state['completed'] ),
 			'done'        => false,
 			'running'     => false,
 			'source'      => empty( $state ) ? '' : $state['site_url'],
@@ -598,7 +601,11 @@ class Puller {
 	 * @throws \RuntimeException If an unsettled import is using what is staged here.
 	 */
 	protected function reconcile( array $summary ) {
-		if ( Source::matches( $summary ) ) {
+		// The stored record is not the only witness, and it is the weaker one: *Stop and forget
+		// the source* deletes it, and an import replaces it along with the rest of `wp_options`.
+		// Asked of the record alone, a re-pull of the very package already staged here deleted
+		// 185.7MB of it as "a different package" (T1). The staged manifest says what is on disk.
+		if ( Source::matches( $summary ) || $this->staged_is( $summary ) ) {
 			return 0;
 		}
 
@@ -626,6 +633,35 @@ class Puller {
 		$this->clear_retries();
 
 		return (int) $existing;
+	}
+
+	/**
+	 * Whether the package staged here is the one a source is offering.
+	 *
+	 * The source declares the SHA-256 of every file it serves, its manifest included, and the
+	 * manifest names the package -- site, creation time, every part's checksum. So a staged
+	 * manifest with the declared hash is the same package, whatever the stored record says.
+	 *
+	 * @param array $summary What the source reported.
+	 *
+	 * @return bool
+	 */
+	protected function staged_is( array $summary ) {
+		$staged = $this->dir . DIRECTORY_SEPARATOR . 'manifest.json';
+
+		if ( ! \is_readable( $staged ) ) {
+			return false;
+		}
+
+		foreach ( (array) \nfd_sm_data_get( $summary, 'files', array() ) as $file ) {
+			if ( 'manifest.json' === (string) \nfd_sm_data_get( $file, 'file', '' ) ) {
+				$declared = (string) \nfd_sm_data_get( $file, 'sha256', '' );
+
+				return '' !== $declared && \hash_equals( $declared, (string) \hash_file( 'sha256', $staged ) );
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -672,10 +708,21 @@ class Puller {
 			\RecursiveIteratorIterator::LEAVES_ONLY
 		);
 
+		// The protection files `Upload::dir()` writes whenever the directory is asked for are not
+		// a package. Counted, an empty staging directory on a fresh install read as "1 KB of a
+		// different package was already staged here" (T2).
+		$guards = array( 'index.php', '.htaccess', 'web.config' );
+
 		foreach ( $files as $file ) {
-			if ( $file->isFile() && ! $file->isLink() ) {
-				$bytes += (int) $file->getSize();
+			if ( ! $file->isFile() || $file->isLink() ) {
+				continue;
 			}
+
+			if ( \in_array( $file->getFilename(), $guards, true ) && \dirname( $file->getPathname() ) === \rtrim( $this->dir, '/\\' ) ) {
+				continue;
+			}
+
+			$bytes += (int) $file->getSize();
 		}
 
 		return $bytes;

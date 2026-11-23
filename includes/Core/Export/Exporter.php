@@ -606,6 +606,9 @@ class Exporter {
 			'bytes'         => (int) $state['bytes_done'],
 			'planned_files' => $planned_files,
 			'planned_bytes' => $planned_bytes,
+			// A code-only run writes no dump, so its database tile reads "Skipped" rather than
+			// "Done" (T12).
+			'database'      => $this->selection( $state )->wants_database(),
 			'skipped_links' => \count( (array) ( isset( $state['skipped_links'] ) ? $state['skipped_links'] : array() ) ),
 			'skipped_paths' => \count( (array) ( isset( $state['skipped_paths'] ) ? $state['skipped_paths'] : array() ) ),
 			'manifest'      => $done ? $this->package->path( Manifest::NAME ) : '',

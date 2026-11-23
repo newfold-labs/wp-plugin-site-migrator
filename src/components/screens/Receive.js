@@ -1,4 +1,4 @@
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { useEffect, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
@@ -84,6 +84,11 @@ export const Receive = () => {
 					setWaiting( response );
 				}
 			} );
+
+			// Pairing happens on the other site, so this screen only learns of it by asking.
+			// Asked once, it went on showing the code as if nothing had happened until the
+			// source offered a package (T19).
+			refresh();
 		};
 
 		look();
@@ -132,6 +137,12 @@ export const Receive = () => {
 	return (
 		<Layout
 			steps={ DESTINATION_STEPS }
+			// The default sentence is the source's ("Exporting only reads"), which this screen
+			// went on saying on the site about to receive one (T16).
+			safetyDetail={ __(
+				'A pairing code only lets the source read this site’s setup. Nothing here changes until you have reviewed a package and chosen to import it.',
+				'nfd-site-migrator'
+			) }
 			step="connect"
 			eyebrow={ __( 'Destination', 'nfd-site-migrator' ) }
 			title={
@@ -230,6 +241,22 @@ export const Receive = () => {
 							'nfd-site-migrator'
 						) }
 					</p>
+					{ status?.active &&
+						! status?.paired &&
+						status.attempts_left < 10 && (
+							<p className="nfd-sm-hint">
+								{ sprintf(
+									/* translators: %d: wrong attempts left before the code stops working. */
+									_n(
+										'%d wrong attempt left before this code stops working.',
+										'%d wrong attempts left before this code stops working.',
+										status.attempts_left,
+										'nfd-site-migrator'
+									),
+									status.attempts_left
+								) }
+							</p>
+						) }
 					<p className="nfd-sm-hint">
 						{ __(
 							'It also saves you the trip back. Once the two sites have been introduced, the source can offer the finished package straight to this one, and the import screen here will show it waiting — with nothing else to copy.',
@@ -275,8 +302,18 @@ export const Receive = () => {
 
 			{ status?.paired && (
 				<div className="nfd-sm-note nfd-sm-note--pass">
-					{ __( 'Paired with ', 'nfd-site-migrator' ) }
-					<span className="nfd-sm-mono">{ status.paired }</span>
+					<p>
+						{ __( 'Paired with ', 'nfd-site-migrator' ) }
+						<span className="nfd-sm-mono">{ status.paired }</span>
+					</p>
+					{ ! waiting && (
+						<p>
+							{ __(
+								'Waiting for it to build and offer the package. It will appear here when it does — keep this tab open.',
+								'nfd-site-migrator'
+							) }
+						</p>
+					) }
 				</div>
 			) }
 

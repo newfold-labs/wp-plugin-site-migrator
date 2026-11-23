@@ -567,25 +567,26 @@ class ImportController extends Controller {
 
 		return \rest_ensure_response(
 			array(
-				'stage'       => $state['stage'],
-				'package'     => $state['package'],
-				'in_progress' => '' !== $state['package'] && 'done' !== $state['stage'],
-				'complete'    => 'done' === $state['stage'],
-				'swapped'     => ! empty( $state['swapped'] ),
-				'rolled_back' => ! empty( $state['rolled_back'] ),
-				'confirmed'   => ! empty( $state['confirmed_at'] ),
-				'files'       => (int) $state['files_done'],
-				'rows'        => (int) $state['statements'],
-				'added'       => AddedCode::counts( isset( $state['code_added'] ) ? (array) $state['code_added'] : array() ),
-				'notes'       => (array) $state['notes'],
-				'manual'      => (array) $state['manual'],
-				'users'       => (array) $state['users'],
-				'refused'     => (array) $state['refused'],
-				'error'       => (string) $state['error'],
-				'token_live'  => ImportToken::exists(),
-				'loader'      => Loader::installed(),
-				'site_url'    => \get_site_url(),
-				'nonce'       => \wp_create_nonce( 'wp_rest' ),
+				'stage'          => $state['stage'],
+				'package'        => $state['package'],
+				'in_progress'    => '' !== $state['package'] && 'done' !== $state['stage'],
+				'complete'       => 'done' === $state['stage'],
+				'swapped'        => ! empty( $state['swapped'] ),
+				'rolled_back'    => ! empty( $state['rolled_back'] ),
+				'confirmed'      => ! empty( $state['confirmed_at'] ),
+				'files'          => (int) $state['files_done'],
+				'rows'           => (int) $state['statements'],
+				'added'          => AddedCode::counts( isset( $state['code_added'] ) ? (array) $state['code_added'] : array() ),
+				'notes'          => (array) $state['notes'],
+				'rollback_notes' => (array) \nfd_sm_data_get( $state, 'rollback_notes', array() ),
+				'manual'         => (array) $state['manual'],
+				'users'          => (array) $state['users'],
+				'refused'        => (array) $state['refused'],
+				'error'          => (string) $state['error'],
+				'token_live'     => ImportToken::exists(),
+				'loader'         => Loader::installed(),
+				'site_url'       => \get_site_url(),
+				'nonce'          => \wp_create_nonce( 'wp_rest' ),
 			)
 		);
 	}
@@ -609,8 +610,11 @@ class ImportController extends Controller {
 		return \rest_ensure_response(
 			array(
 				'ok'      => true,
-				'notes'   => (array) $state['notes'],
+				'notes'   => (array) \nfd_sm_data_get( $state, 'rollback_notes', array() ),
 				'removed' => isset( $state['code_removed'] ) ? (array) $state['code_removed'] : array(),
+				// The rollback signed the user back in under the restored account, which makes
+				// the nonce the page holds belong to a session that no longer exists.
+				'nonce'   => \wp_create_nonce( 'wp_rest' ),
 			)
 		);
 	}

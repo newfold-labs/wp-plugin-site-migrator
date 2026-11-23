@@ -29,6 +29,7 @@ const TILE = {
 	done: __( 'Done', 'nfd-site-migrator' ),
 	running: __( 'Running', 'nfd-site-migrator' ),
 	queued: __( 'Queued', 'nfd-site-migrator' ),
+	skipped: __( 'Skipped', 'nfd-site-migrator' ),
 };
 
 /**
@@ -62,6 +63,7 @@ export const Exporting = () => {
 		bytes,
 		partIndex,
 		parts,
+		database,
 		written,
 		plannedBytes,
 		startedAt,
@@ -136,7 +138,8 @@ export const Exporting = () => {
 		{
 			id: 'database',
 			label: __( 'Database', 'nfd-site-migrator' ),
-			state: filesStarted ? 'done' : 'running',
+			// eslint-disable-next-line no-nested-ternary
+			state: ! database ? 'skipped' : filesStarted ? 'done' : 'running',
 		},
 		...( parts || [] ).map( ( name, i ) => {
 			let state = 'queued';
@@ -152,7 +155,10 @@ export const Exporting = () => {
 	];
 
 	const remaining = () => {
-		if ( ! left ) {
+		// The rate is bytes over seconds since this run started, and a paused run adds seconds
+		// and no bytes: the estimate doubled while nothing was happening (T13). No estimate is
+		// better than that one; resuming restarts the clock.
+		if ( ! left || paused ) {
 			return '';
 		}
 		if ( left < 90 ) {
@@ -187,6 +193,20 @@ export const Exporting = () => {
 					>
 						{ __( 'Resume', 'nfd-site-migrator' ) }
 					</button>
+				</div>
+			) }
+
+			{ /* Pause abandons the request in flight rather than waiting for it, and that step
+			     still finishes its volume on the server — which is why a reload after pausing
+			     can show more done than the screen did a moment before (T13). */ }
+			{ hydrated && paused && ! running && (
+				<div className="nfd-sm-note">
+					<p>
+						{ __(
+							'Paused. The volume being written when you paused may still finish in the background, so the figures can move forward once more before they stop.',
+							'nfd-site-migrator'
+						) }
+					</p>
 				</div>
 			) }
 

@@ -408,7 +408,9 @@ export const Contents = () => {
 				return;
 			}
 
-			const merged = { ...sofar };
+			// The last answer is the whole settled list, so it replaces what was gathered: only
+			// once every plugin has been read can a table two of them name be placed (T10).
+			const merged = response.final ? {} : { ...sofar };
 
 			Object.keys( response.belongs || {} ).forEach( ( part ) => {
 				merged[ part ] = {
@@ -419,6 +421,7 @@ export const Contents = () => {
 
 			setBelongings( {
 				belongs: merged,
+				shared: response.shared || {},
 				unclaimed: response.unclaimed || [],
 				done: !! response.done,
 			} );
@@ -550,6 +553,36 @@ export const Contents = () => {
 			shown,
 			all.length - 3
 		);
+	};
+
+	// A name two plugins both claim is one checkbox in two places, so ticking either ticks
+	// both. Said under each, with who it is shared with (T11).
+	const sharing = ( key, entry ) => {
+		const shared = belongings?.shared || {};
+		const named = ( other ) => {
+			const [ part, slug ] = other.split( '/' );
+
+			return (
+				data?.parts?.find( ( one ) => one.name === part )?.labels?.[
+					slug
+				] || slug
+			);
+		};
+		const lines = owned( entry )
+			.filter( ( name ) => shared[ name ] )
+			.map( ( name ) =>
+				sprintf(
+					/* translators: 1: table or setting name, 2: the other plugins that use it. */
+					__( '%1$s is also used by %2$s', 'nfd-site-migrator' ),
+					name,
+					shared[ name ]
+						.filter( ( other ) => other !== key )
+						.map( named )
+						.join( ', ' )
+				)
+			);
+
+		return lines.join( '; ' );
 	};
 
 	const toggleCarryTable = ( name ) =>
@@ -951,6 +984,21 @@ export const Contents = () => {
 																	entry
 																) }
 															</span>
+															{ sharing(
+																part +
+																	'/' +
+																	slug,
+																entry
+															) && (
+																<span className="nfd-sm-owns-names">
+																	{ sharing(
+																		part +
+																			'/' +
+																			slug,
+																		entry
+																	) }
+																</span>
+															) }
 														</span>
 													</label>
 												);

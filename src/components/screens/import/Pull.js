@@ -101,7 +101,23 @@ export const Pull = () => {
 	const asked = useRef( false );
 	const start = useLocation().state?.start;
 
-	const { state, connect, claim, disconnect, run, halt } = usePull();
+	const { state: pull, connect, claim, disconnect, run, halt } = usePull();
+
+	// A transfer that had already finished when this screen opened is history, not the transfer
+	// to join: `Source` keeps its record after the last byte so the screen can say where a package
+	// came from, and reading that record as "connected" put a finished pull in front of every
+	// later one (T3). Decided once, at the first report, so a transfer that finishes while this
+	// screen watches still lands on its own done state. Starting a new one clears it.
+	const earlier = useRef( null );
+
+	if ( pull.hydrated && null === earlier.current ) {
+		earlier.current = !! ( pull.completed && pull.done );
+	}
+
+	const previous = earlier.current ? pull : null;
+	const state = previous
+		? { ...pull, connected: false, done: false, running: false }
+		: pull;
 
 	const [ url, setUrl ] = useState( '' );
 	const [ key, setKey ] = useState( '' );
@@ -196,6 +212,7 @@ export const Pull = () => {
 		}
 
 		setCleared( response.cleared || 0 );
+		earlier.current = false;
 		run();
 	};
 
@@ -238,6 +255,7 @@ export const Pull = () => {
 
 		setCleared( response.cleared || 0 );
 		setKey( '' );
+		earlier.current = false;
 		run();
 	};
 
@@ -401,6 +419,21 @@ export const Pull = () => {
 						{ waiting.error && <p>{ waiting.error }</p> }
 					</div>
 				) }
+
+			{ previous && (
+				<div className="nfd-sm-note">
+					<p>
+						{ sprintf(
+							/* translators: %s: source site address. */
+							__(
+								'The last transfer, from %s, finished. That package is listed under Choose a package; fetching a different one here replaces it.',
+								'nfd-site-migrator'
+							),
+							previous.source
+						) }
+					</p>
+				</div>
+			) }
 
 			{ /* Open only when there is no other way through. A package on offer has its own button
 			    above, and leaving this expanded put a second identical "Start the transfer" on the

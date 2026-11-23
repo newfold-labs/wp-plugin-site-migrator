@@ -14,6 +14,8 @@ use NewfoldLabs\WP\SiteMigrator\Core\Export\TableOwners;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\Manifest;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageReader;
 use NewfoldLabs\WP\SiteMigrator\Core\Package\PackageWriter;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\Link;
+use NewfoldLabs\WP\SiteMigrator\Core\Transfer\TransferKey;
 
 /**
  * The browser drives the export through these.
@@ -308,18 +310,41 @@ class ExportController extends Controller {
 		// stepped scan sees only the plugins it read itself, and unclaimed means "no plugin
 		// claimed it", which is a question about all of them.
 		$claimed = array();
+		$shared  = array();
 
-		foreach ( $queue as $entry ) {
-			$key = $entry['part'] . '/' . $entry['slug'];
+		if ( $done ) {
+			// Once every plugin has been read, the claims are weighed against each other and the
+			// whole answer replaces what the screen accumulated: a table two plugins both name, or
+			// one a plugin only refers to, could not be placed until all of them had their turn.
+			$all = array();
 
-			if ( isset( $cached[ $key ]['tables'] ) ) {
-				$claimed[] = $cached[ $key ]['tables'];
+			foreach ( $queue as $entry ) {
+				$key = $entry['part'] . '/' . $entry['slug'];
+
+				if ( isset( $cached[ $key ] ) ) {
+					$all[ $key ] = $cached[ $key ];
+				}
+			}
+
+			$settled = TableOwners::arbitrate( $all, (string) $GLOBALS['wpdb']->prefix );
+			$shared  = $settled['shared'];
+			$found   = array();
+
+			foreach ( $settled['claims'] as $key => $one ) {
+				list( $part, $slug ) = \explode( '/', $key, 2 );
+
+				$found[ $part ][ $slug ] = $one;
+				$claimed[]               = $one['tables'];
 			}
 		}
 
 		return \rest_ensure_response(
 			array(
 				'belongs'   => $found,
+				// Set on the last answer only, which is complete: the screen replaces rather than
+				// merges, and marks a name claimed by several plugins as shared (T11).
+				'final'     => $done,
+				'shared'    => $shared,
 				// Everything the scan could not attribute, so a table a plugin builds a name for
 				// at runtime is offered rather than quietly left behind. Only meaningful once
 				// every plugin has had its turn.
@@ -770,13 +795,34 @@ class ExportController extends Controller {
 	}
 
 	/**
-	 * Throw the package away.
+	 * Throw the package away, so the next visit starts from the beginning.
 	 *
-	 * @return \WP_REST_Response
+	 * The route existed from the start and no screen called it, so a source holding a finished
+	 * package went straight to Deliver on every visit and the only reset was uninstalling (T8).
+	 * The credentials go with the package: a key or an offer for a package that no longer exists
+	 * would hand a destination nothing, or worse, whatever is built next. The pairing stays -- it
+	 * is a standing arrangement with a site, not with a package.
+	 *
+	 * Refused while a step is actually running, because that request is still writing into the
+	 * directory this would delete.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function cancel() {
+		$exporter = new Exporter( $this->package_dir() );
+
+		if ( $exporter->is_running() ) {
+			return new \WP_Error(
+				'nfd_sm_export_running',
+				'A packaging step is still running. Pause it, wait a moment, then start over.',
+				array( 'status' => 409 )
+			);
+		}
+
 		\nfd_sm_delete_directory( $this->package_dir() );
 		\delete_option( NFD_SM_PAUSED_OPTION );
+		TransferKey::revoke();
+		Link::withdraw();
 
 		return \rest_ensure_response( array( 'cancelled' => true ) );
 	}

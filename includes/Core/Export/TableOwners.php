@@ -534,6 +534,164 @@ class TableOwners {
 	}
 
 	/**
+	 * Settle who owns what once every plugin has been read.
+	 *
+	 * Each plugin is scanned on its own, and naming a table is not owning it: Jetpack Boost's
+	 * WooCommerce support names `wc_order_*`, OptinMonster names `woocommerce_api_keys`, and both
+	 * were offered as those plugins' data (T10) -- while a setting two plugins both read ticked
+	 * itself under each of them with nothing to say why (T11). So the claims are weighed against
+	 * each other here, with a plugin's own name as the evidence:
+	 *
+	 * - Claimed by several, and one of them names it -- `woocommerce_api_keys` and WooCommerce --
+	 *   it goes to that one, the longest match winning so `jetpack_boost_*` is Boost's and not
+	 *   Jetpack's. Where none or several name it, every claimant keeps it and it is marked shared.
+	 * - Claimed by one plugin that does not name it, while that plugin plainly does name its own
+	 *   things, it is a reference to somebody else's and is let go, to turn up among the unclaimed
+	 *   for a person to decide. A plugin whose names say nothing about it -- Wordfence's `wf*` --
+	 *   keeps everything, because there is no evidence either way.
+	 *
+	 * @param array  $claims Map of `part/slug` => `tables` and `options`.
+	 * @param string $prefix This site's table prefix.
+	 *
+	 * @return array `claims` in the same shape, and `shared`: map of name => the keys claiming it.
+	 */
+	public static function arbitrate( array $claims, $prefix = '' ) {
+		$settled = array();
+		$shared  = array();
+
+		foreach ( array( 'tables', 'options' ) as $kind ) {
+			$claimants = array();
+
+			foreach ( $claims as $key => $claim ) {
+				foreach ( (array) \nfd_sm_data_get( $claim, $kind, array() ) as $name ) {
+					$claimants[ (string) $name ][] = (string) $key;
+				}
+			}
+
+			// Whether a plugin names anything of this kind after itself, which is what makes a
+			// claim it does not name look like a reference rather than an oddly named table.
+			$namespaced = array();
+
+			foreach ( $claimants as $name => $keys ) {
+				foreach ( $keys as $key ) {
+					if ( self::affinity( $key, self::bare( $name, $kind, $prefix ) ) > 0 ) {
+						$namespaced[ $key ] = true;
+					}
+				}
+			}
+
+			foreach ( $claimants as $name => $keys ) {
+				$bare   = self::bare( $name, $kind, $prefix );
+				$scores = array();
+
+				foreach ( $keys as $key ) {
+					$scores[ $key ] = self::affinity( $key, $bare );
+				}
+
+				$best    = \max( $scores );
+				$leaders = \array_keys( $scores, $best, true );
+
+				if ( \count( $keys ) > 1 ) {
+					if ( $best > 0 && 1 === \count( $leaders ) ) {
+						$keep = $leaders;
+					} else {
+						$keep            = $keys;
+						$shared[ $name ] = $keys;
+					}
+				} elseif ( 0 === $best && isset( $namespaced[ $keys[0] ] ) ) {
+					$keep = array();
+				} else {
+					$keep = $keys;
+				}
+
+				foreach ( $keep as $key ) {
+					$settled[ $key ][ $kind ][] = $name;
+				}
+			}
+		}
+
+		$result = array();
+
+		foreach ( $claims as $key => $claim ) {
+			$one = array(
+				'tables'  => isset( $settled[ $key ]['tables'] ) ? $settled[ $key ]['tables'] : array(),
+				'options' => isset( $settled[ $key ]['options'] ) ? $settled[ $key ]['options'] : array(),
+			);
+
+			if ( ! empty( $one['tables'] ) || ! empty( $one['options'] ) ) {
+				$result[ $key ] = $one;
+			}
+		}
+
+		return array(
+			'claims' => $result,
+			'shared' => $shared,
+		);
+	}
+
+	/**
+	 * How strongly a plugin's directory name speaks for a table or option name.
+	 *
+	 * The length of the longest prefix the slug offers that the name starts with: the whole slug
+	 * (`jetpack_boost`), each shorter run of its leading words (`jetpack`), and any single word of
+	 * four letters or more (`defender` from `wp-defender`). `wp` alone is never one -- it prefixes
+	 * half of everything.
+	 *
+	 * @param string $key  `part/slug`.
+	 * @param string $name Bare name, lowercase.
+	 *
+	 * @return int 0 when the slug says nothing about the name.
+	 */
+	protected static function affinity( $key, $name ) {
+		$slug  = \strtolower( (string) \substr( (string) $key, (int) \strrpos( '/' . $key, '/' ) ) );
+		$words = \array_values( \array_filter( \preg_split( '/[^a-z0-9]+/', \preg_replace( '/\.php$/', '', $slug ) ) ) );
+		$tries = array();
+
+		for ( $i = \count( $words ); $i > 0; $i-- ) {
+			$tries[] = \implode( '_', \array_slice( $words, 0, $i ) );
+		}
+
+		foreach ( $words as $word ) {
+			if ( \strlen( $word ) >= 4 ) {
+				$tries[] = $word;
+			}
+		}
+
+		$best = 0;
+
+		foreach ( \array_unique( $tries ) as $try ) {
+			if ( 'wp' === $try || '' === $try ) {
+				continue;
+			}
+
+			if ( ( $name === $try || 0 === \strpos( $name, $try . '_' ) ) && \strlen( $try ) > $best ) {
+				$best = \strlen( $try );
+			}
+		}
+
+		return $best;
+	}
+
+	/**
+	 * A table or option name as `affinity()` compares it.
+	 *
+	 * @param string $name   Real name.
+	 * @param string $kind   `tables` or `options`.
+	 * @param string $prefix This site's table prefix.
+	 *
+	 * @return string
+	 */
+	protected static function bare( $name, $kind, $prefix ) {
+		$name = (string) $name;
+
+		if ( 'tables' === $kind && '' !== $prefix && 0 === \strpos( $name, $prefix ) ) {
+			$name = \substr( $name, \strlen( $prefix ) );
+		}
+
+		return \strtolower( $name );
+	}
+
+	/**
 	 * A table name with this site's prefix taken off.
 	 *
 	 * @param string $table Table name.

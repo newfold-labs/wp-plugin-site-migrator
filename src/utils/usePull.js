@@ -17,6 +17,7 @@ export function usePull() {
 	const [ state, setState ] = useState( {
 		hydrated: false,
 		connected: false,
+		completed: false,
 		running: false,
 		done: false,
 		source: '',
@@ -47,6 +48,7 @@ export function usePull() {
 		...s,
 		hydrated: true,
 		connected: report.connected ?? s.connected,
+		completed: report.completed ?? s.completed,
 		done: !! report.done,
 		source: report.source || s.source,
 		filesDone: report.files_done ?? s.filesDone,
