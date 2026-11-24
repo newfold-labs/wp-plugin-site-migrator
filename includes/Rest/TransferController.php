@@ -360,6 +360,9 @@ class TransferController extends Controller {
 				array(
 					'ready'    => $offer->is_ready(),
 					'bytes'    => $offer->is_ready() ? (int) \nfd_sm_data_get( $offer->summary(), 'bytes', 0 ) : 0,
+					// Which package this is. Deliver says so, because an unchanged selection reuses
+					// a finished package and nothing on screen used to admit it (T9).
+					'built_at' => $offer->is_ready() ? (string) \nfd_sm_data_get( $offer->summary(), 'created_at', '' ) : '',
 					'site_url' => \get_site_url(),
 				)
 			)

@@ -226,6 +226,27 @@ Protection used to be written only by `PackageWriter`, so `package/` and `incomi
 absolute server paths, the table prefix, and every plugin and theme the import installed. One
 `.htaccess` at the root covers everything beneath it.
 
+**When uploads cannot be written, storage moves, and the choice is a directory, not an option.**
+`Core/Preflight/Storage` offers two alternates on the Start screen's storage block — beside the
+WordPress folder, then the server's temp directory — and `POST /preflight/storage` creates the
+chosen one. An adopted alternate wins whenever it exists, because the import replaces `wp_options`
+and its checkpoint lives in this directory: a location read from the database would move under a
+running import. Alternates are created `0700` and one found already there counts only if it is a
+real directory closed to group and world, because `/tmp` is shared on shared hosting and a package
+is the whole database; the name hashes `AUTH_KEY` so it cannot be squatted in advance. Adoption is
+refused while the current location works, which is what keeps storage from moving under a run.
+`nfd_sm_purge_all()` deletes every location, which is also what moves storage back. The
+`nfd_sm_storage_path` filter overrides all of it for somebody with server access.
+
+**The external test run of 0.2.6 is `docs/bug-fixes.md`, T1–T20.** Four of those fixes change rules
+stated elsewhere in this file, so read them before touching the code they name:
+`Puller::reconcile()` also recognises a staged package by its manifest's SHA-256, because the
+`Source` record does not survive *Stop and forget* or an import's options swap (T1);
+`PartSpecs::is_os_metadata()` keeps `.DS_Store` and friends out of every part and out of `AddedCode`
+(T4); a new pairing or offer revokes the previous `TransferKey` (T7); and `TableOwners::arbitrate()`
+weighs every plugin's claims against each other once the scan is complete, using the slug as
+evidence (T10, T11).
+
 **`wp site-migrator export` runs the local gates and refuses when they block.** It did not, so a
 site whose package directory was downloadable wrote a full database dump into it and reported
 success. The UI gated on this from the start; the CLI did not.
@@ -1173,11 +1194,11 @@ Carried forward deliberately. None of these are covered by the round-trip suite.
 - Database row filters are exercised end to end for revisions and transients. **Spam comments are
   the same mechanism with a different clause and have never met an actual spam row** — the live
   source had none, so the `WHERE` ran and excluded nothing. That is an argument, not a test.
-- **A rollback logs the administrator out of the destination.** Observed after the partial run: the
-  browser landed on `wp-login.php` with "Cookie check failed" on the screen that offers *Try a
-  different package*. `Fixups` re-issues the auth cookie for the merged user during the import, and
-  nothing re-issues one for the site's own user when the swap goes back. Not investigated further;
-  the CLI drove the rest of that test.
+- **A rollback no longer logs the administrator out, but that has only run in unit tests.** The
+  import records the destination's own ID for the person running it (`users.acting_before`), and
+  `Importer::restore_session()` re-issues their cookie once the swap goes back, putting the new
+  logged-in cookie where `wp_create_nonce()` reads it so the nonce the response carries belongs to
+  the restored session (T5 in `docs/bug-fixes.md`). Not yet watched through a browser.
 
 ## Git Commits
 - Keep commit messages under one line, ~50 chars max

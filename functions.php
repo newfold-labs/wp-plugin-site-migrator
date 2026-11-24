@@ -79,21 +79,36 @@ function nfd_sm_table_prefix( $blog_id = null ) {
 
 /**
  * Get the base storage directory
+ *
+ * `uploads/nfd-site-migrator` unless that could not be written and an alternate was adopted from
+ * the preflight screen -- see `Core\Preflight\Storage` for why the choice is a directory rather
+ * than an option.
+ *
+ * @return string Absolute path with a trailing separator.
  */
 function nfd_sm_storage_path() {
-	static $protected = false;
+	static $protected = array();
 
-	$uploads   = wp_get_upload_dir();
-	$directory = $uploads['basedir'] . DIRECTORY_SEPARATOR . 'nfd-site-migrator' . DIRECTORY_SEPARATOR;
+	/**
+	 * Filters where the plugin keeps packages, checkpoints and transfers in flight.
+	 *
+	 * For a host where neither uploads nor the offered alternates will do. It must return the
+	 * same answer on every request, from wp-admin, REST and WP-CLI alike, and must not change
+	 * while a migration is under way: the import checkpoint lives here.
+	 *
+	 * @param string $directory Absolute path.
+	 */
+	$directory = (string) apply_filters( 'nfd_sm_storage_path', \NewfoldLabs\WP\SiteMigrator\Core\Preflight\Storage::resolve() );
+	$directory = rtrim( $directory, '/\\' ) . DIRECTORY_SEPARATOR;
 	wp_mkdir_p( $directory );
 
 	// Protected at the root, not only in the directories that happen to hold a package. The
 	// package and staging directories wrote their own rules and `import/` did not, so an import
 	// checkpoint -- absolute server paths, the table prefix, every plugin and theme the import
-	// installed -- was fetchable over HTTP on Apache. Once per request: the guards below are
-	// three stat calls, and this function is called often.
-	if ( ! $protected ) {
-		$protected = true;
+	// installed -- was fetchable over HTTP on Apache. Once per request per directory: the guards
+	// below are three stat calls, and this function is called often.
+	if ( empty( $protected[ $directory ] ) ) {
+		$protected[ $directory ] = true;
 
 		nfd_sm_protect_directory( $directory );
 	}
@@ -129,8 +144,11 @@ function nfd_sm_protect_directory( $directory ) {
 	foreach ( $files as $name => $contents ) {
 		$path = $directory . $name;
 
+		// Silenced: on a host where uploads is read-only this runs on every request before the
+		// preflight screen has had a chance to say so, and a warning printed into a REST
+		// response is a JSON parse error in the browser rather than an explanation.
 		if ( ! file_exists( $path ) ) {
-			file_put_contents( $path, $contents ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			@file_put_contents( $path, $contents ); // phpcs:ignore WordPress.WP.AlternativeFunctions, WordPress.PHP.NoSilencedErrors
 		}
 	}
 }
@@ -553,8 +571,14 @@ function nfd_sm_purge_all() {
 		delete_option( $option );
 	}
 
-	// Delete the migration data
-	nfd_sm_delete_directory( nfd_sm_storage_path() );
+	// Delete the migration data, wherever it was kept. An adopted alternate is what moved
+	// storage out of uploads, so removing it is also what moves storage back.
+	$paths   = \NewfoldLabs\WP\SiteMigrator\Core\Preflight\Storage::existing();
+	$paths[] = nfd_sm_storage_path();
+
+	foreach ( array_unique( $paths ) as $path ) {
+		nfd_sm_delete_directory( $path );
+	}
 
 	// Delete the transient
 	delete_transient( NFD_SM_CAN_MIGRATE_TRANSIENT );

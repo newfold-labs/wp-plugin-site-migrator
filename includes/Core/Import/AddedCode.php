@@ -235,7 +235,9 @@ class AddedCode {
 		$names  = array();
 
 		foreach ( $found as $name ) {
-			if ( '.' === $name || '..' === $name || \in_array( $name, $ignore, true ) ) {
+			// Metadata a desktop left in the folder is not code that arrived, and a package built
+			// before the export learned to leave it out still carries it (T4).
+			if ( '.' === $name || '..' === $name || \in_array( $name, $ignore, true ) || PartSpecs::is_os_metadata( $name ) ) {
 				continue;
 			}
 

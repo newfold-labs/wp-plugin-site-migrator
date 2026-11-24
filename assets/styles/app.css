@@ -357,6 +357,9 @@
     .nfd-sm-tile--queued { @apply bg-canvas border-edge-warm }
     .nfd-sm-tile--queued .nfd-sm-tile-state { @apply text-faint }
     .nfd-sm-tile--queued .nfd-sm-tile-name { @apply text-faint }
+    .nfd-sm-tile--skipped { @apply bg-canvas border-edge-warm border-dashed }
+    .nfd-sm-tile--skipped .nfd-sm-tile-state { @apply text-faint }
+    .nfd-sm-tile--skipped .nfd-sm-tile-name { @apply text-faint }
 
     /* What has actually been written, most recent last. Real lines from the checkpoint, not a
        fabricated console. */

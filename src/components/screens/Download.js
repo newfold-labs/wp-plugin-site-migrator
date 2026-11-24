@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { Loading } from '../Loading';
+import { StartOver } from '../StartOver';
 import { api } from '../../utils/api';
 import {
 	canSaveToFolder,
@@ -447,6 +448,8 @@ export const Download = () => {
 					</button>
 				</div>
 			</div>
+
+			{ data && <StartOver builtAt={ data.package?.created_at } /> }
 		</Layout>
 	);
 };

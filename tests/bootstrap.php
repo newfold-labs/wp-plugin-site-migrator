@@ -270,7 +270,12 @@ function wp_get_upload_dir() {
 }
 
 function wp_mkdir_p( $dir ) {
-	return \is_dir( $dir ) || \mkdir( $dir, 0777, true );
+	// Silenced, as WordPress's own is: a directory that cannot be created is a false, not a warning.
+	return \is_dir( $dir ) || @\mkdir( $dir, 0777, true );
+}
+
+function wp_parse_url( $url, $component = -1 ) {
+	return \parse_url( $url, $component );
 }
 
 function get_site_url() {

@@ -51,6 +51,7 @@ export const Done = () => {
 			return;
 		}
 
+		updateNonce( response.nonce );
 		setUndone( response.notes || [] );
 		setUndoneRemoved( ( response.removed || [] ).length );
 		setOutcome( 'rolled-back' );
@@ -111,8 +112,9 @@ export const Done = () => {
 	}
 
 	// After a refresh the rollback's own response is gone, but the notes it wrote are in the
-	// state it saved.
-	const undoneNotes = undone.length > 0 ? undone : state?.notes || [];
+	// state it saved, kept apart from the import's own (T15).
+	const undoneNotes =
+		undone.length > 0 ? undone : state?.rollback_notes || [];
 
 	// What the server says already happened outranks nothing having happened in this tab. A
 	// finished import stays on `stage: done` after it is rolled back or kept, so a refresh
@@ -193,10 +195,18 @@ export const Done = () => {
 				'This site now holds the imported content',
 				'nfd-site-migrator'
 			) }
-			intro={ __(
-				'Have a look around before you decide to keep it. Until you do, the previous site is still on the server and one click away.',
-				'nfd-site-migrator'
-			) }
+			intro={
+				// Kept is final, so the invitation to look around first is over (T14).
+				'kept' === settled
+					? __(
+							'You kept the import. The previous site has been discarded, and this one is yours to carry on with.',
+							'nfd-site-migrator'
+					  )
+					: __(
+							'Have a look around before you decide to keep it. Until you do, the previous site is still on the server and one click away.',
+							'nfd-site-migrator'
+					  )
+			}
 		>
 			{ error && (
 				<div className="nfd-sm-note nfd-sm-note--stop">

@@ -78,9 +78,12 @@ class Pairing {
 		}
 
 		return array(
-			'active'  => isset( $state['expires'] ) && $state['expires'] > \time(),
-			'paired'  => isset( $state['paired'] ) ? $state['paired'] : '',
-			'expires' => isset( $state['expires'] ) ? (int) $state['expires'] : 0,
+			'active'        => isset( $state['expires'] ) && $state['expires'] > \time(),
+			'paired'        => isset( $state['paired'] ) ? $state['paired'] : '',
+			'expires'       => isset( $state['expires'] ) ? (int) $state['expires'] : 0,
+			// Shown under the code, so a source mistyping it knows how many goes are left before
+			// it stops working (T20).
+			'attempts_left' => \max( 0, self::MAX_ATTEMPT - ( isset( $state['attempts'] ) ? (int) $state['attempts'] : 0 ) ),
 		);
 	}
 
